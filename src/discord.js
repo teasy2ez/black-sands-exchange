@@ -181,16 +181,23 @@ export function buildWalletEmbed(userData, rankInfo) {
   const boneScore = userData.boneScore ?? spendable;
   const rankTitle = rankInfo?.title || 'Initiate';
   const rankIcon = rankInfo?.icon || '🪙';
+  const charDisplay = userData.primaryCharacter ? `\n⚔️ **Primary Character:** \`${userData.primaryCharacter}\`` : '';
+
+  const fields = [
+    { name: '💰 Spendable Bones', value: `**${spendable.toLocaleString()}** Bones`, inline: true },
+    { name: '🏆 Bone Score', value: `**${boneScore.toLocaleString()}** Pts`, inline: true },
+    { name: '🎖️ Prestige Rank', value: `**${rankTitle}** (Tier ${rankInfo?.tier ?? 0})`, inline: true }
+  ];
+
+  if (userData.primaryCharacter) {
+    fields.push({ name: '⚔️ Primary Character', value: `**${userData.primaryCharacter}**`, inline: true });
+  }
 
   return {
     title: `${rankIcon} Black Sands Wallet — ${name}`,
-    description: handle ? `*${handle}*` : undefined,
+    description: `${handle ? `*${handle}*` : ''}${charDisplay}`,
     color: Colors.GOLD,
-    fields: [
-      { name: '💰 Spendable Bones', value: `**${spendable.toLocaleString()}** Bones`, inline: true },
-      { name: '🏆 Bone Score', value: `**${boneScore.toLocaleString()}** Pts`, inline: true },
-      { name: '🎖️ Prestige Rank', value: `**${rankTitle}** (Tier ${rankInfo?.tier ?? 0})`, inline: true }
-    ],
+    fields,
     footer: { text: 'Black Sands Exchange • bse.teasy2ez.win' },
     timestamp: new Date().toISOString()
   };
@@ -208,9 +215,10 @@ export function buildLeaderboardEmbed(topMembers = []) {
       const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : `\`#${idx + 1}\``;
       const name = m.serverNickname || m.globalName || m.username || 'Unknown';
       const handle = m.username ? `(@${m.username})` : '';
+      const charPart = m.primaryCharacter ? ` [${m.primaryCharacter}]` : '';
       const score = (m.boneScore ?? m.spendableBones ?? 0).toLocaleString();
       const rank = m.rankTitle || 'Initiate';
-      return `${medal} **${name}** ${handle} — **${score}** Bone Score • *${rank}*`;
+      return `${medal} **${name}**${charPart} ${handle} — **${score}** Bone Score • *${rank}*`;
     }).join('\n');
   }
 
@@ -283,12 +291,14 @@ export function buildBountyClaimReviewMessage(claim, bounty, user) {
   const memberName = user?.serverNickname || user?.globalName || user?.username || claim.discordUsername || 'Member';
   const handle = user?.username ? `@${user.username}` : (claim.discordUsername ? `@${claim.discordUsername}` : '');
   const reward = bounty?.rewardBones || claim.rewardBones || 0;
+  const character = claim.characterName || user?.primaryCharacter || 'Unspecified';
 
   const embed = {
     title: `🛡️ Bounty Claim Submitted: ${bounty?.title || 'Unknown Bounty'}`,
     description: `Submitted by **${memberName}** ${handle ? `(${handle})` : ''}\nClaim ID: \`${claim.id}\``,
     color: Colors.BLUE,
     fields: [
+      { name: '⚔️ In-Game Character', value: `**${character}**`, inline: true },
       { name: '💰 Reward', value: `**+${reward.toLocaleString()}** Bones`, inline: true },
       { name: '🔗 Proof Link', value: claim.proofUrl ? `[View Proof](${claim.proofUrl})` : '*No link provided*', inline: true },
       { name: '📝 Member Note', value: claim.notes || '*No additional notes provided*', inline: false }
@@ -333,6 +343,7 @@ export function buildShopDeliveryReviewMessage(delivery, item, user) {
   const memberName = user?.serverNickname || user?.globalName || user?.username || delivery.discordUsername || 'Member';
   const handle = user?.username ? `@${user.username}` : '';
   const cost = item?.costBones || delivery.costBones || 0;
+  const targetChar = delivery.characterName || user?.primaryCharacter || 'Check with member';
 
   const embed = {
     title: `📦 Shop Purchase Delivery Required: ${item?.title || 'Unknown Item'}`,
@@ -341,6 +352,7 @@ export function buildShopDeliveryReviewMessage(delivery, item, user) {
     fields: [
       { name: '🏷️ Item', value: item?.title || 'Item', inline: true },
       { name: '🪙 Cost Paid', value: `${cost.toLocaleString()} Bones`, inline: true },
+      { name: '📬 Send In-Game To', value: `**${targetChar}**`, inline: true },
       { name: '📅 Order Date', value: new Date(delivery.createdAt || Date.now()).toLocaleDateString(), inline: true },
       { name: '📝 Delivery Instructions', value: item?.fulfillmentNotes || 'Deliver item/perk in-game or assign guild rank.' }
     ],

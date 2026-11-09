@@ -748,3 +748,157 @@ body {
   from { transform: translateX(100%); opacity: 0; }
   to { transform: translateX(0); opacity: 1; }
 }
+
+/* Character Tag in Wallet */
+.primary-character-tag {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  font-size: 0.85rem;
+}
+
+.char-pill {
+  background: var(--bg-accent);
+  border: 1px solid var(--border-gold);
+  color: var(--gold-100);
+  padding: 0.2rem 0.6rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.8rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.btn-link {
+  background: none;
+  border: none;
+  color: var(--blue);
+  cursor: pointer;
+  font-size: 0.8rem;
+  text-decoration: underline;
+  padding: 0;
+}
+
+.btn-link:hover {
+  color: var(--gold-300);
+}
+
+/* Officer Subtabs */
+.officer-subtabs {
+  display: flex;
+  gap: 0.5rem;
+  border-bottom: 1px solid var(--border-subtle);
+  margin-bottom: 1.25rem;
+  overflow-x: auto;
+  padding-bottom: 0.5rem;
+}
+
+.officer-subtab {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+  padding: 0.45rem 0.9rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  white-space: nowrap;
+  transition: all 0.2s;
+}
+
+.officer-subtab:hover {
+  background: var(--bg-card-hover);
+  color: var(--gold-100);
+}
+
+.officer-subtab.active {
+  background: rgba(229, 169, 59, 0.15);
+  border-color: var(--amber);
+  color: var(--gold-300);
+}
+
+.counter-bubble {
+  background: var(--amber);
+  color: #0e0d0b;
+  font-weight: 800;
+  font-size: 0.65rem;
+  padding: 0.1rem 0.4rem;
+  border-radius: 999px;
+}
+
+.officer-subview {
+  display: none;
+}
+
+.officer-subview.active {
+  display: block;
+}
+
+.officer-cards-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.officer-review-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 1rem;
+  transition: border-color 0.2s;
+}
+
+.officer-review-card:hover {
+  border-color: var(--border-gold);
+}
+
+.proof-thumbnail {
+  max-width: 120px;
+  max-height: 80px;
+  border-radius: 4px;
+  border: 1px solid var(--border-subtle);
+  cursor: zoom-in;
+  object-fit: cover;
+  transition: transform 0.2s;
+}
+
+.proof-thumbnail:hover {
+  transform: scale(1.05);
+  border-color: var(--gold-300);
+}
+
+.autocomplete-dropdown {
+  position: relative;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.autocomplete-item {
+  background: var(--bg-accent);
+  padding: 0.4rem 0.65rem;
+  border-radius: 4px;
+  margin-top: 2px;
+  cursor: pointer;
+  font-size: 0.8rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.autocomplete-item:hover {
+  background: var(--bg-card-hover);
+  color: var(--gold-300);
+}
+
+.officer-badge {
+  background: var(--danger);
+  color: #fff;
+  font-size: 0.65rem;
+  font-weight: 800;
+  padding: 0.15rem 0.45rem;
+  border-radius: 999px;
+  margin-left: 0.3rem;
+}

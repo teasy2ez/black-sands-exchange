@@ -169,7 +169,14 @@ async function handleDiscordAuthCallback(url, env, firestore) {
       const permissions = BigInt(member.permissions || '0');
       const ADMINISTRATOR = 0x8n;
       const MANAGE_GUILD = 0x20n;
-      if ((permissions & ADMINISTRATOR) === ADMINISTRATOR || (permissions & MANAGE_GUILD) === MANAGE_GUILD) {
+      const MANAGE_ROLES = 0x10000000n;
+      const BAN_MEMBERS = 0x4n;
+      if (
+        (permissions & ADMINISTRATOR) === ADMINISTRATOR ||
+        (permissions & MANAGE_GUILD) === MANAGE_GUILD ||
+        (permissions & MANAGE_ROLES) === MANAGE_ROLES ||
+        (permissions & BAN_MEMBERS) === BAN_MEMBERS
+      ) {
         isOfficer = true;
       }
       if (env.DISCORD_OFFICER_ROLE_ID && member.roles?.includes(env.DISCORD_OFFICER_ROLE_ID)) {
@@ -235,7 +242,9 @@ async function handleDiscordAuthMe(request, env, firestore) {
   const wallet = state.wallets?.[session.id] || {
     discordId: session.id,
     spendableBones: 0,
-    boneScore: 0
+    boneScore: 0,
+    primaryCharacter: null,
+    characters: []
   };
 
   const rank = resolveRank(wallet.boneScore, state.ranks);
@@ -246,6 +255,8 @@ async function handleDiscordAuthMe(request, env, firestore) {
       ...session,
       spendableBones: wallet.spendableBones || 0,
       boneScore: wallet.boneScore || 0,
+      primaryCharacter: wallet.primaryCharacter || null,
+      characters: wallet.characters || [],
       rank
     }
   });
@@ -276,11 +287,11 @@ async function handleExchangeApi(url, request, env, firestore) {
   if (path === 'members/search' && request.method === 'GET') {
     const query = url.searchParams.get('q') || '';
     if (!env.DISCORD_GUILD_ID || !env.DISCORD_BOT_TOKEN) {
-      // Fallback search local wallets
       const state = await firestore.getBseState();
       const results = Object.values(state.wallets || {})
         .filter(w => (w.username || '').toLowerCase().includes(query.toLowerCase()) ||
-                     (w.serverNickname || '').toLowerCase().includes(query.toLowerCase()))
+                     (w.serverNickname || '').toLowerCase().includes(query.toLowerCase()) ||
+                     (w.primaryCharacter || '').toLowerCase().includes(query.toLowerCase()))
         .slice(0, 10);
       return jsonResponse(results);
     }
@@ -305,12 +316,53 @@ async function handleExchangeApi(url, request, env, firestore) {
   }
 
   const session = await getSessionFromRequest(request, env);
-  const officerKeyValid = body.officerKey && body.officerKey === (env.OFFICER_PASSCODE || 'blacksands2026');
-  const isAuthorizedOfficer = (session && session.isOfficer) || officerKeyValid;
+  const isAuthorizedOfficer = Boolean(session && session.isOfficer);
+
+  // POST Manage Character Name(s) and Primary Character
+  if (path === 'characters' && request.method === 'POST') {
+    if (!session) {
+      return jsonResponse({ error: 'Unauthorized: Discord login required' }, 401);
+    }
+    const { characters, primaryCharacter } = body;
+    if (!Array.isArray(characters)) {
+      return jsonResponse({ error: 'characters must be an array' }, 400);
+    }
+
+    const state = await firestore.getBseState();
+    state.wallets = state.wallets || {};
+    const wallet = state.wallets[session.id] || {
+      discordId: session.id,
+      username: session.username,
+      serverNickname: session.serverNickname,
+      spendableBones: 0,
+      boneScore: 0
+    };
+
+    wallet.characters = characters.map(c => ({
+      name: String(c.name || '').trim(),
+      realm: String(c.realm || '').trim(),
+      class: String(c.class || '').trim(),
+      isPrimary: Boolean(c.isPrimary)
+    })).filter(c => c.name.length > 0);
+
+    // Determine primary character
+    const primaryObj = wallet.characters.find(c => c.isPrimary);
+    wallet.primaryCharacter = primaryCharacter || (primaryObj ? primaryObj.name : (wallet.characters[0]?.name || null));
+    wallet.updatedAt = new Date().toISOString();
+    state.wallets[session.id] = wallet;
+
+    await firestore.saveBseState(state);
+
+    return jsonResponse({
+      success: true,
+      characters: wallet.characters,
+      primaryCharacter: wallet.primaryCharacter
+    });
+  }
 
   // POST Submit Bounty Claim (Member or Officer)
   if (path === 'claim' && request.method === 'POST') {
-    const { bountyId, proofUrl, notes, discordId, discordUsername } = body;
+    const { bountyId, proofUrl, notes, discordId, discordUsername, characterName } = body;
     const targetId = session?.id || discordId;
     const targetUsername = session?.username || discordUsername || 'Anonymous';
 
@@ -322,6 +374,9 @@ async function handleExchangeApi(url, request, env, firestore) {
     const bounty = (state.bounties || []).find(b => b.id === bountyId);
     if (!bounty) return jsonResponse({ error: 'Bounty not found' }, 404);
 
+    const userWallet = state.wallets?.[targetId];
+    const resolvedChar = characterName || userWallet?.primaryCharacter || null;
+
     const claimId = `claim_${Date.now()}_${targetId.slice(-4)}`;
     const claim = {
       id: claimId,
@@ -331,6 +386,7 @@ async function handleExchangeApi(url, request, env, firestore) {
       discordId: targetId,
       discordUsername: targetUsername,
       serverNickname: session?.serverNickname || targetUsername,
+      characterName: resolvedChar,
       proofUrl: proofUrl || '',
       notes: notes || '',
       status: 'pending',
@@ -344,7 +400,7 @@ async function handleExchangeApi(url, request, env, firestore) {
     // Notify #officer-exchange with interactive buttons
     if (env.DISCORD_OFFICER_CHANNEL_ID && env.DISCORD_BOT_TOKEN) {
       try {
-        const reviewMsg = buildBountyClaimReviewMessage(claim, bounty, claim);
+        const reviewMsg = buildBountyClaimReviewMessage(claim, bounty, userWallet || claim);
         await sendChannelMessage(env.DISCORD_OFFICER_CHANNEL_ID, reviewMsg, env.DISCORD_BOT_TOKEN);
       } catch (err) {
         console.error('Failed to notify #officer-exchange:', err);
@@ -356,7 +412,7 @@ async function handleExchangeApi(url, request, env, firestore) {
 
   // POST Purchase Item or Rank Promotion
   if (path === 'buy' && request.method === 'POST') {
-    const { itemId, discordId } = body;
+    const { itemId, discordId, characterName } = body;
     const targetId = session?.id || discordId;
 
     if (!targetId || !itemId) {
@@ -387,6 +443,7 @@ async function handleExchangeApi(url, request, env, firestore) {
       item.stock = Math.max(0, item.stock - 1);
     }
 
+    const resolvedChar = characterName || wallet.primaryCharacter || null;
     const orderId = `order_${Date.now()}_${targetId.slice(-4)}`;
     const delivery = {
       id: orderId,
@@ -396,6 +453,7 @@ async function handleExchangeApi(url, request, env, firestore) {
       discordId: targetId,
       discordUsername: session?.username || wallet.username || 'Member',
       serverNickname: session?.serverNickname || wallet.serverNickname || wallet.username,
+      characterName: resolvedChar,
       status: 'pending',
       createdAt: new Date().toISOString()
     };
@@ -410,7 +468,7 @@ async function handleExchangeApi(url, request, env, firestore) {
       targetId,
       targetName: delivery.serverNickname,
       amount: -item.costBones,
-      reason: `Purchased ${item.title} (Order: ${orderId})`,
+      reason: `Purchased ${item.title} (Order: ${orderId}${resolvedChar ? ` for ${resolvedChar}` : ''})`,
       timestamp: new Date().toISOString()
     });
 
@@ -427,10 +485,11 @@ async function handleExchangeApi(url, request, env, firestore) {
     // Notify #exchange-feed
     if (env.DISCORD_FEED_CHANNEL_ID && env.DISCORD_BOT_TOKEN) {
       try {
+        const charSuffix = resolvedChar ? ` for **${resolvedChar}**` : '';
         await sendChannelMessage(env.DISCORD_FEED_CHANNEL_ID, {
           embeds: [{
             title: '🛒 Shop Purchase Receipt',
-            description: `**${delivery.serverNickname}** purchased **${item.title}** for **${item.costBones}** Bones!`,
+            description: `**${delivery.serverNickname}** purchased **${item.title}**${charSuffix} for **${item.costBones}** Bones!`,
             color: Colors.GOLD,
             timestamp: new Date().toISOString()
           }]
@@ -443,26 +502,34 @@ async function handleExchangeApi(url, request, env, firestore) {
     return jsonResponse({ success: true, remainingBones: wallet.spendableBones, delivery });
   }
 
-  // --- Officer Protected Endpoints ---
+  // =========================================================================
+  // OFFICER EXCLUSIVE API ENDPOINTS (Strictly requires session.isOfficer)
+  // =========================================================================
   if (!isAuthorizedOfficer) {
-    return jsonResponse({ error: 'Unauthorized: Officer permissions required' }, 403);
+    return jsonResponse({ error: 'Forbidden: Officer role required' }, 403);
   }
 
-  const officerName = session?.serverNickname || session?.username || 'Officer (Web)';
-  const officerId = session?.id || 'officer_key';
+  const officerName = session.serverNickname || session.username || 'Officer';
+  const officerId = session.id;
 
-  // POST Approve Claim
+  // POST Approve Claim with optional custom reward override and notes
   if (path === 'claim/approve' && request.method === 'POST') {
-    const { claimId } = body;
+    const { claimId, customReward, officerNote } = body;
     const state = await firestore.getBseState();
     const claim = state.claims?.[claimId];
     if (!claim) return jsonResponse({ error: 'Claim not found' }, 404);
 
     claim.status = 'approved';
     claim.reviewedBy = officerName;
+    claim.reviewedById = officerId;
     claim.reviewedAt = new Date().toISOString();
+    if (officerNote) claim.officerNote = officerNote;
 
-    const reward = claim.rewardBones || 0;
+    const reward = customReward !== undefined && Number.isInteger(customReward)
+      ? Math.max(1, customReward)
+      : (claim.rewardBones || 0);
+    claim.rewardBones = reward;
+
     state.wallets = state.wallets || {};
     const wallet = state.wallets[claim.discordId] || {
       discordId: claim.discordId,
@@ -487,41 +554,114 @@ async function handleExchangeApi(url, request, env, firestore) {
       targetId: claim.discordId,
       targetName: claim.serverNickname,
       amount: reward,
-      reason: `Approved claim ${claimId} (${claim.bountyTitle})`,
+      reason: `Approved claim ${claimId} (${claim.bountyTitle})${officerNote ? ` - Note: ${officerNote}` : ''}`,
       timestamp: new Date().toISOString()
     });
 
     return jsonResponse({ success: true, claim, wallet });
   }
 
-  // POST Deny Claim
+  // POST Deny Claim with reason
   if (path === 'claim/deny' && request.method === 'POST') {
-    const { claimId } = body;
+    const { claimId, denyReason } = body;
     const state = await firestore.getBseState();
     const claim = state.claims?.[claimId];
     if (!claim) return jsonResponse({ error: 'Claim not found' }, 404);
 
     claim.status = 'denied';
     claim.reviewedBy = officerName;
+    claim.reviewedById = officerId;
     claim.reviewedAt = new Date().toISOString();
+    claim.denyReason = denyReason || 'Does not meet bounty verification criteria';
     await firestore.saveBseState(state);
+
+    // Audit log
+    await firestore.logAuditEvent({
+      action: 'BOUNTY_CLAIM_DENIED_WEB',
+      officerId,
+      officerName,
+      targetId: claim.discordId,
+      targetName: claim.serverNickname,
+      reason: `Denied claim ${claimId} (${claim.bountyTitle}): ${claim.denyReason}`,
+      timestamp: new Date().toISOString()
+    });
 
     return jsonResponse({ success: true, claim });
   }
 
   // POST Mark Order Delivered
   if (path === 'deliver' && request.method === 'POST') {
-    const { orderId } = body;
+    const { orderId, fulfillmentNote } = body;
     const state = await firestore.getBseState();
     const delivery = state.deliveries?.[orderId];
     if (!delivery) return jsonResponse({ error: 'Delivery order not found' }, 404);
 
     delivery.status = 'fulfilled';
     delivery.fulfilledBy = officerName;
+    delivery.fulfilledById = officerId;
     delivery.fulfilledAt = new Date().toISOString();
+    if (fulfillmentNote) delivery.fulfillmentNote = fulfillmentNote;
     await firestore.saveBseState(state);
 
+    // Audit log
+    await firestore.logAuditEvent({
+      action: 'SHOP_ORDER_DELIVERED',
+      officerId,
+      officerName,
+      targetId: delivery.discordId,
+      targetName: delivery.serverNickname,
+      reason: `Delivered ${delivery.itemTitle} to ${delivery.characterName || delivery.serverNickname}`,
+      timestamp: new Date().toISOString()
+    });
+
     return jsonResponse({ success: true, delivery });
+  }
+
+  // POST 1-Click Refund Shop Order
+  if (path === 'deliver/refund' && request.method === 'POST') {
+    const { orderId, refundReason } = body;
+    const state = await firestore.getBseState();
+    const delivery = state.deliveries?.[orderId];
+    if (!delivery) return jsonResponse({ error: 'Delivery order not found' }, 404);
+
+    if (delivery.status === 'refunded') {
+      return jsonResponse({ error: 'Order was already refunded' }, 400);
+    }
+
+    delivery.status = 'refunded';
+    delivery.refundedBy = officerName;
+    delivery.refundedAt = new Date().toISOString();
+    delivery.refundReason = refundReason || 'Refunded by officer';
+
+    // Return Bones to member
+    state.wallets = state.wallets || {};
+    const wallet = state.wallets[delivery.discordId];
+    if (wallet) {
+      wallet.spendableBones = (wallet.spendableBones || 0) + delivery.costBones;
+      wallet.updatedAt = new Date().toISOString();
+    }
+
+    // Restore item stock if limited
+    const item = (state.shop || []).find(i => i.id === delivery.itemId);
+    if (item && !item.unlimitedStock) {
+      item.stock = (item.stock || 0) + 1;
+    }
+
+    await firestore.saveBseState(state);
+
+    // Audit log
+    await firestore.logAuditEvent({
+      action: 'SHOP_ORDER_REFUNDED',
+      officerId,
+      officerName,
+      targetId: delivery.discordId,
+      targetName: delivery.serverNickname,
+      amount: delivery.costBones,
+      reason: `Refunded ${delivery.itemTitle} (${orderId}): ${delivery.refundReason}`,
+      timestamp: new Date().toISOString()
+    });
+
+    return jsonResponse({ success: true, delivery, refundedBones: delivery.costBones });
   }
 
   // POST Award Bones
@@ -577,6 +717,47 @@ async function handleExchangeApi(url, request, env, firestore) {
 
     await firestore.saveBseState(state);
 
+    // Audit log
+    await firestore.logAuditEvent({
+      action: 'OFFICER_DEDUCT_WEB',
+      officerId,
+      officerName,
+      targetId,
+      amount: -numAmount,
+      reason: reason || 'Administrative adjustment',
+      timestamp: new Date().toISOString()
+    });
+
+    return jsonResponse({ success: true, wallet });
+  }
+
+  // POST Member Balance Adjust / Ledger Correction
+  if (path === 'member/adjust' && request.method === 'POST') {
+    const { targetId, spendableBones, boneScore, reason } = body;
+    const state = await firestore.getBseState();
+    state.wallets = state.wallets || {};
+    const wallet = state.wallets[targetId] || {
+      discordId: targetId,
+      spendableBones: 0,
+      boneScore: 0
+    };
+
+    if (spendableBones !== undefined) wallet.spendableBones = Math.max(0, parseInt(spendableBones, 10) || 0);
+    if (boneScore !== undefined) wallet.boneScore = Math.max(0, parseInt(boneScore, 10) || 0);
+    wallet.updatedAt = new Date().toISOString();
+    state.wallets[targetId] = wallet;
+
+    await firestore.saveBseState(state);
+
+    await firestore.logAuditEvent({
+      action: 'OFFICER_MANUAL_ADJUST',
+      officerId,
+      officerName,
+      targetId,
+      reason: reason || 'Manual balance ledger adjustment',
+      timestamp: new Date().toISOString()
+    });
+
     return jsonResponse({ success: true, wallet });
   }
 
@@ -597,6 +778,24 @@ async function handleExchangeApi(url, request, env, firestore) {
     state.bounties.push(bounty);
     await firestore.saveBseState(state);
 
+    return jsonResponse({ success: true, bounty });
+  }
+
+  // POST Update Existing Bounty
+  if (path === 'bounty/update' && request.method === 'POST') {
+    const { bountyId, title, rewardBones, description, category, status } = body;
+    const state = await firestore.getBseState();
+    const bounty = (state.bounties || []).find(b => b.id === bountyId);
+    if (!bounty) return jsonResponse({ error: 'Bounty not found' }, 404);
+
+    if (title) bounty.title = title;
+    if (rewardBones) bounty.rewardBones = Math.max(1, parseInt(rewardBones, 10));
+    if (description !== undefined) bounty.description = description;
+    if (category) bounty.category = category;
+    if (status) bounty.status = status;
+    bounty.updatedAt = new Date().toISOString();
+
+    await firestore.saveBseState(state);
     return jsonResponse({ success: true, bounty });
   }
 
@@ -632,6 +831,27 @@ async function handleExchangeApi(url, request, env, firestore) {
     return jsonResponse({ success: true, item });
   }
 
+  // POST Update Shop Item
+  if (path === 'shop/update' && request.method === 'POST') {
+    const { itemId, title, costBones, description, category, stock, unlimitedStock, fulfillmentNotes, enabled } = body;
+    const state = await firestore.getBseState();
+    const item = (state.shop || []).find(i => i.id === itemId);
+    if (!item) return jsonResponse({ error: 'Item not found' }, 404);
+
+    if (title) item.title = title;
+    if (costBones) item.costBones = Math.max(1, parseInt(costBones, 10));
+    if (description !== undefined) item.description = description;
+    if (category) item.category = category;
+    if (stock !== undefined) item.stock = parseInt(stock, 10);
+    if (unlimitedStock !== undefined) item.unlimitedStock = Boolean(unlimitedStock);
+    if (fulfillmentNotes !== undefined) item.fulfillmentNotes = fulfillmentNotes;
+    if (enabled !== undefined) item.enabled = Boolean(enabled);
+    item.updatedAt = new Date().toISOString();
+
+    await firestore.saveBseState(state);
+    return jsonResponse({ success: true, item });
+  }
+
   // POST Delete Shop Item
   if (path === 'shop/delete' && request.method === 'POST') {
     const { itemId } = body;
@@ -649,11 +869,8 @@ async function handleExchangeApi(url, request, env, firestore) {
  */
 async function handleSyncStandingsApi(request, env, firestore) {
   const session = await getSessionFromRequest(request, env);
-  let body = {};
-  try { body = await request.json(); } catch {}
-  const officerKeyValid = body.officerKey && body.officerKey === (env.OFFICER_PASSCODE || 'blacksands2026');
-  if (!session?.isOfficer && !officerKeyValid) {
-    return jsonResponse({ error: 'Unauthorized' }, 403);
+  if (!session?.isOfficer) {
+    return jsonResponse({ error: 'Forbidden: Officer role required' }, 403);
   }
 
   if (!env.DISCORD_STANDINGS_CHANNEL_ID || !env.DISCORD_BOT_TOKEN) {

@@ -59,6 +59,11 @@
           <div class="wallet-member-names">
             <h2 id="walletName">Welcome, Traveler</h2>
             <span id="walletHandle">Sign in with Discord to view your Bones wallet</span>
+            <!-- Primary Character Tag & Manage Button -->
+            <div class="primary-character-tag" id="walletCharContainer" style="display: none; margin-top: 0.35rem;">
+              <span class="char-pill" id="walletPrimaryCharBadge">⚔️ Main: <strong id="walletPrimaryCharName">None</strong></span>
+              <button class="btn-link" id="btnOpenCharModal">Manage Characters</button>
+            </div>
           </div>
         </div>
 
@@ -94,12 +99,16 @@
       </div>
     </section>
 
-    <!-- Navigation Tabs -->
+    <!-- Navigation Tabs (Officer Tab is HIDDEN for non-officers) -->
     <nav class="nav-tabs">
       <button class="nav-tab active" data-tab="leaderboard">🏆 Leaderboard</button>
       <button class="nav-tab" data-tab="bounties">📜 Bounty Board</button>
       <button class="nav-tab" data-tab="shop">⚖️ Exchange Shop</button>
-      <button class="nav-tab officer-tab" data-tab="officer" id="tabOfficer">🛡️ Officer Command Center</button>
+      <!-- Strictly hidden by default; revealed ONLY if verified officer -->
+      <button class="nav-tab officer-tab" data-tab="officer" id="tabOfficer" style="display: none;">
+        🛡️ Officer Command Center
+        <span class="officer-badge" id="officerActionBadge" style="display: none;">0</span>
+      </button>
     </nav>
 
     <!-- 1. Leaderboard View -->
@@ -113,13 +122,14 @@
 
       <div class="table-container">
         <div class="table-search">
-          <input type="text" class="search-input" id="searchLeaderboard" placeholder="Search member name or @handle...">
+          <input type="text" class="search-input" id="searchLeaderboard" placeholder="Search member, @handle, or character name...">
         </div>
         <table class="leaderboard-table">
           <thead>
             <tr>
               <th>Rank</th>
               <th>Guild Member</th>
+              <th>Main Character</th>
               <th>Prestige Tier</th>
               <th>Spendable Bones</th>
               <th>Bone Score</th>
@@ -161,49 +171,80 @@
       </div>
     </section>
 
-    <!-- 4. Officer Command Center View -->
+    <!-- 4. Elaborate Officer Command Center View (STRICTLY FOR OFFICERS) -->
     <section class="tab-view" id="view-officer">
-      <!-- Locked State (Shown when not verified) -->
-      <div class="officer-lock-banner" id="officerLockedBox">
-        <h3 style="color: var(--amber); margin-bottom: 0.5rem;">🛡️ Officer Authentication Required</h3>
-        <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 1.5rem;">
-          Sign in with Discord holding the <strong>@Officer</strong> role, or enter the emergency officer passcode to unlock administrative commands.
-        </p>
-        <div style="display: flex; gap: 0.5rem; justify-content: center; max-width: 320px; margin: 0 auto;">
-          <input type="password" class="form-control" id="officerPasscodeInput" placeholder="Enter Officer Key...">
-          <button class="btn-primary" id="btnUnlockOfficer">Unlock</button>
+      <div class="section-header">
+        <div>
+          <h3 style="color: var(--amber);">🛡️ Officer Command Center</h3>
+          <p style="font-size: 0.85rem; color: var(--text-muted);">Restricted to Black Sands Officers & Moderators. Real-time control and audits.</p>
+        </div>
+        <button class="btn-primary" id="btnSyncDiscordStandings">
+          🔄 Push Standings to Discord (#exchange-standings)
+        </button>
+      </div>
+
+      <!-- Officer Sub-Navigation Tabs -->
+      <div class="officer-subtabs">
+        <button class="officer-subtab active" data-subtab="claims">
+          📥 Bounty Claims Queue <span class="counter-bubble" id="subtabClaimCount">0</span>
+        </button>
+        <button class="officer-subtab" data-subtab="deliveries">
+          📦 Pending Deliveries <span class="counter-bubble" id="subtabDeliveryCount">0</span>
+        </button>
+        <button class="officer-subtab" data-subtab="roster">
+          👥 Member Ledger & Adjustments
+        </button>
+        <button class="officer-subtab" data-subtab="manage-bounties">
+          📜 Bounty Manager
+        </button>
+        <button class="officer-subtab" data-subtab="manage-shop">
+          🏷️ Shop Catalog Manager
+        </button>
+        <button class="officer-subtab" data-subtab="audit">
+          📜 Live Audit Trail
+        </button>
+      </div>
+
+      <!-- Officer Subtab 1: Pending Claims Queue -->
+      <div class="officer-subview active" id="subview-claims">
+        <div class="section-header">
+          <h4 style="color: var(--gold-100);">Bounty Submissions Awaiting Verification</h4>
+          <span style="font-size: 0.8rem; color: var(--text-muted);">Click image preview to expand full proof</span>
+        </div>
+        <div id="pendingClaimsList" class="officer-cards-list">
+          <!-- Populated via JS -->
         </div>
       </div>
 
-      <!-- Unlocked Officer Dashboard -->
-      <div id="officerUnlockedDashboard" style="display: none;">
+      <!-- Officer Subtab 2: Pending Deliveries Backlog -->
+      <div class="officer-subview" id="subview-deliveries">
         <div class="section-header">
-          <div>
-            <h3>Officer Command Center</h3>
-            <p style="font-size: 0.85rem; color: var(--amber);">Administrative tools, 1-click approvals, and Discord broadcast controls.</p>
-          </div>
-          <button class="btn-primary" id="btnSyncDiscordStandings">
-            🔄 Push Standings to Discord (#exchange-standings)
-          </button>
+          <h4 style="color: var(--gold-100);">In-Game & Guild Perk Fulfillment Backlog</h4>
+          <span style="font-size: 0.8rem; color: var(--text-muted);">Mark delivered or refund spent Bones with 1 click</span>
         </div>
+        <div id="pendingDeliveriesList" class="officer-cards-list">
+          <!-- Populated via JS -->
+        </div>
+      </div>
 
+      <!-- Officer Subtab 3: Member Ledger & Adjustments -->
+      <div class="officer-subview" id="subview-roster">
         <div class="officer-dashboard-grid">
-
-          <!-- 1. Award / Deduct Tool -->
+          <!-- Member Search & Quick Award/Deduct -->
           <div class="officer-box">
-            <h4>🪙 Award / Deduct Bones</h4>
+            <h4>🪙 Quick Award / Deduct Bones</h4>
             <div class="form-group">
-              <label>Target Member (@handle or search)</label>
+              <label>Search Member (@handle, server nick, or character name)</label>
               <input type="text" class="form-control" id="awardTargetInput" placeholder="Type member name...">
               <input type="hidden" id="awardTargetId">
-              <div id="memberSearchResults" style="margin-top: 0.25rem;"></div>
+              <div id="memberSearchResults" class="autocomplete-dropdown"></div>
             </div>
             <div class="form-group">
               <label>Amount of Bones</label>
               <input type="number" class="form-control" id="awardAmountInput" min="1" placeholder="e.g. 25">
             </div>
             <div class="form-group">
-              <label>Reason / Note</label>
+              <label>Reason / Note (Logged to Audit Trail & #exchange-feed)</label>
               <input type="text" class="form-control" id="awardReasonInput" placeholder="e.g. Heroic raid boss coaching">
             </div>
             <div style="display: flex; gap: 0.5rem;">
@@ -212,88 +253,208 @@
             </div>
           </div>
 
-          <!-- 2. Pending Bounty Claims Queue -->
+          <!-- Deep Member Ledger Inspector -->
           <div class="officer-box">
-            <h4>⚔️ Pending Bounty Claims Queue</h4>
-            <div id="pendingClaimsList">
-              <p style="color: var(--text-dim); font-size: 0.85rem;">No pending claims awaiting review.</p>
+            <h4>🔍 Member Profile & Manual Ledger Override</h4>
+            <div id="memberInspectorCard">
+              <p style="color: var(--text-dim); font-size: 0.85rem;">Select a member on the left or search above to view full details and perform corrections.</p>
+            </div>
+            <div id="memberInspectorForm" style="display: none; margin-top: 1rem;">
+              <div class="form-group">
+                <label>Direct Spendable Bones Override</label>
+                <input type="number" class="form-control" id="inspectorSpendable" min="0">
+              </div>
+              <div class="form-group">
+                <label>Direct Bone Score Override (Career Score)</label>
+                <input type="number" class="form-control" id="inspectorScore" min="0">
+              </div>
+              <div class="form-group">
+                <label>Adjustment Justification</label>
+                <input type="text" class="form-control" id="inspectorReason" placeholder="Reason for direct adjustment...">
+              </div>
+              <button class="btn-primary" id="btnSaveMemberAdjust" style="width: 100%;">Save Ledger Correction</button>
             </div>
           </div>
+        </div>
+      </div>
 
-          <!-- 3. Pending Shop Deliveries -->
-          <div class="officer-box">
-            <h4>📦 Pending Shop Deliveries Backlog</h4>
-            <div id="pendingDeliveriesList">
-              <p style="color: var(--text-dim); font-size: 0.85rem;">No shop orders pending fulfillment.</p>
-            </div>
-          </div>
-
-          <!-- 4. Bounty Manager (Create Bounty) -->
-          <div class="officer-box">
-            <h4>📜 Create New Bounty</h4>
-            <div class="form-group">
-              <label>Bounty Title</label>
-              <input type="text" class="form-control" id="newBountyTitle" placeholder="e.g. Mythic Vault Clean Clear">
-            </div>
-            <div class="form-group">
-              <label>Reward (Bones)</label>
-              <input type="number" class="form-control" id="newBountyReward" min="1" placeholder="50">
-            </div>
-            <div class="form-group">
-              <label>Category</label>
-              <select class="form-control" id="newBountyCategory">
-                <option value="Raid">Raid</option>
-                <option value="Dungeon">Dungeon</option>
-                <option value="Economy">Economy</option>
-                <option value="Guild">Guild Perk</option>
-              </select>
+      <!-- Officer Subtab 4: Bounty Manager -->
+      <div class="officer-subview" id="subview-manage-bounties">
+        <div class="officer-dashboard-grid">
+          <div class="officer-box" style="grid-column: 1 / -1;">
+            <h4>📜 Post New Guild Bounty</h4>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1rem;">
+              <div class="form-group">
+                <label>Bounty Title</label>
+                <input type="text" class="form-control" id="newBountyTitle" placeholder="e.g. Mythic Vault Clean Clear">
+              </div>
+              <div class="form-group">
+                <label>Reward (Bones)</label>
+                <input type="number" class="form-control" id="newBountyReward" min="1" placeholder="50">
+              </div>
+              <div class="form-group">
+                <label>Category</label>
+                <select class="form-control" id="newBountyCategory">
+                  <option value="Raid">Raid</option>
+                  <option value="Dungeon">Dungeon</option>
+                  <option value="Economy">Economy</option>
+                  <option value="PvP">PvP</option>
+                  <option value="Guild">Guild Perk</option>
+                </select>
+              </div>
             </div>
             <div class="form-group">
               <label>Description & Requirements</label>
-              <textarea class="form-control" id="newBountyDesc" rows="2" placeholder="Full completion details..."></textarea>
+              <textarea class="form-control" id="newBountyDesc" rows="2" placeholder="Full completion details and requirements..."></textarea>
             </div>
-            <button class="btn-primary" id="btnCreateBounty" style="width: 100%;">Create Bounty</button>
+            <button class="btn-primary" id="btnCreateBounty" style="max-width: 200px;">Create Bounty</button>
           </div>
 
-          <!-- 5. Shop Item Manager (Create Item) -->
-          <div class="officer-box">
-            <h4>🏷️ Add Shop Item</h4>
-            <div class="form-group">
-              <label>Item Title</label>
-              <input type="text" class="form-control" id="newItemTitle" placeholder="e.g. Mythic Keystone Carry">
+          <div class="officer-box" style="grid-column: 1 / -1;">
+            <h4>Active Bounties Control</h4>
+            <div id="officerBountiesList" class="officer-cards-list">
+              <!-- Populated via JS -->
             </div>
-            <div class="form-group">
-              <label>Cost (Bones)</label>
-              <input type="number" class="form-control" id="newItemCost" min="1" placeholder="75">
-            </div>
-            <div class="form-group">
-              <label>Category</label>
-              <select class="form-control" id="newItemCategory">
-                <option value="Consumables">Consumables</option>
-                <option value="Enhancements">Enhancements</option>
-                <option value="Discord Perks">Discord Perks</option>
-                <option value="Guild Perks">Guild Perks</option>
-              </select>
-            </div>
-            <div class="form-group">
-              <label>Stock</label>
-              <input type="number" class="form-control" id="newItemStock" min="1" value="10">
-              <label style="margin-top: 0.3rem; display: flex; align-items: center; gap: 0.4rem; text-transform: none;">
-                <input type="checkbox" id="newItemUnlimited"> Unlimited Stock
-              </label>
+          </div>
+        </div>
+      </div>
+
+      <!-- Officer Subtab 5: Shop Catalog Manager -->
+      <div class="officer-subview" id="subview-manage-shop">
+        <div class="officer-dashboard-grid">
+          <div class="officer-box" style="grid-column: 1 / -1;">
+            <h4>🏷️ Add New Item to Exchange Shop</h4>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1rem;">
+              <div class="form-group">
+                <label>Item Title</label>
+                <input type="text" class="form-control" id="newItemTitle" placeholder="e.g. Mythic Keystone Carry">
+              </div>
+              <div class="form-group">
+                <label>Cost (Bones)</label>
+                <input type="number" class="form-control" id="newItemCost" min="1" placeholder="75">
+              </div>
+              <div class="form-group">
+                <label>Category</label>
+                <select class="form-control" id="newItemCategory">
+                  <option value="Consumables">Consumables</option>
+                  <option value="Enhancements">Enhancements</option>
+                  <option value="Discord Perks">Discord Perks</option>
+                  <option value="Guild Perks">Guild Perks</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label>Stock</label>
+                <input type="number" class="form-control" id="newItemStock" min="1" value="10">
+                <label style="margin-top: 0.3rem; display: flex; align-items: center; gap: 0.4rem; text-transform: none; font-size: 0.75rem;">
+                  <input type="checkbox" id="newItemUnlimited"> Unlimited Stock
+                </label>
+              </div>
             </div>
             <div class="form-group">
               <label>Fulfillment Instructions</label>
-              <input type="text" class="form-control" id="newItemFulfillment" placeholder="How officers deliver this item...">
+              <input type="text" class="form-control" id="newItemFulfillment" placeholder="How officers deliver this item (e.g. Mail in-game or assign Discord role)...">
             </div>
-            <button class="btn-primary" id="btnCreateShopItem" style="width: 100%;">Add Item to Shop</button>
+            <button class="btn-primary" id="btnCreateShopItem" style="max-width: 200px;">Add Item to Shop</button>
           </div>
 
+          <div class="officer-box" style="grid-column: 1 / -1;">
+            <h4>Catalog Items Control</h4>
+            <div id="officerShopList" class="officer-cards-list">
+              <!-- Populated via JS -->
+            </div>
+          </div>
         </div>
       </div>
+
+      <!-- Officer Subtab 6: Live Audit Trail -->
+      <div class="officer-subview" id="subview-audit">
+        <div class="section-header">
+          <h4 style="color: var(--gold-100);">Permanent Economy Audit Trail</h4>
+          <span style="font-size: 0.8rem; color: var(--text-muted);">Real-time log of awards, deductions, claims, and purchases</span>
+        </div>
+        <div class="table-container">
+          <table class="leaderboard-table">
+            <thead>
+              <tr>
+                <th>Timestamp</th>
+                <th>Action</th>
+                <th>Officer / Initiator</th>
+                <th>Target Member</th>
+                <th>Amount</th>
+                <th>Reason / Notes</th>
+              </tr>
+            </thead>
+            <tbody id="auditTrailTbody">
+              <!-- Populated via JS -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+
     </section>
 
   </main>
+
+  <!-- Modal: Manage In-Game Characters -->
+  <div class="modal-overlay" id="modalCharacters">
+    <div class="modal-content" style="max-width: 520px;">
+      <div class="modal-header">
+        <h4 style="color: var(--gold-300);">⚔️ Manage Your In-Game Characters</h4>
+        <button class="modal-close" data-close-modal="modalCharacters">✕</button>
+      </div>
+      <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 1rem;">
+        Add your WoW characters. Your <strong>Primary Character</strong> is displayed on leaderboards, claim submissions, and delivery mail orders!
+      </p>
+
+      <!-- Existing Characters List -->
+      <div id="characterListContainer" style="margin-bottom: 1.25rem;">
+        <!-- Populated via JS -->
+      </div>
+
+      <!-- Add Character Form -->
+      <div style="background: var(--bg-primary); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 1rem; margin-bottom: 1rem;">
+        <h5 style="color: var(--gold-100); margin-bottom: 0.5rem; font-size: 0.85rem;">+ Add New Character</h5>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; margin-bottom: 0.5rem;">
+          <div>
+            <label style="font-size: 0.75rem; color: var(--text-muted);">Character Name</label>
+            <input type="text" class="form-control" id="newCharName" placeholder="e.g. Grimfang">
+          </div>
+          <div>
+            <label style="font-size: 0.75rem; color: var(--text-muted);">Realm (Optional)</label>
+            <input type="text" class="form-control" id="newCharRealm" placeholder="e.g. Area 52">
+          </div>
+        </div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; align-items: center;">
+          <div>
+            <label style="font-size: 0.75rem; color: var(--text-muted);">Class</label>
+            <select class="form-control" id="newCharClass">
+              <option value="Warrior">Warrior</option>
+              <option value="Paladin">Paladin</option>
+              <option value="Hunter">Hunter</option>
+              <option value="Rogue">Rogue</option>
+              <option value="Priest">Priest</option>
+              <option value="Death Knight">Death Knight</option>
+              <option value="Shaman">Shaman</option>
+              <option value="Mage">Mage</option>
+              <option value="Warlock">Warlock</option>
+              <option value="Monk">Monk</option>
+              <option value="Druid">Druid</option>
+              <option value="Demon Hunter">Demon Hunter</option>
+              <option value="Evoker">Evoker</option>
+            </select>
+          </div>
+          <div style="padding-top: 1.2rem;">
+            <button class="btn-secondary" id="btnAddCharacter" style="width: 100%;">Add to Roster</button>
+          </div>
+        </div>
+      </div>
+
+      <div style="display: flex; gap: 0.5rem;">
+        <button class="btn-secondary" data-close-modal="modalCharacters" style="flex: 1;">Cancel</button>
+        <button class="btn-primary" id="btnSaveCharacters" style="flex: 1;">Save Changes</button>
+      </div>
+    </div>
+  </div>
 
   <!-- Modal: Submit Bounty Claim -->
   <div class="modal-overlay" id="modalClaim">
@@ -305,6 +466,10 @@
       <div class="form-group">
         <label>Selected Bounty</label>
         <select class="form-control" id="claimBountySelect"></select>
+      </div>
+      <div class="form-group">
+        <label>Completing Character</label>
+        <select class="form-control" id="claimCharacterSelect"></select>
       </div>
       <div class="form-group">
         <label>Proof Link (Screenshot / Discord Image / Logs)</label>
@@ -328,6 +493,10 @@
       <div id="buyModalBody" style="margin-bottom: 1.5rem; font-size: 0.95rem; color: var(--text-main);">
         <!-- Populated via JS -->
       </div>
+      <div class="form-group">
+        <label>Deliver In-Game To Character</label>
+        <select class="form-control" id="buyRecipientCharSelect"></select>
+      </div>
       <div style="display: flex; gap: 0.5rem;">
         <button class="btn-secondary" data-close-modal="modalBuy" style="flex: 1;">Cancel</button>
         <button class="btn-primary" id="btnConfirmBuyExecute" style="flex: 1;">Confirm & Spend Bones</button>
@@ -349,6 +518,14 @@
         <button class="btn-secondary" data-close-modal="modalRankPromote" style="flex: 1;">Cancel</button>
         <button class="btn-primary" id="btnConfirmRankPromoteExecute" style="flex: 1;">Purchase Rank Promotion</button>
       </div>
+    </div>
+  </div>
+
+  <!-- Modal: Image Zoom (For Proof Inspection) -->
+  <div class="modal-overlay" id="modalImageZoom">
+    <div class="modal-content" style="max-width: 90vw; max-height: 90vh; background: transparent; border: none; box-shadow: none; display: flex; flex-direction: column; align-items: center;">
+      <button class="modal-close" data-close-modal="modalImageZoom" style="align-self: flex-end; color: #fff; font-size: 2rem; margin-bottom: 0.5rem;">✕</button>
+      <img src="" id="zoomImageTarget" style="max-width: 100%; max-height: 80vh; object-fit: contain; border-radius: 8px; border: 2px solid var(--border-gold);" alt="Proof">
     </div>
   </div>
 

@@ -191,6 +191,8 @@ async function handleClaimCommand(interaction, opts, env, firestore) {
     };
   }
 
+  const wallet = state.wallets?.[caller.id];
+
   // Create claim entry
   const claimId = `claim_${Date.now()}_${caller.id.slice(-4)}`;
   const claim = {
@@ -201,6 +203,7 @@ async function handleClaimCommand(interaction, opts, env, firestore) {
     discordId: caller.id,
     discordUsername: caller.username,
     serverNickname: interaction.member?.nick || caller.global_name || caller.username,
+    characterName: wallet?.primaryCharacter || null,
     proofUrl,
     notes,
     status: 'pending',
@@ -291,6 +294,7 @@ async function handleBuyCommand(interaction, opts, env, firestore) {
     discordId: caller.id,
     discordUsername: caller.username,
     serverNickname: wallet.serverNickname,
+    characterName: wallet.primaryCharacter || null,
     status: 'pending',
     createdAt: new Date().toISOString()
   };
