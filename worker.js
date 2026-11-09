@@ -535,7 +535,7 @@ async function handleExchangeApi(url, request, env, firestore) {
         const charSuffix = resolvedChar ? ` for **${resolvedChar}**` : '';
         await sendChannelMessage(env.DISCORD_FEED_CHANNEL_ID, {
           embeds: [{
-            title: '🛒 Shop Purchase Receipt',
+            title: 'Shop Purchase Receipt',
             description: `**${delivery.serverNickname}** purchased **${item.title}**${charSuffix} for **${item.costBones}** Bones!`,
             color: Colors.GOLD,
             timestamp: new Date().toISOString()
@@ -918,7 +918,7 @@ async function handleExchangeApi(url, request, env, firestore) {
         tier: typeof r.tier === 'number' ? r.tier : idx,
         title: String(r.title || 'Rank'),
         costBones: Math.max(0, parseInt(r.costBones, 10) || 0),
-        icon: String(r.icon || '🪙'),
+        icon: String(r.icon || ''),
         roleId: String(r.roleId || '')
       }));
     }

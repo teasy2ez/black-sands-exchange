@@ -69,10 +69,17 @@ const subtabClaimCount = document.getElementById('subtabClaimCount');
 const subtabDeliveryCount = document.getElementById('subtabDeliveryCount');
 
 const leaderboardTbody = document.getElementById('leaderboardTbody');
+const mobileLeaderboardList = document.getElementById('mobileLeaderboardList');
 const searchLeaderboard = document.getElementById('searchLeaderboard');
 const bountiesGrid = document.getElementById('bountiesGrid');
 const shopGrid = document.getElementById('shopGrid');
 const faqAccordionContainer = document.getElementById('faqAccordionContainer');
+
+// Mobile Bottom Nav elements
+const mobileBottomNav = document.getElementById('mobileBottomNav');
+const mobileTabMemberSettings = document.getElementById('mobileTabMemberSettings');
+const mobileTabOfficer = document.getElementById('mobileTabOfficer');
+const mobileOfficerActionBadge = document.getElementById('mobileOfficerActionBadge');
 
 // Officer views
 const pendingClaimsList = document.getElementById('pendingClaimsList');
@@ -136,7 +143,7 @@ function renderAuthenticatedUser(user) {
 
   headerAvatar.src = avatarUrl;
   headerDisplayName.textContent = user.serverNickname || user.globalName || user.username;
-  headerRoleBadge.textContent = user.isOfficer ? '🛡️ Guild Officer' : 'Guild Member';
+  headerRoleBadge.textContent = user.isOfficer ? 'Guild Officer' : 'Guild Member';
 
   walletAvatar.src = avatarUrl;
   walletName.textContent = user.serverNickname || user.globalName || user.username;
@@ -155,19 +162,22 @@ function renderAuthenticatedUser(user) {
   if (user.primaryCharacter) {
     walletPrimaryCharName.textContent = user.primaryCharacter;
   } else {
-    walletPrimaryCharName.textContent = 'None (Click to link)';
+    walletPrimaryCharName.textContent = 'None';
   }
 
   updatePrestigeBanner(user.boneScore || 0, user.spendableBones || 0);
 
-  // Show Member Settings Tab
+  // Show Member Settings Tab (Desktop + Mobile)
   tabMemberSettings.style.display = 'inline-flex';
+  if (mobileTabMemberSettings) mobileTabMemberSettings.style.display = 'flex';
 
-  // STRICT OFFICER PERMISSION CHECK: Show or Hide Officer Command Center tab
+  // STRICT OFFICER PERMISSION CHECK: Show or Hide Officer Hall
   if (user.isOfficer) {
     tabOfficer.style.display = 'inline-flex';
+    if (mobileTabOfficer) mobileTabOfficer.style.display = 'flex';
   } else {
     tabOfficer.style.display = 'none';
+    if (mobileTabOfficer) mobileTabOfficer.style.display = 'none';
     if (state.activeTab === 'officer') {
       switchTab('leaderboard');
     }
@@ -178,12 +188,14 @@ function renderUnauthenticatedUser() {
   discordLoginBtn.style.display = 'inline-flex';
   userProfileBadge.style.display = 'none';
   walletName.textContent = 'Welcome, Traveler';
-  walletHandle.textContent = 'Sign in with Discord to access your wallet';
+  walletHandle.textContent = 'Sign in with Discord to access your ledger';
   walletSpendable.textContent = '0';
   walletScore.textContent = '0';
   walletCharContainer.style.display = 'none';
   tabMemberSettings.style.display = 'none';
+  if (mobileTabMemberSettings) mobileTabMemberSettings.style.display = 'none';
   tabOfficer.style.display = 'none';
+  if (mobileTabOfficer) mobileTabOfficer.style.display = 'none';
   if (state.activeTab === 'officer' || state.activeTab === 'member-settings') {
     switchTab('leaderboard');
   }
@@ -253,15 +265,15 @@ function applySiteCustomization(bse) {
   const currName = branding.currencyName || 'Bones';
 
   // Currency Labels
-  labelSpendableCurrency.textContent = `💰 Spendable ${currName}`;
-  labelCareerScore.textContent = `🏆 Career ${currName} Score`;
+  labelSpendableCurrency.textContent = `Spendable ${currName}`;
+  labelCareerScore.textContent = `Career ${currName} Score`;
   thSpendable.textContent = `Spendable ${currName}`;
-  thScore.textContent = `${currName} Score`;
+  thScore.textContent = `Career Score`;
 
   // Branding text & title
   if (branding.guildName) {
     brandGuildName.textContent = branding.guildName;
-    pageTitle.textContent = `${branding.guildName} — Guild Economy & Bounty Hub`;
+    pageTitle.textContent = `${branding.guildName} — Guild Economy & Bounty Board`;
   }
   if (branding.tagline) brandTagline.textContent = branding.tagline;
   if (branding.logoUrl) brandLogo.src = branding.logoUrl;
@@ -276,21 +288,26 @@ function applySiteCustomization(bse) {
     announcementBanner.style.display = 'none';
   }
 
-  // Navigation Module Visibility & Custom Titles
+  // Navigation Module Visibility & Custom Titles (Clean non-emoji labels)
+  const cleanTitle = (raw, fallback) => {
+    if (!raw) return fallback;
+    return raw.replace(/[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/gu, '').trim() || fallback;
+  };
+
   if (modules.leaderboard) {
-    tabNavLeaderboard.textContent = modules.leaderboard.title || '🏆 Leaderboard';
+    tabNavLeaderboard.textContent = cleanTitle(modules.leaderboard.title, 'Leaderboard');
     tabNavLeaderboard.style.display = modules.leaderboard.enabled === false ? 'none' : 'inline-flex';
   }
   if (modules.bounties) {
-    tabNavBounties.textContent = modules.bounties.title || '📜 Bounty Board';
+    tabNavBounties.textContent = cleanTitle(modules.bounties.title, 'Bounty Board');
     tabNavBounties.style.display = modules.bounties.enabled === false ? 'none' : 'inline-flex';
   }
   if (modules.shop) {
-    tabNavShop.textContent = modules.shop.title || '⚖️ Exchange Shop';
+    tabNavShop.textContent = cleanTitle(modules.shop.title, 'Exchange Shop');
     tabNavShop.style.display = modules.shop.enabled === false ? 'none' : 'inline-flex';
   }
   if (modules.faq) {
-    tabNavFaq.textContent = modules.faq.title || '📖 Rules & FAQ';
+    tabNavFaq.textContent = cleanTitle(modules.faq.title, 'Rules & FAQ');
     tabNavFaq.style.display = modules.faq.enabled === false ? 'none' : 'inline-flex';
   }
 
@@ -325,46 +342,35 @@ function updatePrestigeBanner(boneScore, spendableBones) {
   }
 
   const currName = state.bseState?.branding?.currencyName || 'Bones';
-  walletRankTitle.textContent = `${currentRank.icon || '🪙'} ${currentRank.title}`;
+  walletRankTitle.textContent = currentRank.title;
 
   if (!nextRank) {
-    nextRankTitle.textContent = 'Max Prestige Achieved!';
+    nextRankTitle.textContent = 'Max Prestige Achieved';
     rankProgressText.textContent = `${boneScore} ${currName}`;
     rankProgressBar.style.width = '100%';
     btnPromoteRank.style.display = 'none';
   } else {
-    nextRankTitle.textContent = `Next Rank: ${nextRank.title}`;
+    nextRankTitle.textContent = `Next: ${nextRank.title}`;
     const required = nextRank.costBones;
     const progress = Math.min(100, Math.floor((spendableBones / required) * 100));
     rankProgressText.textContent = `${spendableBones} / ${required} ${currName}`;
     rankProgressBar.style.width = `${progress}%`;
 
     btnPromoteRank.style.display = 'block';
-    btnPromoteRank.textContent = `⚡ Promote to ${nextRank.title} (${required} ${currName})`;
+    btnPromoteRank.textContent = `Promote to ${nextRank.title} (${required} ${currName})`;
     btnPromoteRank.onclick = () => openRankPromoteModal(nextRank);
   }
 }
 
 /**
- * Helper: Classic WoW Original Class Icons
+ * Helper: Classic WoW Class Icon (Clean empty prefix)
  */
 function getClassIcon(className = '') {
-  switch (className.toLowerCase()) {
-    case 'warrior': return '⚔️';
-    case 'paladin': return '🛡️';
-    case 'hunter': return '🏹';
-    case 'rogue': return '🗡️';
-    case 'priest': return '🕊️';
-    case 'shaman': return '⚡';
-    case 'mage': return '🔮';
-    case 'warlock': return '💀';
-    case 'druid': return '🐾';
-    default: return '⚔️';
-  }
+  return '';
 }
 
 /**
- * Render Leaderboard with Classic WoW Classes, Roles & Profile Click Handler
+ * Render Leaderboard with Dual Desktop Table & Mobile Roster Stream
  */
 function renderLeaderboard() {
   if (!state.bseState) return;
@@ -383,11 +389,15 @@ function renderLeaderboard() {
 
   if (!filtered.length) {
     leaderboardTbody.innerHTML = `<tr><td colspan="7" style="text-align: center; color: var(--text-dim); padding: 2rem;">No members match the search query.</td></tr>`;
+    if (mobileLeaderboardList) {
+      mobileLeaderboardList.innerHTML = `<div style="text-align: center; color: var(--text-dim); padding: 2rem;">No members match the search query.</div>`;
+    }
     return;
   }
 
+  // 1. Render Desktop Table (>= 768px)
   leaderboardTbody.innerHTML = filtered.map((w, idx) => {
-    const rankMedal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : `#${idx + 1}`;
+    const rankNum = idx + 1;
     const name = w.serverNickname || w.globalName || w.username || 'Guild Member';
     const handle = w.username ? `@${w.username}` : '';
     const avatarUrl = w.avatarHash
@@ -405,18 +415,17 @@ function renderLeaderboard() {
     const classCss = `class-${charClass.toLowerCase().replace(/\s+/g, '-')}`;
 
     const charDisplay = charName
-      ? `<span class="class-badge ${classCss}">${getClassIcon(charClass)} ${charName}</span>`
+      ? `<span class="class-badge ${classCss}">${charName}</span>`
       : `<span style="color:var(--text-dim); font-size:0.8rem;">—</span>`;
 
-    const roleIcon = charRole === 'Tank' ? '🛡️ Tank' : charRole === 'Healer' ? '💚 Healer' : '⚔️ DPS';
     const roleCss = (charRole || 'dps').toLowerCase();
     const roleDisplay = charName
-      ? `<span class="role-pill ${roleCss}">${roleIcon}</span>`
+      ? `<span class="role-pill ${roleCss}">${charRole}</span>`
       : `<span style="color:var(--text-dim); font-size:0.8rem;">—</span>`;
 
     return `
       <tr onclick="inspectMemberProfile('${w.discordId}')" title="Click to inspect ${name}'s WoW characters, roles, and public note">
-        <td class="table-rank-cell">${rankMedal}</td>
+        <td class="table-rank-cell">#${rankNum}</td>
         <td>
           <div class="member-cell">
             <img src="${avatarUrl}" class="table-avatar" alt="${name}">
@@ -434,6 +443,43 @@ function renderLeaderboard() {
       </tr>
     `;
   }).join('');
+
+  // 2. Render Mobile Roster Stream (< 768px)
+  if (mobileLeaderboardList) {
+    mobileLeaderboardList.innerHTML = filtered.map((w, idx) => {
+      const rankNum = idx + 1;
+      const name = w.serverNickname || w.globalName || w.username || 'Guild Member';
+      const avatarUrl = w.avatarHash
+        ? `https://cdn.discordapp.com/avatars/${w.discordId}/${w.avatarHash}.png?size=48`
+        : 'assets/favicon.svg';
+
+      const chars = w.characters || [];
+      const primChar = chars.find(c => c.isPrimary) || (w.primaryCharacter ? chars.find(c => c.name === w.primaryCharacter) : chars[0]);
+      const charName = primChar ? primChar.name : (w.primaryCharacter || null);
+      const charClass = primChar ? (primChar.class || 'Warrior') : 'Warrior';
+      const charRole = primChar ? (primChar.role || 'DPS') : 'DPS';
+      const classCss = `class-${charClass.toLowerCase().replace(/\s+/g, '-')}`;
+      const roleCss = (charRole || 'dps').toLowerCase();
+
+      return `
+        <div class="mobile-roster-card" onclick="inspectMemberProfile('${w.discordId}')">
+          <div class="mobile-roster-rank rank-${rankNum}">#${rankNum}</div>
+          <img src="${avatarUrl}" class="mobile-roster-avatar" alt="${name}">
+          <div class="mobile-roster-info">
+            <div class="mobile-roster-name">${name}</div>
+            <div class="mobile-roster-meta">
+              ${charName ? `<span class="class-badge ${classCss}" style="padding:0.1rem 0.35rem; font-size:0.7rem;">${charName}</span> <span class="role-pill ${roleCss}">${charRole}</span>` : `<span style="color:var(--text-dim);">No character</span>`}
+            </div>
+          </div>
+          <div class="mobile-roster-score">
+            <span class="score-num">${(w.boneScore || 0).toLocaleString()}</span>
+            <span class="score-label">Score</span>
+          </div>
+          <div class="mobile-roster-arrow">›</div>
+        </div>
+      `;
+    }).join('');
+  }
 }
 
 searchLeaderboard.addEventListener('input', renderLeaderboard);
@@ -459,7 +505,7 @@ window.inspectMemberProfile = function(discordId) {
       charactersHtml = `
         <div class="character-card-item">
           <div>
-            <span class="class-badge class-warrior">⚔️ ${w.primaryCharacter}</span>
+            <span class="class-badge class-warrior">${w.primaryCharacter}</span>
             <span style="font-size:0.75rem; color:var(--text-muted); margin-left:0.5rem;">Classic Character</span>
           </div>
           <span class="char-pill" style="font-size:0.7rem;">PRIMARY</span>
@@ -472,25 +518,24 @@ window.inspectMemberProfile = function(discordId) {
     charactersHtml = chars.map(c => {
       const classCss = `class-${(c.class || 'warrior').toLowerCase().replace(/\s+/g, '-')}`;
       const roleCss = (c.role || 'dps').toLowerCase();
-      const roleIcon = c.role === 'Tank' ? '🛡️ Tank' : c.role === 'Healer' ? '💚 Healer' : '⚔️ DPS';
       const profs = (c.professions || '').split(',').map(p => p.trim()).filter(Boolean);
-      const profTags = profs.map(p => `<span class="prof-tag">🔧 ${p}</span>`).join(' ');
+      const profTags = profs.map(p => `<span class="char-pill" style="font-size:0.7rem; color:var(--text-muted);">${p}</span>`).join(' ');
 
       return `
         <div class="character-card-item">
           <div style="display:flex; align-items:center; gap:0.6rem; flex-wrap:wrap;">
-            <span class="class-badge ${classCss}">${getClassIcon(c.class)} ${c.name}</span>
-            <span class="role-pill ${roleCss}">${roleIcon}</span>
-            ${c.isPrimary ? '<span class="char-pill" style="font-size:0.65rem;">⭐ PRIMARY</span>' : ''}
+            <span class="class-badge ${classCss}">${c.name}</span>
+            <span class="role-pill ${roleCss}">${c.role || 'DPS'}</span>
+            ${c.isPrimary ? '<span class="char-pill" style="font-size:0.65rem;">PRIMARY</span>' : ''}
           </div>
-          ${profTags ? `<div style="margin-top:0.35rem; width:100%;">${profTags}</div>` : ''}
+          ${profTags ? `<div style="margin-top:0.35rem; width:100%; display:flex; gap:0.35rem; flex-wrap:wrap;">${profTags}</div>` : ''}
         </div>
       `;
     }).join('');
   }
 
   const noteHtml = w.guildNote
-    ? `<div class="guild-note-card">📜 "${w.guildNote}"</div>`
+    ? `<div class="guild-note-card">"${w.guildNote}"</div>`
     : `<div style="color:var(--text-dim); font-size:0.85rem; font-style:italic; margin:0.5rem 0;">No public guild note provided yet.</div>`;
 
   const modalBody = document.getElementById('memberProfileModalBody');
@@ -502,18 +547,18 @@ window.inspectMemberProfile = function(discordId) {
         <div style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.5rem;">${handle} &bull; <span class="card-badge economy">${rankTitle}</span></div>
         <div style="display: flex; gap: 1.5rem; flex-wrap: wrap;">
           <div><span style="font-size:0.75rem; color:var(--text-muted); display:block;">SPENDABLE BONES</span> <strong style="color:var(--gold-300); font-size:1.15rem;">${(w.spendableBones || 0).toLocaleString()}</strong></div>
-          <div><span style="font-size:0.75rem; color:var(--text-muted); display:block;">CAREER BONE SCORE</span> <strong style="color:var(--amber); font-size:1.15rem;">${(w.boneScore || 0).toLocaleString()}</strong></div>
+          <div><span style="font-size:0.75rem; color:var(--text-muted); display:block;">CAREER SCORE</span> <strong style="color:var(--amber); font-size:1.15rem;">${(w.boneScore || 0).toLocaleString()}</strong></div>
         </div>
       </div>
     </div>
 
     <div style="margin-bottom: 1.25rem;">
-      <h5 style="color: var(--gold-100); font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.3rem;">📜 Public Guild Note & Bio</h5>
+      <h5 style="color: var(--gold-100); font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.3rem;">Public Guild Note</h5>
       ${noteHtml}
     </div>
 
     <div>
-      <h5 style="color: var(--gold-100); font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem;">⚔️ Linked Characters (WoW: Forever)</h5>
+      <h5 style="color: var(--gold-100); font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem;">Linked Characters (WoW: Forever)</h5>
       ${charactersHtml}
     </div>
   `;
@@ -571,7 +616,6 @@ function renderShop() {
   if (!state.bseState) return;
   const items = (state.bseState.shop || []).filter(i => i.enabled !== false);
   const currName = state.bseState?.branding?.currencyName || 'Bones';
-  const currIcon = state.bseState?.branding?.currencyIcon || '🪙';
 
   if (!items.length) {
     shopGrid.innerHTML = `<div style="grid-column: 1 / -1; text-align: center; color: var(--text-dim); padding: 3rem;">The Exchange Shop is currently restocking.</div>`;
@@ -580,7 +624,7 @@ function renderShop() {
 
   shopGrid.innerHTML = items.map(item => {
     const stockText = item.unlimitedStock
-      ? '∞ Unlimited'
+      ? 'Unlimited'
       : (item.stock > 0 ? `${item.stock} in stock` : '<strong style="color:var(--danger)">Sold Out</strong>');
     const isSoldOut = !item.unlimitedStock && item.stock <= 0;
 
@@ -589,7 +633,7 @@ function renderShop() {
         <div>
           <div class="card-top">
             <span class="card-badge perk">${item.category || 'Perk'}</span>
-            <div class="card-reward">${currIcon} ${(item.costBones || 0).toLocaleString()} ${currName}</div>
+            <div class="card-reward">${(item.costBones || 0).toLocaleString()} ${currName}</div>
           </div>
           <div class="card-title">${item.title}</div>
           <div class="card-desc">${item.description || ''}</div>
@@ -691,16 +735,16 @@ function setupMemberSettings() {
       }
 
       if (res.ok) {
-        showToast('✅ Preferences & Public Guild Note saved!');
+        showToast('Preferences & Public Guild Note saved.');
         if (state.user) {
           state.user.preferences = { theme, density, defaultCharacter, notifyToasts };
         }
         await refreshBseState();
       } else {
-        showToast('❌ Failed to save preferences');
+        showToast('Failed to save preferences.');
       }
     } catch (err) {
-      showToast(`❌ Error: ${err.message}`);
+      showToast(`Error: ${err.message}`);
     }
   });
 }
@@ -737,7 +781,7 @@ function populatePrefCharSelect(selectedChar) {
   }
   select.innerHTML = chars.map(c => `
     <option value="${c.name}" ${c.name === selectedChar || (c.isPrimary && !selectedChar) ? 'selected' : ''}>
-      ⚔️ ${c.name} (${c.class || 'Character'})
+      ${c.name} (${c.class || 'Character'})
     </option>
   `).join('');
 }
@@ -771,7 +815,7 @@ function renderOfficerQueues() {
     pendingClaimsList.innerHTML = claims.map(c => {
       const isImg = c.proofUrl && /\.(png|jpe?g|webp|gif)$/i.test(c.proofUrl.split('?')[0]);
       const charPart = c.characterName
-        ? `<span class="char-pill" style="font-size:0.75rem;">⚔️ Character: <strong>${c.characterName}</strong></span>`
+        ? `<span class="char-pill" style="font-size:0.75rem;">Character: <strong>${c.characterName}</strong></span>`
         : `<span style="color:var(--text-dim); font-size:0.75rem;">No character linked</span>`;
 
       return `
@@ -789,18 +833,18 @@ function renderOfficerQueues() {
             </div>
           </div>
 
-          <div style="display: flex; gap: 1rem; align-items: center; margin: 0.75rem 0; background: var(--bg-primary); padding: 0.75rem; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle); flex-wrap: wrap;">
+          <div style="display: flex; gap: 1rem; align-items: center; margin: 0.75rem 0; background: var(--bg-inner); padding: 0.75rem; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle); flex-wrap: wrap;">
             ${isImg ? `<img src="${c.proofUrl}" class="proof-thumbnail" alt="Proof" onclick="zoomImage('${c.proofUrl}')">` : ''}
             <div style="flex: 1; min-width: 200px;">
-              ${c.proofUrl ? `<div style="font-size: 0.85rem; margin-bottom: 0.25rem;"><a href="${c.proofUrl}" target="_blank" rel="noopener" style="color: var(--blue); font-weight: 600;">🔗 Open Full Proof Link</a></div>` : '<div style="color: var(--text-dim); font-size: 0.8rem;">No link provided</div>'}
+              ${c.proofUrl ? `<div style="font-size: 0.85rem; margin-bottom: 0.25rem;"><a href="${c.proofUrl}" target="_blank" rel="noopener" style="color: var(--blue); font-weight: 600;">Open Proof Link</a></div>` : '<div style="color: var(--text-dim); font-size: 0.8rem;">No link provided</div>'}
               ${c.notes ? `<div style="font-size: 0.85rem; color: var(--text-main); font-style: italic;">"${c.notes}"</div>` : '<div style="color: var(--text-dim); font-size: 0.8rem;">No notes provided</div>'}
             </div>
           </div>
 
           <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
-            <button class="btn-success" onclick="approveClaim('${c.id}')" style="flex: 1; min-width: 140px;">✓ Approve (+${c.rewardBones} ${currName})</button>
-            <button class="btn-secondary" onclick="approveClaimCustom('${c.id}', ${c.rewardBones})" style="min-width: 140px;">⚡ Custom Amount</button>
-            <button class="btn-danger" onclick="denyClaim('${c.id}')" style="min-width: 100px;">✕ Deny</button>
+            <button class="btn-success" onclick="approveClaim('${c.id}')" style="flex: 1; min-width: 140px;">Approve (+${c.rewardBones} ${currName})</button>
+            <button class="btn-secondary" onclick="approveClaimCustom('${c.id}', ${c.rewardBones})" style="min-width: 140px;">Custom Amount</button>
+            <button class="btn-danger" onclick="denyClaim('${c.id}')" style="min-width: 100px;">Deny</button>
           </div>
         </div>
       `;
@@ -817,7 +861,7 @@ function renderOfficerQueues() {
   } else {
     pendingDeliveriesList.innerHTML = deliveries.map(d => {
       const charPart = d.characterName
-        ? `<strong style="color: var(--gold-300);">⚔️ ${d.characterName}</strong>`
+        ? `<strong style="color: var(--gold-300);">${d.characterName}</strong>`
         : `<em style="color: var(--danger);">Unspecified character — check with member</em>`;
 
       return `
@@ -835,13 +879,13 @@ function renderOfficerQueues() {
             </div>
           </div>
 
-          <div style="background: var(--bg-primary); padding: 0.75rem; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle); margin: 0.5rem 0; font-size: 0.85rem;">
-            <div>📬 <strong>Send In-Game Delivery To:</strong> ${charPart}</div>
+          <div style="background: var(--bg-inner); padding: 0.75rem; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle); margin: 0.5rem 0; font-size: 0.85rem;">
+            <div><strong>Send Delivery To:</strong> ${charPart}</div>
           </div>
 
           <div style="display: flex; gap: 0.5rem;">
-            <button class="btn-success" onclick="fulfillDelivery('${d.id}')" style="flex: 2;">📦 Mark Delivered</button>
-            <button class="btn-danger" onclick="refundDelivery('${d.id}')" style="flex: 1;">↩️ Refund ${currName}</button>
+            <button class="btn-success" onclick="fulfillDelivery('${d.id}')" style="flex: 2;">Mark Delivered</button>
+            <button class="btn-danger" onclick="refundDelivery('${d.id}')" style="flex: 1;">Refund ${currName}</button>
           </div>
         </div>
       `;
@@ -856,8 +900,15 @@ function updateOfficerBadge() {
   if (total > 0) {
     officerActionBadge.textContent = total;
     officerActionBadge.style.display = 'inline-block';
+    if (mobileOfficerActionBadge) {
+      mobileOfficerActionBadge.textContent = total;
+      mobileOfficerActionBadge.style.display = 'inline-block';
+    }
   } else {
     officerActionBadge.style.display = 'none';
+    if (mobileOfficerActionBadge) {
+      mobileOfficerActionBadge.style.display = 'none';
+    }
   }
 }
 
@@ -915,7 +966,7 @@ function populateOfficerSettingsForms() {
 function renderRanksBuilder() {
   ranksBuilderContainer.innerHTML = state.draftRanks.map((r, idx) => `
     <div class="officer-review-card" style="display: grid; grid-template-columns: 60px 1fr 100px 140px auto; gap: 0.5rem; align-items: center;">
-      <input type="text" class="form-control" value="${r.icon || '🪙'}" onchange="updateDraftRank(${idx}, 'icon', this.value)" style="text-align: center; font-size: 1.1rem;">
+      <input type="text" class="form-control" value="${r.icon || ''}" placeholder="Icon" onchange="updateDraftRank(${idx}, 'icon', this.value)" style="text-align: center; font-size: 0.85rem;">
       <input type="text" class="form-control" value="${r.title}" placeholder="Rank Title" onchange="updateDraftRank(${idx}, 'title', this.value)">
       <input type="number" class="form-control" value="${r.costBones}" placeholder="Cost" min="0" onchange="updateDraftRank(${idx}, 'costBones', this.value)">
       <input type="text" class="form-control" value="${r.roleId || ''}" placeholder="Discord Role ID" onchange="updateDraftRank(${idx}, 'roleId', this.value)">
@@ -940,7 +991,7 @@ document.getElementById('btnAddRankTier').addEventListener('click', () => {
     tier: newTier,
     title: `Rank ${newTier + 1}`,
     costBones: (newTier + 1) * 50,
-    icon: '🎖️',
+    icon: '',
     roleId: ''
   });
   renderRanksBuilder();
@@ -999,22 +1050,22 @@ function setupDataEditor() {
       const siteModules = {
         leaderboard: {
           enabled: document.getElementById('modToggleLeaderboard')?.checked !== false,
-          title: '🏆 Leaderboard',
+          title: 'Leaderboard',
           order: 1
         },
         bounties: {
           enabled: document.getElementById('modToggleBounties')?.checked !== false,
-          title: '📜 Bounty Board',
+          title: 'Bounty Board',
           order: 2
         },
         shop: {
           enabled: document.getElementById('modToggleShop')?.checked !== false,
-          title: '⚖️ Exchange Shop',
+          title: 'Exchange Shop',
           order: 3
         },
         faq: {
           enabled: document.getElementById('modToggleFaq')?.checked !== false,
-          title: '📖 Rules & FAQ',
+          title: 'Rules & FAQ',
           order: 4,
           items: state.draftFaq || []
         }
@@ -1031,13 +1082,13 @@ function setupDataEditor() {
         });
         const data = await res.json();
         if (res.ok) {
-          showToast('📢 Announcement & Navigation Modules updated!');
+          showToast('Announcement and modules updated.');
           await refreshBseState();
         } else {
-          showToast(`❌ Failed: ${data.error || 'Server error'}`);
+          showToast(`Failed: ${data.error || 'Server error'}`);
         }
       } catch (err) {
-        showToast(`❌ Error: ${err.message}`);
+        showToast(`Error: ${err.message}`);
       }
     });
   }
@@ -1056,13 +1107,13 @@ function setupDataEditor() {
         });
         const data = await res.json();
         if (res.ok) {
-          showToast('🎖️ Prestige Ranks updated!');
+          showToast('Prestige ranks updated.');
           await refreshBseState();
         } else {
-          showToast(`❌ Failed: ${data.error || 'Server error'}`);
+          showToast(`Failed: ${data.error || 'Server error'}`);
         }
       } catch (err) {
-        showToast(`❌ Error: ${err.message}`);
+        showToast(`Error: ${err.message}`);
       }
     });
   }
@@ -1076,7 +1127,7 @@ function setupDataEditor() {
         const updatedModules = {
           ...currentModules,
           faq: {
-            ...(currentModules.faq || { enabled: true, title: '📖 Rules & FAQ', order: 4 }),
+            ...(currentModules.faq || { enabled: true, title: 'Rules & FAQ', order: 4 }),
             items: state.draftFaq
           }
         };
@@ -1090,13 +1141,13 @@ function setupDataEditor() {
         });
         const data = await res.json();
         if (res.ok) {
-          showToast('📖 Rules & FAQ updated!');
+          showToast('Rules & FAQ content updated.');
           await refreshBseState();
         } else {
-          showToast(`❌ Failed: ${data.error || 'Server error'}`);
+          showToast(`Failed: ${data.error || 'Server error'}`);
         }
       } catch (err) {
-        showToast(`❌ Error: ${err.message}`);
+        showToast(`Error: ${err.message}`);
       }
     });
   }
@@ -1109,14 +1160,14 @@ function setupDataEditor() {
         const parsed = JSON.parse(rawStateJsonTextarea.value);
         rawStateJsonTextarea.value = JSON.stringify(parsed, null, 2);
         if (rawJsonFeedback) {
-          rawJsonFeedback.innerHTML = `<span style="color: var(--success); font-weight: 600;">✅ Valid JSON! Formatted successfully.</span>`;
+          rawJsonFeedback.innerHTML = `<span style="color: var(--success); font-weight: 600;">Valid JSON. Formatted successfully.</span>`;
         }
-        showToast('✅ JSON is syntactically valid and formatted.');
+        showToast('JSON is syntactically valid and formatted.');
       } catch (err) {
         if (rawJsonFeedback) {
-          rawJsonFeedback.innerHTML = `<span style="color: var(--danger); font-weight: 600;">❌ JSON Syntax Error: ${err.message}</span>`;
+          rawJsonFeedback.innerHTML = `<span style="color: var(--danger); font-weight: 600;">JSON Syntax Error: ${err.message}</span>`;
         }
-        showToast(`❌ Syntax error: ${err.message}`);
+        showToast(`Syntax error: ${err.message}`);
       }
     });
   }
@@ -1130,13 +1181,13 @@ function setupDataEditor() {
         parsed = JSON.parse(rawStateJsonTextarea.value);
       } catch (err) {
         if (rawJsonFeedback) {
-          rawJsonFeedback.innerHTML = `<span style="color: var(--danger); font-weight: 600;">❌ Cannot save invalid JSON: ${err.message}</span>`;
+          rawJsonFeedback.innerHTML = `<span style="color: var(--danger); font-weight: 600;">Cannot save invalid JSON: ${err.message}</span>`;
         }
-        showToast(`❌ Cannot save invalid JSON: ${err.message}`);
+        showToast(`Cannot save invalid JSON: ${err.message}`);
         return;
       }
 
-      if (!confirm('⚠️ Are you sure you want to write this raw state directly to the live database? This will update the guild economy state immediately.')) {
+      if (!confirm('Are you sure you want to write this raw state directly to the live database? This will update the guild economy state immediately.')) {
         return;
       }
 
@@ -1151,21 +1202,21 @@ function setupDataEditor() {
         const data = await res.json();
         if (res.ok) {
           if (rawJsonFeedback) {
-            rawJsonFeedback.innerHTML = `<span style="color: var(--success); font-weight: 600;">💾 Database state updated successfully at ${new Date().toLocaleTimeString()}!</span>`;
+            rawJsonFeedback.innerHTML = `<span style="color: var(--success); font-weight: 600;">Database state updated successfully at ${new Date().toLocaleTimeString()}!</span>`;
           }
-          showToast('💾 Database state updated successfully!');
+          showToast('Database state updated successfully.');
           await refreshBseState();
         } else {
           if (rawJsonFeedback) {
-            rawJsonFeedback.innerHTML = `<span style="color: var(--danger); font-weight: 600;">❌ Failed: ${data.error || 'Server error'}</span>`;
+            rawJsonFeedback.innerHTML = `<span style="color: var(--danger); font-weight: 600;">Failed: ${data.error || 'Server error'}</span>`;
           }
-          showToast(`❌ Failed: ${data.error || 'Server error'}`);
+          showToast(`Failed: ${data.error || 'Server error'}`);
         }
       } catch (err) {
-        showToast(`❌ Error: ${err.message}`);
+        showToast(`Error: ${err.message}`);
       } finally {
         btnPublishRaw.disabled = false;
-        btnPublishRaw.textContent = '💾 Save Raw State to Database';
+        btnPublishRaw.textContent = 'Save Raw State to Database';
       }
     });
   }
@@ -1209,7 +1260,7 @@ function renderOfficerShopList() {
         </div>
       </div>
       <div style="display: flex; align-items: center; gap: 0.75rem;">
-        <span style="color: var(--gold-300); font-weight: 700;">🪙 ${i.costBones}</span>
+        <span style="color: var(--gold-300); font-weight: 700;">${i.costBones} Bones</span>
         <button class="btn-secondary" onclick="adjustShopStock('${i.id}', 10)">+10 Stock</button>
         <button class="btn-danger" onclick="deleteShopItem('${i.id}')">Delete</button>
       </div>
@@ -1256,7 +1307,7 @@ function setupCharacterManagement() {
     const professions = document.getElementById('newCharProfessions')?.value.trim() || '';
 
     if (!name) {
-      showToast('⚠️ Please enter a character name.');
+      showToast('Please enter a character name.');
       return;
     }
 
@@ -1272,7 +1323,7 @@ function setupCharacterManagement() {
     document.getElementById('newCharName').value = '';
     if (document.getElementById('newCharProfessions')) document.getElementById('newCharProfessions').value = '';
     renderCharacterModalList();
-    showToast(`Added ${name} (${charClass} ${charRole})! Click "Save Changes" to store.`);
+    showToast(`Added ${name} (${charClass} ${charRole}). Click "Save Changes" to store.`);
   });
 
   document.getElementById('btnSaveCharacters').addEventListener('click', async () => {
@@ -1291,7 +1342,7 @@ function setupCharacterManagement() {
       });
       const data = await res.json();
       if (res.ok) {
-        showToast('✅ Characters & Public Guild Note saved!');
+        showToast('Characters & Public Guild Note saved.');
         state.user.characters = data.characters;
         state.user.primaryCharacter = data.primaryCharacter;
         state.user.guildNote = data.guildNote || '';
@@ -1302,10 +1353,10 @@ function setupCharacterManagement() {
         populatePrefCharSelect(data.primaryCharacter);
         await refreshBseState();
       } else {
-        showToast(`❌ ${data.error || 'Failed to save characters'}`);
+        showToast(data.error || 'Failed to save characters');
       }
     } catch (err) {
-      showToast(`❌ Error: ${err.message}`);
+      showToast(`Error: ${err.message}`);
     }
   });
 }
@@ -1329,16 +1380,15 @@ function renderCharacterModalList() {
   container.innerHTML = state.userCharacters.map((c, idx) => {
     const classCss = `class-${(c.class || 'warrior').toLowerCase().replace(/\s+/g, '-')}`;
     const roleCss = (c.role || 'dps').toLowerCase();
-    const roleIcon = c.role === 'Tank' ? '🛡️ Tank' : c.role === 'Healer' ? '💚 Healer' : '⚔️ DPS';
     const profs = c.professions ? `<span style="font-size:0.7rem; color:var(--text-muted); margin-left:0.35rem;">(${c.professions})</span>` : '';
 
     return `
-      <div style="display: flex; justify-content: space-between; align-items: center; background: var(--bg-primary); padding: 0.6rem 0.85rem; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle); margin-bottom: 0.4rem; gap: 0.5rem; flex-wrap: wrap;">
+      <div style="display: flex; justify-content: space-between; align-items: center; background: var(--bg-inner); padding: 0.6rem 0.85rem; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle); margin-bottom: 0.4rem; gap: 0.5rem; flex-wrap: wrap;">
         <div style="display: flex; align-items: center; gap: 0.6rem;">
           <input type="radio" name="primaryCharRadio" ${c.isPrimary ? 'checked' : ''} onchange="setPrimaryCharacter(${idx})" title="Set as primary character">
           <div>
-            <span class="class-badge ${classCss}">${getClassIcon(c.class)} ${c.name}</span>
-            <span class="role-pill ${roleCss}" style="margin-left: 0.3rem;">${roleIcon}</span>
+            <span class="class-badge ${classCss}">${c.name}</span>
+            <span class="role-pill ${roleCss}" style="margin-left: 0.3rem;">${c.role || 'DPS'}</span>
             ${profs}
             ${c.isPrimary ? '<span class="char-pill" style="font-size: 0.65rem; margin-left: 0.4rem;">PRIMARY</span>' : ''}
           </div>
@@ -1387,7 +1437,7 @@ function setupModals() {
     const notes = document.getElementById('claimNotes').value.trim();
 
     if (!proofUrl) {
-      showToast('⚠️ Please provide a proof URL (image or logs)');
+      showToast('Please provide a proof URL (image or logs)');
       return;
     }
 
@@ -1406,14 +1456,14 @@ function setupModals() {
       });
       const data = await res.json();
       if (res.ok) {
-        showToast('✅ Claim submitted! Dispatched to Discord Officers for 1-click review.');
+        showToast('Claim submitted. Dispatched to Discord Officers for review.');
         document.getElementById('modalClaim').classList.remove('active');
         await refreshBseState();
       } else {
-        showToast(`❌ Error: ${data.error || 'Failed to submit'}`);
+        showToast(`Error: ${data.error || 'Failed to submit'}`);
       }
     } catch (err) {
-      showToast(`❌ Error: ${err.message}`);
+      showToast(`Error: ${err.message}`);
     }
   });
 
@@ -1434,14 +1484,14 @@ function setupModals() {
       });
       const data = await res.json();
       if (res.ok) {
-        showToast(`🎉 Purchased ${state.selectedItemForBuy.title}! Delivery ticket dispatched to Officers.`);
+        showToast(`Purchased ${state.selectedItemForBuy.title}. Delivery ticket dispatched to Officers.`);
         document.getElementById('modalBuy').classList.remove('active');
         await refreshBseState();
       } else {
-        showToast(`❌ ${data.error || 'Purchase failed'}`);
+        showToast(data.error || 'Purchase failed');
       }
     } catch (err) {
-      showToast(`❌ ${err.message}`);
+      showToast(err.message);
     }
   });
 }
@@ -1465,7 +1515,7 @@ window.openClaimModal = function(bountyId) {
   if (chars.length) {
     charSelect.innerHTML = chars.map(c => `
       <option value="${c.name}" ${c.name === defaultChar ? 'selected' : ''}>
-        ⚔️ ${c.name} (${c.class || 'Character'})
+        ${c.name} (${c.class || 'Character'})
       </option>
     `).join('');
   } else {
@@ -1489,7 +1539,7 @@ window.openBuyModal = function(itemId) {
   document.getElementById('buyModalBody').innerHTML = `
     <div style="font-size: 1.1rem; font-weight: 700; color: var(--gold-100); margin-bottom: 0.5rem;">${item.title}</div>
     <div style="color: var(--text-muted); margin-bottom: 1rem;">${item.description || ''}</div>
-    <div style="background: var(--bg-primary); padding: 0.85rem; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle); display: flex; justify-content: space-between;">
+    <div style="background: var(--bg-inner); padding: 0.85rem; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle); display: flex; justify-content: space-between;">
       <span>Item Cost:</span>
       <strong style="color: var(--gold-300);">${item.costBones} ${currName}</strong>
     </div>
@@ -1497,7 +1547,7 @@ window.openBuyModal = function(itemId) {
       <span>Your Spendable ${currName}:</span>
       <strong>${currentBones} ${currName}</strong>
     </div>
-    ${!canAfford ? `<div style="color: var(--danger); font-size: 0.85rem; margin-top: 0.5rem;">⚠️ You need ${item.costBones - currentBones} more ${currName} for this item.</div>` : ''}
+    ${!canAfford ? `<div style="color: var(--danger); font-size: 0.85rem; margin-top: 0.5rem;">You need ${item.costBones - currentBones} more ${currName} for this item.</div>` : ''}
   `;
 
   // Populate recipient character dropdown
@@ -1508,7 +1558,7 @@ window.openBuyModal = function(itemId) {
   if (chars.length) {
     charSelect.innerHTML = chars.map(c => `
       <option value="${c.name}" ${c.name === defaultChar ? 'selected' : ''}>
-        ⚔️ ${c.name} (${c.realm || 'Area 52'})
+        ${c.name} (${c.class || 'Character'})
       </option>
     `).join('');
   } else {
@@ -1526,7 +1576,7 @@ function openRankPromoteModal(nextRank) {
 
   document.getElementById('rankPromoteModalBody').innerHTML = `
     <p>Promote your Discord standing to <strong>${nextRank.title}</strong>!</p>
-    <div style="background: var(--bg-primary); padding: 0.85rem; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle); margin: 1rem 0;">
+    <div style="background: var(--bg-inner); padding: 0.85rem; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle); margin: 1rem 0;">
       <div style="display: flex; justify-content: space-between; margin-bottom: 0.3rem;">
         <span>Promotion Cost:</span>
         <strong style="color: var(--gold-300);">${nextRank.costBones} ${currName}</strong>
@@ -1537,7 +1587,7 @@ function openRankPromoteModal(nextRank) {
       </div>
     </div>
     <p style="font-size: 0.8rem; color: var(--text-muted);">
-      ✨ Upon purchase, your Discord server role will be updated automatically!
+      Upon purchase, your Discord server role will be updated automatically.
     </p>
   `;
 
@@ -1553,7 +1603,7 @@ function openRankPromoteModal(nextRank) {
       })
     });
     if (res.ok) {
-      showToast(`🎖️ Promoted to ${nextRank.title}!`);
+      showToast(`Promoted to ${nextRank.title}!`);
       document.getElementById('modalRankPromote').classList.remove('active');
       await refreshBseState();
     }
@@ -1612,7 +1662,7 @@ function setupOfficerTools() {
     const reason = document.getElementById('awardReasonInput').value.trim();
 
     if (!targetId || !amount) {
-      showToast('⚠️ Please specify target member and amount.');
+      showToast('Please specify target member and amount.');
       return;
     }
 
@@ -1622,13 +1672,13 @@ function setupOfficerTools() {
       body: JSON.stringify({ targetId, amount, reason })
     });
     if (res.ok) {
-      showToast(`✅ Awarded +${amount}!`);
+      showToast(`Awarded +${amount}.`);
       document.getElementById('awardAmountInput').value = '';
       document.getElementById('awardReasonInput').value = '';
       await refreshBseState();
       loadMemberIntoInspector(targetId);
     } else {
-      showToast('❌ Award failed');
+      showToast('Award failed.');
     }
   });
 
@@ -1639,7 +1689,7 @@ function setupOfficerTools() {
     const reason = document.getElementById('awardReasonInput').value.trim();
 
     if (!targetId || !amount) {
-      showToast('⚠️ Please specify target member and amount.');
+      showToast('Please specify target member and amount.');
       return;
     }
 
@@ -1649,11 +1699,11 @@ function setupOfficerTools() {
       body: JSON.stringify({ targetId, amount, reason })
     });
     if (res.ok) {
-      showToast(`✅ Deducted -${amount}.`);
+      showToast(`Deducted -${amount}.`);
       await refreshBseState();
       loadMemberIntoInspector(targetId);
     } else {
-      showToast('❌ Deduct failed');
+      showToast('Deduct failed.');
     }
   });
 
@@ -1675,11 +1725,11 @@ function setupOfficerTools() {
       })
     });
     if (res.ok) {
-      showToast('✅ Member ledger corrected successfully!');
+      showToast('Member ledger corrected successfully.');
       await refreshBseState();
       loadMemberIntoInspector(state.inspectedMemberId);
     } else {
-      showToast('❌ Failed to update ledger');
+      showToast('Failed to update ledger.');
     }
   });
 
@@ -1691,7 +1741,7 @@ function setupOfficerTools() {
     const description = document.getElementById('newBountyDesc').value.trim();
 
     if (!title || !rewardBones) {
-      showToast('⚠️ Please enter bounty title and reward.');
+      showToast('Please enter bounty title and reward.');
       return;
     }
 
@@ -1701,7 +1751,7 @@ function setupOfficerTools() {
       body: JSON.stringify({ title, rewardBones, category, description })
     });
     if (res.ok) {
-      showToast(`✅ Bounty created!`);
+      showToast('Bounty created.');
       document.getElementById('newBountyTitle').value = '';
       document.getElementById('newBountyReward').value = '';
       document.getElementById('newBountyDesc').value = '';
@@ -1719,7 +1769,7 @@ function setupOfficerTools() {
     const fulfillmentNotes = document.getElementById('newItemFulfillment').value.trim();
 
     if (!title || !costBones) {
-      showToast('⚠️ Please enter item title and cost.');
+      showToast('Please enter item title and cost.');
       return;
     }
 
@@ -1729,7 +1779,7 @@ function setupOfficerTools() {
       body: JSON.stringify({ title, costBones, category, stock, unlimitedStock, fulfillmentNotes })
     });
     if (res.ok) {
-      showToast(`✅ Shop item added!`);
+      showToast('Shop item added.');
       document.getElementById('newItemTitle').value = '';
       document.getElementById('newItemCost').value = '';
       await refreshBseState();
@@ -1738,13 +1788,13 @@ function setupOfficerTools() {
 
   // Push Standings to Discord
   document.getElementById('btnSyncDiscordStandings').addEventListener('click', async () => {
-    showToast('🔄 Syncing in-place embeds in #exchange-standings...');
+    showToast('Syncing in-place embeds in #exchange-standings...');
     const res = await fetch('/api/discord/sync-standings', { method: 'POST' });
     const data = await res.json();
     if (res.ok) {
-      showToast('✨ Standings embeds updated in Discord in-place!');
+      showToast('Standings embeds updated in Discord in-place.');
     } else {
-      showToast(`❌ Sync failed: ${data.error || 'Server error'}`);
+      showToast(`Sync failed: ${data.error || 'Server error'}`);
     }
   });
 }
@@ -1763,7 +1813,7 @@ function loadMemberIntoInspector(userId) {
   }
 
   const name = wallet.serverNickname || wallet.globalName || wallet.username || 'Member';
-  const charPart = wallet.primaryCharacter ? `⚔️ Primary: <strong>${wallet.primaryCharacter}</strong>` : 'No primary character';
+  const charPart = wallet.primaryCharacter ? `Primary: <strong>${wallet.primaryCharacter}</strong>` : 'No primary character';
 
   card.innerHTML = `
     <div style="background: var(--bg-primary); padding: 0.85rem; border-radius: var(--radius-sm); border: 1px solid var(--border-gold);">
@@ -1789,7 +1839,7 @@ window.approveClaim = async function(claimId) {
     body: JSON.stringify({ claimId })
   });
   if (res.ok) {
-    showToast('✅ Bounty Claim Approved!');
+    showToast('Bounty claim approved.');
     await refreshBseState();
   }
 };
@@ -1799,7 +1849,7 @@ window.approveClaimCustom = async function(claimId, currentReward) {
   if (custom === null) return;
   const num = parseInt(custom, 10);
   if (isNaN(num) || num < 1) {
-    showToast('⚠️ Invalid amount entered');
+    showToast('Invalid amount entered.');
     return;
   }
 
@@ -1809,7 +1859,7 @@ window.approveClaimCustom = async function(claimId, currentReward) {
     body: JSON.stringify({ claimId, customReward: num })
   });
   if (res.ok) {
-    showToast(`✅ Approved with custom reward of +${num}!`);
+    showToast(`Approved with custom reward of +${num}.`);
     await refreshBseState();
   }
 };
@@ -1824,7 +1874,7 @@ window.denyClaim = async function(claimId) {
     body: JSON.stringify({ claimId, denyReason: reason })
   });
   if (res.ok) {
-    showToast('❌ Claim Denied.');
+    showToast('Claim denied.');
     await refreshBseState();
   }
 };
@@ -1836,7 +1886,7 @@ window.fulfillDelivery = async function(orderId) {
     body: JSON.stringify({ orderId })
   });
   if (res.ok) {
-    showToast('📦 Order Marked Delivered!');
+    showToast('Order marked delivered.');
     await refreshBseState();
   }
 };
@@ -1851,7 +1901,7 @@ window.refundDelivery = async function(orderId) {
     body: JSON.stringify({ orderId })
   });
   if (res.ok) {
-    showToast('↩️ Order Refunded and balance returned to member.');
+    showToast('Order refunded to member.');
     await refreshBseState();
   }
 };
@@ -1885,7 +1935,7 @@ window.adjustShopStock = async function(itemId, delta) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ itemId, stock: (item.stock || 0) + delta })
   });
-  showToast('Stock updated!');
+  showToast('Stock updated.');
   await refreshBseState();
 };
 
@@ -1901,7 +1951,7 @@ window.deleteShopItem = async function(itemId) {
 };
 
 /**
- * Tab & Subtab Navigation
+ * Tab & Subtab Navigation (Desktop + Mobile Bottom Bar)
  */
 function setupNavigation() {
   document.querySelectorAll('.nav-tab').forEach(tab => {
@@ -1910,16 +1960,29 @@ function setupNavigation() {
       switchTab(targetView);
     });
   });
+
+  document.querySelectorAll('.mobile-nav-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const targetView = btn.getAttribute('data-tab');
+      switchTab(targetView);
+    });
+  });
 }
 
 function switchTab(targetView) {
   document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.mobile-nav-btn').forEach(b => b.classList.remove('active'));
   document.querySelectorAll('.tab-view').forEach(v => v.classList.remove('active'));
 
   const tab = document.querySelector(`.nav-tab[data-tab="${targetView}"]`);
   if (tab) tab.classList.add('active');
+
+  const mobBtn = document.querySelector(`.mobile-nav-btn[data-tab="${targetView}"]`);
+  if (mobBtn) mobBtn.classList.add('active');
+
   document.getElementById(`view-${targetView}`)?.classList.add('active');
   state.activeTab = targetView;
+  window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
 function setupOfficerSubtabs() {
@@ -1937,16 +2000,21 @@ function setupOfficerSubtabs() {
 }
 
 /**
- * Toast Notification Helper
+ * Toast Notification Helper (Clean Warcraft Notification)
  */
 function showToast(message) {
   if (state.user?.preferences?.notifyToasts === false) return;
   const container = document.getElementById('toastContainer');
+  if (!container) return;
+
+  // Clean any residual emojis from message
+  const cleanMsg = message.replace(/[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/gu, '').trim();
+
   const toast = document.createElement('div');
   toast.className = 'toast';
-  toast.textContent = message;
+  toast.textContent = cleanMsg;
   container.appendChild(toast);
   setTimeout(() => {
     toast.remove();
-  }, 4000);
+  }, 3500);
 }
