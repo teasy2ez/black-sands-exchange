@@ -236,6 +236,57 @@ export class FirestoreClient {
       season: 1,
       seasonTitle: 'Season 1: Dust & Glory',
       updatedAt: new Date().toISOString(),
+      branding: {
+        guildName: 'Black Sands Exchange',
+        tagline: 'Guild Economy & Bounty Hub',
+        logoUrl: 'assets/favicon.svg',
+        currencyName: 'Bones',
+        currencySymbol: '🦴',
+        currencyIcon: '🪙',
+        bannerBgStyle: 'desert',
+        customBgUrl: '',
+        announcement: {
+          enabled: true,
+          text: 'Welcome to Season 1! Complete guild bounties or attend raids to earn Bones.',
+          type: 'gold'
+        }
+      },
+      siteModules: {
+        leaderboard: { enabled: true, title: 'Roster Standings', order: 1 },
+        bounties: { enabled: true, title: 'Bounty Board', order: 2 },
+        shop: { enabled: true, title: 'Exchange Shop', order: 3 },
+        faq: {
+          enabled: true,
+          title: 'Rules & FAQ',
+          order: 4,
+          items: [
+            {
+              q: 'What are Bones?',
+              a: 'Bones are our guild economy currency earned by completing bounties, attending raids, and contributing to guild events.'
+            },
+            {
+              q: 'How does Bone Score work?',
+              a: 'Bone Score reflects verified lifetime career earnings. Spending Bones in the shop never lowers your Bone Score! Bone Score only increases from officer awards and verified bounty claims.'
+            },
+            {
+              q: 'How do I claim a bounty?',
+              a: 'Complete the objective in-game, grab a screenshot or combat log link, and submit via the Bounty Board on this website or using /claim in Discord.'
+            },
+            {
+              q: 'How do shop deliveries work?',
+              a: 'When you purchase an item or perk, Bones are deducted immediately and a delivery order is dispatched to Officers with your in-game character name for fulfillment.'
+            }
+          ]
+        }
+      },
+      theme: {
+        activePreset: 'desert-gold',
+        primaryColor: '#d4af37',
+        accentColor: '#e5a93b',
+        bgColor: '#0e0d0b',
+        cardBgColor: '#1c1915',
+        textColor: '#f0e6d2'
+      },
       ranks: [
         { tier: 0, title: 'Initiate', costBones: 0, icon: '🪙', roleId: '' },
         { tier: 1, title: 'Dune Scavenger', costBones: 25, icon: '🏜️', roleId: '' },

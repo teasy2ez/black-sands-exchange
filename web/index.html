@@ -3,20 +3,26 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Black Sands Exchange (BSE) — Guild Economy & Bounty Board</title>
-  <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+  <title id="pageTitle">Black Sands Exchange (BSE) — Guild Economy & Bounty Board</title>
+  <link rel="icon" type="image/svg+xml" href="assets/favicon.svg" id="pageFavicon">
   <link rel="stylesheet" href="styles.css">
 </head>
-<body>
+<body class="theme-desert-gold">
+
+  <!-- Top Announcement Ticker Banner (Modular) -->
+  <div class="announcement-banner" id="announcementBanner" style="display: none;">
+    <span id="announcementIcon">📢</span>
+    <span id="announcementText">Welcome to Season 1! Complete guild bounties or attend raids to earn Bones.</span>
+  </div>
 
   <!-- Top Header Navigation -->
   <header class="site-header">
     <div class="header-container">
       <a href="#" class="brand">
-        <img src="assets/favicon.svg" alt="BSE Logo" class="brand-icon">
+        <img src="assets/favicon.svg" alt="BSE Logo" class="brand-icon" id="brandLogo">
         <div class="brand-text">
-          <h1>Black Sands Exchange</h1>
-          <div class="brand-tag">Guild Economy & Bounty Hub</div>
+          <h1 id="brandGuildName">Black Sands Exchange</h1>
+          <div class="brand-tag" id="brandTagline">Guild Economy & Bounty Hub</div>
         </div>
       </a>
 
@@ -58,7 +64,7 @@
           <img src="assets/favicon.svg" alt="Wallet Avatar" class="wallet-avatar-large" id="walletAvatar">
           <div class="wallet-member-names">
             <h2 id="walletName">Welcome, Traveler</h2>
-            <span id="walletHandle">Sign in with Discord to view your Bones wallet</span>
+            <span id="walletHandle">Sign in with Discord to view your currency wallet</span>
             <!-- Primary Character Tag & Manage Button -->
             <div class="primary-character-tag" id="walletCharContainer" style="display: none; margin-top: 0.35rem;">
               <span class="char-pill" id="walletPrimaryCharBadge">⚔️ Main: <strong id="walletPrimaryCharName">None</strong></span>
@@ -69,12 +75,12 @@
 
         <div class="wallet-stats-row">
           <div class="stat-box">
-            <span class="stat-label">💰 Spendable Bones</span>
+            <span class="stat-label" id="labelSpendableCurrency">💰 Spendable Bones</span>
             <span class="stat-value gold" id="walletSpendable">0</span>
           </div>
 
           <div class="stat-box">
-            <span class="stat-label">🏆 Career Bone Score</span>
+            <span class="stat-label" id="labelCareerScore">🏆 Career Bone Score</span>
             <span class="stat-value score" id="walletScore" title="Anti-exploit career score earned from verified bounties & awards">0</span>
           </div>
 
@@ -99,12 +105,17 @@
       </div>
     </section>
 
-    <!-- Navigation Tabs (Officer Tab is HIDDEN for non-officers) -->
-    <nav class="nav-tabs">
-      <button class="nav-tab active" data-tab="leaderboard">🏆 Leaderboard</button>
-      <button class="nav-tab" data-tab="bounties">📜 Bounty Board</button>
-      <button class="nav-tab" data-tab="shop">⚖️ Exchange Shop</button>
-      <!-- Strictly hidden by default; revealed ONLY if verified officer -->
+    <!-- Navigation Tabs (Modular) -->
+    <nav class="nav-tabs" id="mainNavTabs">
+      <button class="nav-tab active" data-tab="leaderboard" id="tabNavLeaderboard">🏆 Leaderboard</button>
+      <button class="nav-tab" data-tab="bounties" id="tabNavBounties">📜 Bounty Board</button>
+      <button class="nav-tab" data-tab="shop" id="tabNavShop">⚖️ Exchange Shop</button>
+      <button class="nav-tab" data-tab="faq" id="tabNavFaq">📖 Rules & FAQ</button>
+      <!-- Logged-in Member Settings -->
+      <button class="nav-tab" data-tab="member-settings" id="tabMemberSettings" style="display: none;">
+        ⚙️ My Settings
+      </button>
+      <!-- Strictly hidden for non-officers -->
       <button class="nav-tab officer-tab" data-tab="officer" id="tabOfficer" style="display: none;">
         🛡️ Officer Command Center
         <span class="officer-badge" id="officerActionBadge" style="display: none;">0</span>
@@ -115,8 +126,8 @@
     <section class="tab-view active" id="view-leaderboard">
       <div class="section-header">
         <div>
-          <h3>Roster Standings</h3>
-          <p style="font-size: 0.85rem; color: var(--text-muted);">Real-time guild rankings ordered by verified Career Bone Score.</p>
+          <h3 id="headingLeaderboard">Roster Standings</h3>
+          <p style="font-size: 0.85rem; color: var(--text-muted);" id="subheadingLeaderboard">Real-time guild rankings ordered by verified Career Bone Score.</p>
         </div>
       </div>
 
@@ -131,8 +142,8 @@
               <th>Guild Member</th>
               <th>Main Character</th>
               <th>Prestige Tier</th>
-              <th>Spendable Bones</th>
-              <th>Bone Score</th>
+              <th id="thSpendable">Spendable Bones</th>
+              <th id="thScore">Bone Score</th>
             </tr>
           </thead>
           <tbody id="leaderboardTbody">
@@ -146,8 +157,8 @@
     <section class="tab-view" id="view-bounties">
       <div class="section-header">
         <div>
-          <h3>Active Guild Bounties</h3>
-          <p style="font-size: 0.85rem; color: var(--text-muted);">Complete raid objectives, dungeon timers, or guild tasks to claim Bones!</p>
+          <h3 id="headingBounties">Active Guild Bounties</h3>
+          <p style="font-size: 0.85rem; color: var(--text-muted);" id="subheadingBounties">Complete raid objectives, dungeon timers, or guild tasks to claim currency!</p>
         </div>
         <button class="btn-primary" id="btnSubmitGeneralClaim">+ Submit Bounty Claim</button>
       </div>
@@ -161,8 +172,8 @@
     <section class="tab-view" id="view-shop">
       <div class="section-header">
         <div>
-          <h3>Cartel Exchange Catalog</h3>
-          <p style="font-size: 0.85rem; color: var(--text-muted);">Spend your hard-earned Bones on raid consumables, enchantments, and guild perks.</p>
+          <h3 id="headingShop">Cartel Exchange Catalog</h3>
+          <p style="font-size: 0.85rem; color: var(--text-muted);" id="subheadingShop">Spend your hard-earned currency on raid consumables, enchantments, and guild perks.</p>
         </div>
       </div>
 
@@ -171,16 +182,105 @@
       </div>
     </section>
 
-    <!-- 4. Elaborate Officer Command Center View (STRICTLY FOR OFFICERS) -->
+    <!-- 4. Rules & FAQ View (Modular) -->
+    <section class="tab-view" id="view-faq">
+      <div class="section-header">
+        <div>
+          <h3 id="headingFaq">Community Rules & FAQ</h3>
+          <p style="font-size: 0.85rem; color: var(--text-muted);" id="subheadingFaq">Guidelines, bounty verification rules, and currency economy explanation.</p>
+        </div>
+      </div>
+
+      <div class="faq-accordion" id="faqAccordionContainer">
+        <!-- Dynamically populated -->
+      </div>
+    </section>
+
+    <!-- 5. Member Personal Settings View -->
+    <section class="tab-view" id="view-member-settings">
+      <div class="section-header">
+        <div>
+          <h3>⚙️ My Account & Display Preferences</h3>
+          <p style="font-size: 0.85rem; color: var(--text-muted);">Personalize your theme, card density, active characters, and notifications.</p>
+        </div>
+        <button class="btn-primary" id="btnSaveMemberPreferences">Save Preferences</button>
+      </div>
+
+      <div class="officer-dashboard-grid">
+        <!-- Theme Picker -->
+        <div class="officer-box">
+          <h4>🎨 Visual Theme Preset</h4>
+          <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.85rem;">Choose your preferred aesthetic style for the portal:</p>
+          <div class="theme-picker-grid" id="memberThemePicker">
+            <div class="theme-card-option" data-theme="theme-desert-gold">
+              <div class="theme-color-preview" style="background: linear-gradient(90deg, #1c1915, #d4af37);"></div>
+              <strong>Desert Gold</strong>
+              <div style="font-size:0.7rem; color:var(--text-dim);">Black Sands Classic</div>
+            </div>
+            <div class="theme-card-option" data-theme="theme-void-purple">
+              <div class="theme-color-preview" style="background: linear-gradient(90deg, #121024, #a855f7);"></div>
+              <strong>Void Purple</strong>
+              <div style="font-size:0.7rem; color:var(--text-dim);">Twilight & Shadow</div>
+            </div>
+            <div class="theme-card-option" data-theme="theme-cartel-emerald">
+              <div class="theme-color-preview" style="background: linear-gradient(90deg, #0d1e13, #10b981);"></div>
+              <strong>Cartel Emerald</strong>
+              <div style="font-size:0.7rem; color:var(--text-dim);">Goblin Jade</div>
+            </div>
+            <div class="theme-card-option" data-theme="theme-crimson-horde">
+              <div class="theme-color-preview" style="background: linear-gradient(90deg, #1c0e0e, #ef4444);"></div>
+              <strong>Crimson Horde</strong>
+              <div style="font-size:0.7rem; color:var(--text-dim);">Iron Blood & Steel</div>
+            </div>
+            <div class="theme-card-option" data-theme="theme-frost-alliance">
+              <div class="theme-color-preview" style="background: linear-gradient(90deg, #0d1720, #38bdf8);"></div>
+              <strong>Frost Alliance</strong>
+              <div style="font-size:0.7rem; color:var(--text-dim);">Northrend Glacial</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Display Density & Defaults -->
+        <div class="officer-box">
+          <h4>📱 Layout Density & Default Character</h4>
+          <div class="form-group">
+            <label>Card Density</label>
+            <select class="form-control" id="prefDensitySelect">
+              <option value="expanded">Expanded (Rich cards with badges & previews)</option>
+              <option value="compact">Compact (High-density streamlined list)</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Default Character for Claims & Purchases</label>
+            <select class="form-control" id="prefDefaultCharSelect"></select>
+          </div>
+          <div class="form-group">
+            <label style="display: flex; align-items: center; gap: 0.5rem; text-transform: none; cursor: pointer;">
+              <input type="checkbox" id="prefNotifyToasts" checked> Enable in-app notification toasts
+            </label>
+          </div>
+          <button class="btn-secondary" id="btnManageCharsFromSettings" style="width: 100%; margin-top: 0.5rem;">
+            ⚔️ Open Full Character Manager
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 6. Elaborate Officer Command Center View (STRICTLY FOR OFFICERS) -->
     <section class="tab-view" id="view-officer">
       <div class="section-header">
         <div>
           <h3 style="color: var(--amber);">🛡️ Officer Command Center</h3>
           <p style="font-size: 0.85rem; color: var(--text-muted);">Restricted to Black Sands Officers & Moderators. Real-time control and audits.</p>
         </div>
-        <button class="btn-primary" id="btnSyncDiscordStandings">
-          🔄 Push Standings to Discord (#exchange-standings)
-        </button>
+        <div style="display: flex; gap: 0.5rem;">
+          <button class="btn-secondary" id="btnToggleSiteEditorMode">
+            🎨 Toggle Live Site Editor Mode
+          </button>
+          <button class="btn-primary" id="btnSyncDiscordStandings">
+            🔄 Push Standings to Discord
+          </button>
+        </div>
       </div>
 
       <!-- Officer Sub-Navigation Tabs -->
@@ -200,6 +300,12 @@
         <button class="officer-subtab" data-subtab="manage-shop">
           🏷️ Shop Catalog Manager
         </button>
+        <button class="officer-subtab" data-subtab="economy-settings">
+          ⚙️ Economy & Bot Settings
+        </button>
+        <button class="officer-subtab" data-subtab="site-editor">
+          🎨 Site Visual Editor
+        </button>
         <button class="officer-subtab" data-subtab="audit">
           📜 Live Audit Trail
         </button>
@@ -211,9 +317,7 @@
           <h4 style="color: var(--gold-100);">Bounty Submissions Awaiting Verification</h4>
           <span style="font-size: 0.8rem; color: var(--text-muted);">Click image preview to expand full proof</span>
         </div>
-        <div id="pendingClaimsList" class="officer-cards-list">
-          <!-- Populated via JS -->
-        </div>
+        <div id="pendingClaimsList" class="officer-cards-list"></div>
       </div>
 
       <!-- Officer Subtab 2: Pending Deliveries Backlog -->
@@ -222,17 +326,14 @@
           <h4 style="color: var(--gold-100);">In-Game & Guild Perk Fulfillment Backlog</h4>
           <span style="font-size: 0.8rem; color: var(--text-muted);">Mark delivered or refund spent Bones with 1 click</span>
         </div>
-        <div id="pendingDeliveriesList" class="officer-cards-list">
-          <!-- Populated via JS -->
-        </div>
+        <div id="pendingDeliveriesList" class="officer-cards-list"></div>
       </div>
 
       <!-- Officer Subtab 3: Member Ledger & Adjustments -->
       <div class="officer-subview" id="subview-roster">
         <div class="officer-dashboard-grid">
-          <!-- Member Search & Quick Award/Deduct -->
           <div class="officer-box">
-            <h4>🪙 Quick Award / Deduct Bones</h4>
+            <h4>🪙 Quick Award / Deduct Currency</h4>
             <div class="form-group">
               <label>Search Member (@handle, server nick, or character name)</label>
               <input type="text" class="form-control" id="awardTargetInput" placeholder="Type member name...">
@@ -240,32 +341,31 @@
               <div id="memberSearchResults" class="autocomplete-dropdown"></div>
             </div>
             <div class="form-group">
-              <label>Amount of Bones</label>
+              <label>Amount</label>
               <input type="number" class="form-control" id="awardAmountInput" min="1" placeholder="e.g. 25">
             </div>
             <div class="form-group">
-              <label>Reason / Note (Logged to Audit Trail & #exchange-feed)</label>
+              <label>Reason / Note</label>
               <input type="text" class="form-control" id="awardReasonInput" placeholder="e.g. Heroic raid boss coaching">
             </div>
             <div style="display: flex; gap: 0.5rem;">
-              <button class="btn-success" id="btnExecuteAward" style="flex: 1;">+ Award Bones</button>
-              <button class="btn-danger" id="btnExecuteDeduct" style="flex: 1;">- Deduct Bones</button>
+              <button class="btn-success" id="btnExecuteAward" style="flex: 1;">+ Award</button>
+              <button class="btn-danger" id="btnExecuteDeduct" style="flex: 1;">- Deduct</button>
             </div>
           </div>
 
-          <!-- Deep Member Ledger Inspector -->
           <div class="officer-box">
             <h4>🔍 Member Profile & Manual Ledger Override</h4>
             <div id="memberInspectorCard">
-              <p style="color: var(--text-dim); font-size: 0.85rem;">Select a member on the left or search above to view full details and perform corrections.</p>
+              <p style="color: var(--text-dim); font-size: 0.85rem;">Select a member to view full details and perform corrections.</p>
             </div>
             <div id="memberInspectorForm" style="display: none; margin-top: 1rem;">
               <div class="form-group">
-                <label>Direct Spendable Bones Override</label>
+                <label>Direct Spendable Balance Override</label>
                 <input type="number" class="form-control" id="inspectorSpendable" min="0">
               </div>
               <div class="form-group">
-                <label>Direct Bone Score Override (Career Score)</label>
+                <label>Direct Career Score Override</label>
                 <input type="number" class="form-control" id="inspectorScore" min="0">
               </div>
               <div class="form-group">
@@ -289,7 +389,7 @@
                 <input type="text" class="form-control" id="newBountyTitle" placeholder="e.g. Mythic Vault Clean Clear">
               </div>
               <div class="form-group">
-                <label>Reward (Bones)</label>
+                <label>Reward</label>
                 <input type="number" class="form-control" id="newBountyReward" min="1" placeholder="50">
               </div>
               <div class="form-group">
@@ -312,9 +412,7 @@
 
           <div class="officer-box" style="grid-column: 1 / -1;">
             <h4>Active Bounties Control</h4>
-            <div id="officerBountiesList" class="officer-cards-list">
-              <!-- Populated via JS -->
-            </div>
+            <div id="officerBountiesList" class="officer-cards-list"></div>
           </div>
         </div>
       </div>
@@ -330,7 +428,7 @@
                 <input type="text" class="form-control" id="newItemTitle" placeholder="e.g. Mythic Keystone Carry">
               </div>
               <div class="form-group">
-                <label>Cost (Bones)</label>
+                <label>Cost</label>
                 <input type="number" class="form-control" id="newItemCost" min="1" placeholder="75">
               </div>
               <div class="form-group">
@@ -352,21 +450,158 @@
             </div>
             <div class="form-group">
               <label>Fulfillment Instructions</label>
-              <input type="text" class="form-control" id="newItemFulfillment" placeholder="How officers deliver this item (e.g. Mail in-game or assign Discord role)...">
+              <input type="text" class="form-control" id="newItemFulfillment" placeholder="How officers deliver this item...">
             </div>
             <button class="btn-primary" id="btnCreateShopItem" style="max-width: 200px;">Add Item to Shop</button>
           </div>
 
           <div class="officer-box" style="grid-column: 1 / -1;">
             <h4>Catalog Items Control</h4>
-            <div id="officerShopList" class="officer-cards-list">
-              <!-- Populated via JS -->
-            </div>
+            <div id="officerShopList" class="officer-cards-list"></div>
           </div>
         </div>
       </div>
 
-      <!-- Officer Subtab 6: Live Audit Trail -->
+      <!-- Officer Subtab 6: Economy & Bot System Settings -->
+      <div class="officer-subview" id="subview-economy-settings">
+        <div class="section-header">
+          <div>
+            <h4 style="color: var(--gold-100);">⚙️ Economy Rules & Rank Progression Builder</h4>
+            <p style="font-size: 0.8rem; color: var(--text-muted);">Configure currency naming, prestige ranks, and Discord role bindings with zero coding.</p>
+          </div>
+          <button class="btn-primary" id="btnPublishEconomySettings">Publish Settings to Guild</button>
+        </div>
+
+        <div class="officer-dashboard-grid">
+          <!-- Currency Customizer -->
+          <div class="officer-box">
+            <h4>💰 Currency Configuration</h4>
+            <div class="form-group">
+              <label>Currency Name (e.g. Bones, Gold, Marks, Cartel Coins)</label>
+              <input type="text" class="form-control" id="settingCurrencyName" value="Bones">
+            </div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem;">
+              <div class="form-group">
+                <label>Symbol / Emoji</label>
+                <input type="text" class="form-control" id="settingCurrencySymbol" value="🦴">
+              </div>
+              <div class="form-group">
+                <label>Coin Icon</label>
+                <input type="text" class="form-control" id="settingCurrencyIcon" value="🪙">
+              </div>
+            </div>
+          </div>
+
+          <!-- Prestige Rank Hierarchy Builder -->
+          <div class="officer-box" style="grid-column: 1 / -1;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+              <h4>🎖️ Prestige Ranks & Discord Role Bindings</h4>
+              <button class="btn-secondary" id="btnAddRankTier">+ Add Rank Tier</button>
+            </div>
+            <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 1rem;">
+              Members spend currency to purchase rank promotions. Reaching each tier automatically grants the configured Discord Role ID!
+            </p>
+            <div id="ranksBuilderContainer" class="officer-cards-list"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Officer Subtab 7: Site Visual Editor Mode -->
+      <div class="officer-subview" id="subview-site-editor">
+        <div class="section-header">
+          <div>
+            <h4 style="color: var(--amber);">🎨 Live Visual Site Editor</h4>
+            <p style="font-size: 0.8rem; color: var(--text-muted);">Customize the website look, branding, announcement ticker, tabs, and FAQ with 0 code.</p>
+          </div>
+          <button class="btn-primary" id="btnPublishSiteEditor">Publish Site to Guild</button>
+        </div>
+
+        <div class="officer-dashboard-grid">
+          <!-- Branding & Identity -->
+          <div class="officer-box">
+            <h4>🏷️ Branding & Identity</h4>
+            <div class="form-group">
+              <label>Guild / Community Name</label>
+              <input type="text" class="form-control" id="editorGuildName" value="Black Sands Exchange">
+            </div>
+            <div class="form-group">
+              <label>Slogan / Tagline</label>
+              <input type="text" class="form-control" id="editorTagline" value="Guild Economy & Bounty Hub">
+            </div>
+            <div class="form-group">
+              <label>Logo URL (Direct image link)</label>
+              <input type="url" class="form-control" id="editorLogoUrl" value="assets/favicon.svg">
+            </div>
+          </div>
+
+          <!-- Hero Announcement Banner -->
+          <div class="officer-box">
+            <h4>📢 Hero Announcement Ticker Banner</h4>
+            <div class="form-group">
+              <label style="display: flex; align-items: center; gap: 0.4rem; cursor: pointer; text-transform: none;">
+                <input type="checkbox" id="editorAnnounceEnabled" checked> Display Banner at Top of Website
+              </label>
+            </div>
+            <div class="form-group">
+              <label>Announcement Text</label>
+              <textarea class="form-control" id="editorAnnounceText" rows="2">Welcome to Season 1! Complete guild bounties or attend raids to earn Bones.</textarea>
+            </div>
+            <div class="form-group">
+              <label>Banner Highlight Style</label>
+              <select class="form-control" id="editorAnnounceType">
+                <option value="gold">Gold & Amber (Default)</option>
+                <option value="raid">Raid Alert (Crimson / Urgent)</option>
+                <option value="info">Info Notice (Glacial Blue)</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Module / Navigation Tabs Visibility -->
+          <div class="officer-box">
+            <h4>📑 Navigation Modules Visibility & Titles</h4>
+            <div style="display: flex; flex-direction: column; gap: 0.6rem;">
+              <div style="display: flex; align-items: center; justify-content: space-between; background: var(--bg-primary); padding: 0.5rem 0.75rem; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
+                <label style="display: flex; align-items: center; gap: 0.4rem; text-transform: none; font-size: 0.85rem; margin: 0;">
+                  <input type="checkbox" id="modToggleLeaderboard" checked> Leaderboard Module
+                </label>
+                <input type="text" class="form-control" id="modTitleLeaderboard" value="🏆 Leaderboard" style="max-width: 160px; padding: 0.3rem 0.5rem; font-size: 0.8rem;">
+              </div>
+              <div style="display: flex; align-items: center; justify-content: space-between; background: var(--bg-primary); padding: 0.5rem 0.75rem; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
+                <label style="display: flex; align-items: center; gap: 0.4rem; text-transform: none; font-size: 0.85rem; margin: 0;">
+                  <input type="checkbox" id="modToggleBounties" checked> Bounty Board Module
+                </label>
+                <input type="text" class="form-control" id="modTitleBounties" value="📜 Bounty Board" style="max-width: 160px; padding: 0.3rem 0.5rem; font-size: 0.8rem;">
+              </div>
+              <div style="display: flex; align-items: center; justify-content: space-between; background: var(--bg-primary); padding: 0.5rem 0.75rem; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
+                <label style="display: flex; align-items: center; gap: 0.4rem; text-transform: none; font-size: 0.85rem; margin: 0;">
+                  <input type="checkbox" id="modToggleShop" checked> Exchange Shop Module
+                </label>
+                <input type="text" class="form-control" id="modTitleShop" value="⚖️ Exchange Shop" style="max-width: 160px; padding: 0.3rem 0.5rem; font-size: 0.8rem;">
+              </div>
+              <div style="display: flex; align-items: center; justify-content: space-between; background: var(--bg-primary); padding: 0.5rem 0.75rem; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
+                <label style="display: flex; align-items: center; gap: 0.4rem; text-transform: none; font-size: 0.85rem; margin: 0;">
+                  <input type="checkbox" id="modToggleFaq" checked> Rules & FAQ Module
+                </label>
+                <input type="text" class="form-control" id="modTitleFaq" value="📖 Rules & FAQ" style="max-width: 160px; padding: 0.3rem 0.5rem; font-size: 0.8rem;">
+              </div>
+            </div>
+          </div>
+
+          <!-- Rules & FAQ Accordion Builder -->
+          <div class="officer-box" style="grid-column: 1 / -1;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+              <h4>📖 Rules & FAQ Builder</h4>
+              <button class="btn-secondary" id="btnAddFaqItem">+ Add Question & Answer</button>
+            </div>
+            <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 1rem;">
+              Add, edit, or delete FAQ accordion items shown to members. Instant no-code edits!
+            </p>
+            <div id="faqBuilderContainer" class="officer-cards-list"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Officer Subtab 8: Live Audit Trail -->
       <div class="officer-subview" id="subview-audit">
         <div class="section-header">
           <h4 style="color: var(--gold-100);">Permanent Economy Audit Trail</h4>
@@ -384,9 +619,7 @@
                 <th>Reason / Notes</th>
               </tr>
             </thead>
-            <tbody id="auditTrailTbody">
-              <!-- Populated via JS -->
-            </tbody>
+            <tbody id="auditTrailTbody"></tbody>
           </table>
         </div>
       </div>
@@ -406,12 +639,8 @@
         Add your WoW characters. Your <strong>Primary Character</strong> is displayed on leaderboards, claim submissions, and delivery mail orders!
       </p>
 
-      <!-- Existing Characters List -->
-      <div id="characterListContainer" style="margin-bottom: 1.25rem;">
-        <!-- Populated via JS -->
-      </div>
+      <div id="characterListContainer" style="margin-bottom: 1.25rem;"></div>
 
-      <!-- Add Character Form -->
       <div style="background: var(--bg-primary); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 1rem; margin-bottom: 1rem;">
         <h5 style="color: var(--gold-100); margin-bottom: 0.5rem; font-size: 0.85rem;">+ Add New Character</h5>
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; margin-bottom: 0.5rem;">
@@ -490,16 +719,14 @@
         <h4 style="color: var(--gold-300);">Confirm Exchange Purchase</h4>
         <button class="modal-close" data-close-modal="modalBuy">✕</button>
       </div>
-      <div id="buyModalBody" style="margin-bottom: 1.5rem; font-size: 0.95rem; color: var(--text-main);">
-        <!-- Populated via JS -->
-      </div>
+      <div id="buyModalBody" style="margin-bottom: 1.5rem; font-size: 0.95rem; color: var(--text-main);"></div>
       <div class="form-group">
         <label>Deliver In-Game To Character</label>
         <select class="form-control" id="buyRecipientCharSelect"></select>
       </div>
       <div style="display: flex; gap: 0.5rem;">
         <button class="btn-secondary" data-close-modal="modalBuy" style="flex: 1;">Cancel</button>
-        <button class="btn-primary" id="btnConfirmBuyExecute" style="flex: 1;">Confirm & Spend Bones</button>
+        <button class="btn-primary" id="btnConfirmBuyExecute" style="flex: 1;">Confirm & Spend</button>
       </div>
     </div>
   </div>
@@ -511,9 +738,7 @@
         <h4 style="color: var(--gold-300);">⚡ Promote Prestige Rank</h4>
         <button class="modal-close" data-close-modal="modalRankPromote">✕</button>
       </div>
-      <div id="rankPromoteModalBody" style="margin-bottom: 1.5rem; font-size: 0.95rem; color: var(--text-main);">
-        <!-- Populated via JS -->
-      </div>
+      <div id="rankPromoteModalBody" style="margin-bottom: 1.5rem; font-size: 0.95rem; color: var(--text-main);"></div>
       <div style="display: flex; gap: 0.5rem;">
         <button class="btn-secondary" data-close-modal="modalRankPromote" style="flex: 1;">Cancel</button>
         <button class="btn-primary" id="btnConfirmRankPromoteExecute" style="flex: 1;">Purchase Rank Promotion</button>
@@ -527,6 +752,20 @@
       <button class="modal-close" data-close-modal="modalImageZoom" style="align-self: flex-end; color: #fff; font-size: 2rem; margin-bottom: 0.5rem;">✕</button>
       <img src="" id="zoomImageTarget" style="max-width: 100%; max-height: 80vh; object-fit: contain; border-radius: 8px; border: 2px solid var(--border-gold);" alt="Proof">
     </div>
+  </div>
+
+  <!-- Floating Site Editor Toolbar (Appears in Editor Mode) -->
+  <div class="editor-floating-bar" id="editorFloatingBar" style="display: none;">
+    <div class="editor-badge-pulse">
+      <span class="editor-pulse-dot"></span>
+      <span>Live Editor Mode Active</span>
+    </div>
+    <button class="btn-primary" id="btnFloatingPublish" style="padding: 0.35rem 0.85rem; font-size: 0.8rem;">
+      ✨ Publish Changes
+    </button>
+    <button class="btn-secondary" id="btnFloatingExit" style="padding: 0.35rem 0.85rem; font-size: 0.8rem;">
+      ✕ Exit Editor
+    </button>
   </div>
 
   <!-- Toast Notifications Container -->

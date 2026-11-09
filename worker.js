@@ -257,6 +257,12 @@ async function handleDiscordAuthMe(request, env, firestore) {
       boneScore: wallet.boneScore || 0,
       primaryCharacter: wallet.primaryCharacter || null,
       characters: wallet.characters || [],
+      preferences: wallet.preferences || {
+        theme: 'default',
+        density: 'expanded',
+        defaultCharacter: null,
+        notifyToasts: true
+      },
       rank
     }
   });
@@ -358,6 +364,39 @@ async function handleExchangeApi(url, request, env, firestore) {
       characters: wallet.characters,
       primaryCharacter: wallet.primaryCharacter
     });
+  }
+
+  // POST Member Personal Preferences
+  if (path === 'settings/member' && request.method === 'POST') {
+    if (!session) {
+      return jsonResponse({ error: 'Unauthorized: Discord login required' }, 401);
+    }
+    const { preferences } = body;
+    if (!preferences || typeof preferences !== 'object') {
+      return jsonResponse({ error: 'Invalid preferences object' }, 400);
+    }
+
+    const state = await firestore.getBseState();
+    state.wallets = state.wallets || {};
+    const wallet = state.wallets[session.id] || {
+      discordId: session.id,
+      username: session.username,
+      serverNickname: session.serverNickname,
+      spendableBones: 0,
+      boneScore: 0
+    };
+
+    wallet.preferences = {
+      theme: String(preferences.theme || 'default'),
+      density: String(preferences.density || 'expanded'),
+      defaultCharacter: preferences.defaultCharacter ? String(preferences.defaultCharacter) : null,
+      notifyToasts: preferences.notifyToasts !== false
+    };
+    wallet.updatedAt = new Date().toISOString();
+    state.wallets[session.id] = wallet;
+
+    await firestore.saveBseState(state);
+    return jsonResponse({ success: true, preferences: wallet.preferences });
   }
 
   // POST Submit Bounty Claim (Member or Officer)
@@ -852,13 +891,69 @@ async function handleExchangeApi(url, request, env, firestore) {
     return jsonResponse({ success: true, item });
   }
 
-  // POST Delete Shop Item
-  if (path === 'shop/delete' && request.method === 'POST') {
-    const { itemId } = body;
+  // POST Update Officer Site Branding, Themes, Modules, & Ranks
+  if (path === 'settings/officer' && request.method === 'POST') {
+    const { branding, siteModules, theme, ranks } = body;
     const state = await firestore.getBseState();
-    state.shop = (state.shop || []).filter(i => i.id !== itemId);
+
+    if (branding && typeof branding === 'object') {
+      state.branding = { ...(state.branding || {}), ...branding };
+    }
+    if (siteModules && typeof siteModules === 'object') {
+      state.siteModules = { ...(state.siteModules || {}), ...siteModules };
+    }
+    if (theme && typeof theme === 'object') {
+      state.theme = { ...(state.theme || {}), ...theme };
+    }
+    if (Array.isArray(ranks)) {
+      state.ranks = ranks.map((r, idx) => ({
+        tier: typeof r.tier === 'number' ? r.tier : idx,
+        title: String(r.title || 'Rank'),
+        costBones: Math.max(0, parseInt(r.costBones, 10) || 0),
+        icon: String(r.icon || '🪙'),
+        roleId: String(r.roleId || '')
+      }));
+    }
+
+    state.updatedAt = new Date().toISOString();
     await firestore.saveBseState(state);
-    return jsonResponse({ success: true });
+
+    await firestore.logAuditEvent({
+      action: 'OFFICER_SETTINGS_UPDATE',
+      officerId,
+      officerName,
+      reason: 'Published updated guild branding, themes, modules, or ranks',
+      timestamp: new Date().toISOString()
+    });
+
+    return jsonResponse({
+      success: true,
+      branding: state.branding,
+      siteModules: state.siteModules,
+      theme: state.theme,
+      ranks: state.ranks
+    });
+  }
+
+  // POST Update FAQ Items
+  if (path === 'settings/faq' && request.method === 'POST') {
+    const { items } = body;
+    if (!Array.isArray(items)) {
+      return jsonResponse({ error: 'items must be an array' }, 400);
+    }
+
+    const state = await firestore.getBseState();
+    state.siteModules = state.siteModules || {};
+    state.siteModules.faq = state.siteModules.faq || { enabled: true, title: 'Rules & FAQ', order: 4 };
+    state.siteModules.faq.items = items.map(item => ({
+      q: String(item.q || '').trim(),
+      a: String(item.a || '').trim()
+    })).filter(item => item.q.length > 0);
+
+    state.updatedAt = new Date().toISOString();
+    await firestore.saveBseState(state);
+
+    return jsonResponse({ success: true, faq: state.siteModules.faq });
   }
 
   return jsonResponse({ error: 'Endpoint not found' }, 404);
