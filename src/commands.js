@@ -9,7 +9,8 @@ import {
   buildShopDeliveryReviewMessage,
   sendChannelMessage,
   editChannelMessage,
-  addGuildMemberRole
+  addGuildMemberRole,
+  recordAuditLogAndSync
 } from './discord.js';
 
 /**
@@ -376,19 +377,17 @@ async function handleAwardCommand(interaction, opts, env, firestore) {
   wallet.spendableBones = (wallet.spendableBones || 0) + amount;
   wallet.boneScore = (wallet.boneScore || 0) + amount; // Verified award increments Bone Score
   wallet.updatedAt = new Date().toISOString();
-  state.wallets[targetId] = wallet;
-
-  await firestore.saveBseState(state);
-
-  // Audit log
-  await firestore.logAuditEvent({
-    action: 'OFFICER_AWARD',
+  await recordAuditLogAndSync(state, env, firestore, {
+    action: 'AWARD',
     officerId: officer.id,
     officerName,
     targetId,
+    targetName: wallet.serverNickname || wallet.globalName || wallet.username || targetId,
     amount,
+    spendableBones: wallet.spendableBones,
+    boneScore: wallet.boneScore,
     reason,
-    timestamp: new Date().toISOString()
+    notifyFeed: false
   });
 
   // Post to #exchange-feed
@@ -450,17 +449,17 @@ async function handleDeductCommand(interaction, opts, env, firestore) {
   wallet.updatedAt = new Date().toISOString();
   state.wallets[targetId] = wallet;
 
-  await firestore.saveBseState(state);
-
-  // Audit log
-  await firestore.logAuditEvent({
-    action: 'OFFICER_DEDUCT',
+  await recordAuditLogAndSync(state, env, firestore, {
+    action: 'DEDUCT',
     officerId: officer.id,
     officerName,
     targetId,
+    targetName: wallet.serverNickname || wallet.globalName || wallet.username || targetId,
     amount: -amount,
+    spendableBones: wallet.spendableBones,
+    boneScore: wallet.boneScore,
     reason,
-    timestamp: new Date().toISOString()
+    notifyFeed: false
   });
 
   // Post to #exchange-feed

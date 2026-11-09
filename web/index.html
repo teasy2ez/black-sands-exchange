@@ -115,9 +115,9 @@
       <button class="nav-tab" data-tab="bounties" id="tabNavBounties">Bounty Board</button>
       <button class="nav-tab" data-tab="shop" id="tabNavShop">Exchange Shop</button>
       <button class="nav-tab" data-tab="faq" id="tabNavFaq">Rules &amp; FAQ</button>
-      <!-- Logged-in Member Settings -->
-      <button class="nav-tab" data-tab="member-settings" id="tabMemberSettings" style="display: none;">
-        My Settings
+      <!-- Logged-in Member Transaction History -->
+      <button class="nav-tab" data-tab="history" id="tabHistory" style="display: none;">
+        History
       </button>
       <!-- Strictly hidden for non-officers -->
       <button class="nav-tab officer-tab" data-tab="officer" id="tabOfficer" style="display: none;">
@@ -153,6 +153,7 @@
               <th>Prestige Tier</th>
               <th>Spendable Bones</th>
               <th>Career Score</th>
+              <th id="thLeaderboardActions" style="display: none; text-align: center;">Actions</th>
             </tr>
           </thead>
           <tbody id="leaderboardTbody">
@@ -210,77 +211,36 @@
       </div>
     </section>
 
-    <!-- 5. Member Personal Settings View -->
-    <section class="tab-view" id="view-member-settings">
+    <!-- 5. Member Personal Transaction History View -->
+    <section class="tab-view" id="view-history">
       <div class="section-header">
         <div>
-          <h3>My Preferences</h3>
-          <p class="section-subtitle">Customize your visual theme, density, active characters, and public guild note.</p>
+          <h3>Transaction History</h3>
+          <p class="section-subtitle">Your personal record of Bones earned, spent, and adjusted.</p>
         </div>
-        <button class="btn-primary" id="btnSaveMemberPreferences">Save Preferences</button>
       </div>
 
-      <div class="officer-dashboard-grid">
-        <!-- Theme Picker -->
-        <div class="officer-box">
-          <h4>Visual Theme Preset</h4>
-          <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.85rem;">Select your preferred aesthetic theme:</p>
-          <div class="theme-picker-grid" id="memberThemePicker">
-            <div class="theme-card-option" data-theme="theme-desert-gold">
-              <div class="theme-color-preview" style="background: linear-gradient(90deg, #1c1915, #d4af37);"></div>
-              <strong>Desert Gold</strong>
-              <div style="font-size:0.7rem; color:var(--text-dim);">Black Sands Classic</div>
-            </div>
-            <div class="theme-card-option" data-theme="theme-void-purple">
-              <div class="theme-color-preview" style="background: linear-gradient(90deg, #121024, #a855f7);"></div>
-              <strong>Void Purple</strong>
-              <div style="font-size:0.7rem; color:var(--text-dim);">Shadow &amp; Twilight</div>
-            </div>
-            <div class="theme-card-option" data-theme="theme-cartel-emerald">
-              <div class="theme-color-preview" style="background: linear-gradient(90deg, #0d1e13, #10b981);"></div>
-              <strong>Cartel Emerald</strong>
-              <div style="font-size:0.7rem; color:var(--text-dim);">Goblin Jade</div>
-            </div>
-            <div class="theme-card-option" data-theme="theme-crimson-horde">
-              <div class="theme-color-preview" style="background: linear-gradient(90deg, #1c0e0e, #ef4444);"></div>
-              <strong>Crimson Horde</strong>
-              <div style="font-size:0.7rem; color:var(--text-dim);">Iron Blood &amp; Steel</div>
-            </div>
-            <div class="theme-card-option" data-theme="theme-frost-alliance">
-              <div class="theme-color-preview" style="background: linear-gradient(90deg, #0d1720, #38bdf8);"></div>
-              <strong>Frost Alliance</strong>
-              <div style="font-size:0.7rem; color:var(--text-dim);">Glacial Blue</div>
-            </div>
-          </div>
-        </div>
+      <div class="table-container">
+        <!-- Desktop History Table (>= 768px) -->
+        <table class="leaderboard-table desktop-history-table">
+          <thead>
+            <tr>
+              <th>Date &amp; Time</th>
+              <th>Activity</th>
+              <th>Bones</th>
+              <th>Balance After</th>
+              <th>Details &amp; Reason</th>
+              <th>Officer / Actor</th>
+            </tr>
+          </thead>
+          <tbody id="memberHistoryTbody">
+            <!-- Dynamically populated -->
+          </tbody>
+        </table>
 
-        <!-- Display Density & Defaults -->
-        <div class="officer-box">
-          <h4>Layout &amp; Character Defaults</h4>
-          <div class="form-group">
-            <label>Card Density</label>
-            <select class="form-control" id="prefDensitySelect">
-              <option value="expanded">Expanded (Standard spacing &amp; detailed badges)</option>
-              <option value="compact">Compact (Streamlined high-density layout)</option>
-            </select>
-          </div>
-          <div class="form-group">
-            <label>Default Character for Claims &amp; Deliveries</label>
-            <select class="form-control" id="prefDefaultCharSelect"></select>
-          </div>
-          <div class="form-group">
-            <label style="display: flex; align-items: center; gap: 0.5rem; text-transform: none; cursor: pointer;">
-              <input type="checkbox" id="prefNotifyToasts" checked> Enable in-app toast notices
-            </label>
-          </div>
-          <div class="form-group">
-            <label>Public Guild Note</label>
-            <textarea class="form-control" id="memberGuildNoteInput" rows="2" placeholder="e.g. Holy Priest / Alch 300 / Available for Tue/Thu raids..."></textarea>
-            <div style="font-size: 0.72rem; color: var(--text-dim); margin-top: 0.2rem;">Visible to all guild members when clicking your name on the Leaderboard.</div>
-          </div>
-          <button class="btn-secondary" id="btnManageCharsFromSettings" style="width: 100%; margin-top: 0.5rem;">
-            Manage Linked Characters
-          </button>
+        <!-- Mobile History Stream (< 768px) -->
+        <div class="mobile-history-list" id="mobileHistoryList">
+          <!-- Dynamically populated -->
         </div>
       </div>
     </section>
@@ -317,7 +277,7 @@
           Shop Catalog
         </button>
         <button class="officer-subtab" data-subtab="data-editor">
-          Master Data Editor
+          Announcements &amp; Modules
         </button>
         <button class="officer-subtab" data-subtab="audit">
           Live Audit Trail
@@ -551,20 +511,6 @@
             <button class="btn-primary" id="btnSaveFaqItems" style="max-width: 200px; margin-top: 1rem;">Save FAQ Content</button>
           </div>
 
-          <!-- 4. Raw JSON Database Power Editor -->
-          <div class="officer-box" style="grid-column: 1 / -1;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; flex-wrap: wrap; gap: 0.5rem;">
-              <div>
-                <h4 style="color: var(--gold-300);">Master Database JSON Editor</h4>
-                <p style="font-size: 0.8rem; color: var(--text-muted);">Directly view, modify, or restore the central Firestore database state.</p>
-              </div>
-              <div style="display: flex; gap: 0.5rem;">
-                <button class="btn-secondary" id="btnFormatRawJson">Format &amp; Validate</button>
-                <button class="btn-primary" id="btnPublishRawJson">Save to Database</button>
-              </div>
-            </div>
-            <textarea class="json-code-editor" id="rawStateJsonTextarea" spellcheck="false"></textarea>
-            <div id="rawJsonFeedback" style="font-size: 0.8rem; margin-top: 0.4rem; color: var(--text-dim);"></div>
           </div>
         </div>
       </div>
@@ -573,7 +519,7 @@
       <div class="officer-subview" id="subview-audit">
         <div class="section-header">
           <h4 style="color: var(--gold-100);">Economy Audit Trail</h4>
-          <span style="font-size: 0.8rem; color: var(--text-muted);">Real-time ledger of awards, deductions, claims, and purchases</span>
+          <span style="font-size: 0.8rem; color: var(--text-muted);">Real-time ledger of awards, deductions, corrections, purges, and claims</span>
         </div>
         <div class="table-container">
           <table class="leaderboard-table">
@@ -581,9 +527,10 @@
               <tr>
                 <th>Timestamp</th>
                 <th>Action</th>
-                <th>Officer / Initiator</th>
+                <th>Officer / Actor</th>
                 <th>Target Member</th>
-                <th>Amount</th>
+                <th>Bones Change</th>
+                <th>Balance After</th>
                 <th>Reason / Notes</th>
               </tr>
             </thead>
@@ -635,12 +582,12 @@
       </svg>
       <span>Rules</span>
     </button>
-    <button class="mobile-nav-btn" data-tab="member-settings" id="mobileTabMemberSettings" style="display: none;">
+    <button class="mobile-nav-btn" data-tab="history" id="mobileTabHistory" style="display: none;">
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <circle cx="12" cy="12" r="3"/>
-        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+        <circle cx="12" cy="12" r="10"/>
+        <polyline points="12 6 12 12 16 14"/>
       </svg>
-      <span>Settings</span>
+      <span>History</span>
     </button>
     <button class="mobile-nav-btn mobile-officer-btn" data-tab="officer" id="mobileTabOfficer" style="display: none;">
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">

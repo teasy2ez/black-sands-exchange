@@ -381,3 +381,158 @@ export function buildShopDeliveryReviewMessage(delivery, item, user) {
 
   return { embeds: [embed], components };
 }
+
+/**
+ * Record a transaction entry onto bseState.auditLog (preserving last 300)
+ */
+export function recordTransaction(state, entry) {
+  state.auditLog = state.auditLog || [];
+  const logItem = {
+    id: `tx_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+    timestamp: new Date().toISOString(),
+    action: entry.action,
+    officerId: entry.officerId || null,
+    officerName: entry.officerName || 'System',
+    targetId: entry.targetId || null,
+    targetName: entry.targetName || 'Member',
+    amount: entry.amount !== undefined ? entry.amount : 0,
+    spendableBones: entry.spendableBones !== undefined ? entry.spendableBones : null,
+    boneScore: entry.boneScore !== undefined ? entry.boneScore : null,
+    reason: entry.reason || '—'
+  };
+
+  state.auditLog.push(logItem);
+  if (state.auditLog.length > 300) {
+    state.auditLog = state.auditLog.slice(-300);
+  }
+  return logItem;
+}
+
+/**
+ * Automatically update in-place leaderboard, bounties, and shop embeds in Discord
+ */
+export async function pushStandingsToDiscord(env, firestore, state) {
+  if (!env.DISCORD_STANDINGS_CHANNEL_ID || !env.DISCORD_BOT_TOKEN) return false;
+  try {
+    const channelId = env.DISCORD_STANDINGS_CHANNEL_ID;
+    const token = env.DISCORD_BOT_TOKEN;
+
+    const members = Object.values(state.wallets || {});
+    members.sort((a, b) => (b.boneScore || b.spendableBones || 0) - (a.boneScore || a.spendableBones || 0));
+    const top10 = members.slice(0, 10).map(m => ({
+      ...m,
+      rankTitle: resolveRank(m.boneScore, state.ranks).title
+    }));
+
+    const lbEmbed = buildLeaderboardEmbed(top10);
+    const bountiesEmbed = buildBountiesEmbed(state.bounties || []);
+    const shopEmbed = buildShopEmbed(state.shop || []);
+    const config = state.config || {};
+
+    if (config.standingsMessageId) {
+      await editChannelMessage(channelId, config.standingsMessageId, { embeds: [lbEmbed] }, token);
+    } else {
+      const msg = await sendChannelMessage(channelId, { embeds: [lbEmbed] }, token);
+      config.standingsMessageId = msg.id;
+    }
+
+    if (config.bountiesMessageId) {
+      await editChannelMessage(channelId, config.bountiesMessageId, { embeds: [bountiesEmbed] }, token);
+    } else {
+      const msg = await sendChannelMessage(channelId, { embeds: [bountiesEmbed] }, token);
+      config.bountiesMessageId = msg.id;
+    }
+
+    if (config.shopMessageId) {
+      await editChannelMessage(channelId, config.shopMessageId, { embeds: [shopEmbed] }, token);
+    } else {
+      const msg = await sendChannelMessage(channelId, { embeds: [shopEmbed] }, token);
+      config.shopMessageId = msg.id;
+    }
+
+    state.config = config;
+    await firestore.saveBseState(state);
+    return true;
+  } catch (err) {
+    console.error('Error auto-syncing standings to Discord:', err);
+    return false;
+  }
+}
+
+/**
+ * Log transaction to central state, immutable Firestore log, and push sync to Discord
+ */
+export async function recordAuditLogAndSync(state, env, firestore, entry) {
+  const logItem = recordTransaction(state, entry);
+  await firestore.saveBseState(state);
+
+  try {
+    await firestore.logAuditEvent(logItem);
+  } catch (err) {
+    console.error('Failed to log audit event to Firestore:', err);
+  }
+
+  try {
+    await pushStandingsToDiscord(env, firestore, state);
+  } catch (err) {
+    console.error('Failed auto-syncing standings to Discord:', err);
+  }
+
+  // Optional feed notification
+  if (entry.notifyFeed !== false && env.DISCORD_FEED_CHANNEL_ID && env.DISCORD_BOT_TOKEN) {
+    try {
+      if (entry.action === 'AWARD') {
+        await sendChannelMessage(env.DISCORD_FEED_CHANNEL_ID, {
+          embeds: [{
+            title: 'Bones Awarded',
+            description: `**${entry.targetName}** was awarded **+${entry.amount} Bones** by **${entry.officerName}**!\n> *${entry.reason}*`,
+            color: Colors.GREEN,
+            fields: [
+              { name: 'Spendable Balance', value: `${entry.spendableBones ?? '—'} Bones`, inline: true },
+              { name: 'Bone Score', value: `${entry.boneScore ?? '—'} Pts`, inline: true }
+            ],
+            timestamp: new Date().toISOString()
+          }]
+        }, env.DISCORD_BOT_TOKEN);
+      } else if (entry.action === 'DEDUCT') {
+        await sendChannelMessage(env.DISCORD_FEED_CHANNEL_ID, {
+          embeds: [{
+            title: 'Bones Deducted',
+            description: `**${entry.targetName}** had **${entry.amount} Bones** deducted by **${entry.officerName}**.\n> *${entry.reason}*`,
+            color: Colors.RED,
+            fields: [
+              { name: 'Remaining Balance', value: `${entry.spendableBones ?? '—'} Bones`, inline: true }
+            ],
+            timestamp: new Date().toISOString()
+          }]
+        }, env.DISCORD_BOT_TOKEN);
+      } else if (entry.action === 'LEDGER_CORRECTION') {
+        await sendChannelMessage(env.DISCORD_FEED_CHANNEL_ID, {
+          embeds: [{
+            title: 'Ledger Balance Corrected',
+            description: `Officer **${entry.officerName}** adjusted ledger for **${entry.targetName}**.\n> *${entry.reason}*`,
+            color: Colors.AMBER,
+            fields: [
+              { name: 'New Spendable', value: `${entry.spendableBones ?? '—'} Bones`, inline: true },
+              { name: 'New Career Score', value: `${entry.boneScore ?? '—'} Pts`, inline: true }
+            ],
+            timestamp: new Date().toISOString()
+          }]
+        }, env.DISCORD_BOT_TOKEN);
+      } else if (entry.action === 'MEMBER_DELETE') {
+        await sendChannelMessage(env.DISCORD_FEED_CHANNEL_ID, {
+          embeds: [{
+            title: 'Member Purged from Roster',
+            description: `Officer **${entry.officerName}** removed **${entry.targetName}** from the guild roster.\n> *${entry.reason}*`,
+            color: Colors.DARK_RED,
+            timestamp: new Date().toISOString()
+          }]
+        }, env.DISCORD_BOT_TOKEN);
+      }
+    } catch (err) {
+      console.error('Feed broadcast error:', err);
+    }
+  }
+
+  return logItem;
+}

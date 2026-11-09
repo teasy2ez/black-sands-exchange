@@ -12,7 +12,10 @@ import {
   buildShopEmbed,
   buildBountyClaimReviewMessage,
   buildShopDeliveryReviewMessage,
-  Colors
+  Colors,
+  recordTransaction,
+  pushStandingsToDiscord,
+  recordAuditLogAndSync
 } from './src/discord.js';
 import { FirestoreClient } from './src/firestore.js';
 import { handleApplicationCommand, resolveRank } from './src/commands.js';
@@ -507,16 +510,16 @@ async function handleExchangeApi(url, request, env, firestore) {
     state.deliveries = state.deliveries || {};
     state.deliveries[orderId] = delivery;
 
-    await firestore.saveBseState(state);
-
-    // Audit log
-    await firestore.logAuditEvent({
+    await recordAuditLogAndSync(state, env, firestore, {
       action: 'SHOP_PURCHASE',
+      officerId: null,
+      officerName: 'System',
       targetId,
       targetName: delivery.serverNickname,
       amount: -item.costBones,
-      reason: `Purchased ${item.title} (Order: ${orderId}${resolvedChar ? ` for ${resolvedChar}` : ''})`,
-      timestamp: new Date().toISOString()
+      spendableBones: wallet.spendableBones,
+      boneScore: wallet.boneScore,
+      reason: `Purchased ${item.title} (Order: ${orderId}${resolvedChar ? ` for ${resolvedChar}` : ''})`
     });
 
     // Notify #officer-exchange
@@ -591,18 +594,16 @@ async function handleExchangeApi(url, request, env, firestore) {
     wallet.updatedAt = new Date().toISOString();
     state.wallets[claim.discordId] = wallet;
 
-    await firestore.saveBseState(state);
-
-    // Audit log
-    await firestore.logAuditEvent({
-      action: 'BOUNTY_CLAIM_APPROVED_WEB',
+    await recordAuditLogAndSync(state, env, firestore, {
+      action: 'BOUNTY_REWARD',
       officerId,
       officerName,
       targetId: claim.discordId,
-      targetName: claim.serverNickname,
+      targetName: claim.serverNickname || claim.discordUsername,
       amount: reward,
-      reason: `Approved claim ${claimId} (${claim.bountyTitle})${officerNote ? ` - Note: ${officerNote}` : ''}`,
-      timestamp: new Date().toISOString()
+      spendableBones: wallet.spendableBones,
+      boneScore: wallet.boneScore,
+      reason: `Approved claim ${claimId} (${claim.bountyTitle})${officerNote ? ` - Note: ${officerNote}` : ''}`
     });
 
     return jsonResponse({ success: true, claim, wallet });
@@ -694,18 +695,15 @@ async function handleExchangeApi(url, request, env, firestore) {
       item.stock = (item.stock || 0) + 1;
     }
 
-    await firestore.saveBseState(state);
-
-    // Audit log
-    await firestore.logAuditEvent({
-      action: 'SHOP_ORDER_REFUNDED',
+    await recordAuditLogAndSync(state, env, firestore, {
+      action: 'SHOP_REFUND',
       officerId,
       officerName,
       targetId: delivery.discordId,
       targetName: delivery.serverNickname,
       amount: delivery.costBones,
-      reason: `Refunded ${delivery.itemTitle} (${orderId}): ${delivery.refundReason}`,
-      timestamp: new Date().toISOString()
+      spendableBones: wallet ? wallet.spendableBones : null,
+      reason: `Refunded ${delivery.itemTitle} (${orderId}): ${delivery.refundReason}`
     });
 
     return jsonResponse({ success: true, delivery, refundedBones: delivery.costBones });
@@ -729,17 +727,18 @@ async function handleExchangeApi(url, request, env, firestore) {
     wallet.updatedAt = new Date().toISOString();
     state.wallets[targetId] = wallet;
 
-    await firestore.saveBseState(state);
+    const targetName = wallet.serverNickname || wallet.globalName || wallet.username || targetId;
 
-    // Audit log
-    await firestore.logAuditEvent({
-      action: 'OFFICER_AWARD_WEB',
+    await recordAuditLogAndSync(state, env, firestore, {
+      action: 'AWARD',
       officerId,
       officerName,
       targetId,
+      targetName,
       amount: numAmount,
-      reason: reason || 'Guild contribution',
-      timestamp: new Date().toISOString()
+      spendableBones: wallet.spendableBones,
+      boneScore: wallet.boneScore,
+      reason: reason || 'Guild contribution'
     });
 
     return jsonResponse({ success: true, wallet });
@@ -762,17 +761,18 @@ async function handleExchangeApi(url, request, env, firestore) {
     wallet.updatedAt = new Date().toISOString();
     state.wallets[targetId] = wallet;
 
-    await firestore.saveBseState(state);
+    const targetName = wallet.serverNickname || wallet.globalName || wallet.username || targetId;
 
-    // Audit log
-    await firestore.logAuditEvent({
-      action: 'OFFICER_DEDUCT_WEB',
+    await recordAuditLogAndSync(state, env, firestore, {
+      action: 'DEDUCT',
       officerId,
       officerName,
       targetId,
+      targetName,
       amount: -numAmount,
-      reason: reason || 'Administrative adjustment',
-      timestamp: new Date().toISOString()
+      spendableBones: wallet.spendableBones,
+      boneScore: wallet.boneScore,
+      reason: reason || 'Administrative adjustment'
     });
 
     return jsonResponse({ success: true, wallet });
@@ -789,20 +789,27 @@ async function handleExchangeApi(url, request, env, firestore) {
       boneScore: 0
     };
 
+    const oldSpendable = wallet.spendableBones || 0;
+    const oldScore = wallet.boneScore || 0;
+
     if (spendableBones !== undefined) wallet.spendableBones = Math.max(0, parseInt(spendableBones, 10) || 0);
     if (boneScore !== undefined) wallet.boneScore = Math.max(0, parseInt(boneScore, 10) || 0);
     wallet.updatedAt = new Date().toISOString();
     state.wallets[targetId] = wallet;
 
-    await firestore.saveBseState(state);
+    const targetName = wallet.serverNickname || wallet.globalName || wallet.username || targetId;
+    const diff = (wallet.spendableBones || 0) - oldSpendable;
 
-    await firestore.logAuditEvent({
-      action: 'OFFICER_MANUAL_ADJUST',
+    await recordAuditLogAndSync(state, env, firestore, {
+      action: 'LEDGER_CORRECTION',
       officerId,
       officerName,
       targetId,
-      reason: reason || 'Manual balance ledger adjustment',
-      timestamp: new Date().toISOString()
+      targetName,
+      amount: diff,
+      spendableBones: wallet.spendableBones,
+      boneScore: wallet.boneScore,
+      reason: reason || `Ledger balance adjustment (was: ${oldSpendable} Bones / ${oldScore} Pts)`
     });
 
     return jsonResponse({ success: true, wallet });
@@ -1013,22 +1020,29 @@ async function handleExchangeApi(url, request, env, firestore) {
 
   // POST Delete Member Record from Ledger
   if (path === 'member/delete' && request.method === 'POST') {
-    const { targetId } = body;
+    const { targetId, reason } = body;
     if (!targetId) return jsonResponse({ error: 'Missing targetId' }, 400);
 
     const state = await firestore.getBseState();
     if (state.wallets && state.wallets[targetId]) {
+      const oldWallet = state.wallets[targetId];
+      const memberName = oldWallet.serverNickname || oldWallet.globalName || oldWallet.username || targetId;
+      const spendable = oldWallet.spendableBones || 0;
+      const score = oldWallet.boneScore || 0;
+
       delete state.wallets[targetId];
       state.updatedAt = new Date().toISOString();
-      await firestore.saveBseState(state);
 
-      await firestore.logAuditEvent({
-        action: 'OFFICER_DELETE_MEMBER_RECORD',
+      await recordAuditLogAndSync(state, env, firestore, {
+        action: 'MEMBER_DELETE',
         officerId,
         officerName,
         targetId,
-        reason: 'Officer purged member ledger entry',
-        timestamp: new Date().toISOString()
+        targetName: memberName,
+        amount: -spendable,
+        spendableBones: 0,
+        boneScore: 0,
+        reason: reason ? `${reason} (Purged: ${spendable} Bones, ${score} Pts)` : `Purged from roster with ${spendable} Bones and ${score} Career Pts`
       });
     }
 

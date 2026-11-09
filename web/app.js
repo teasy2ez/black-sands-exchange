@@ -62,7 +62,7 @@ const tabNavLeaderboard = document.getElementById('tabNavLeaderboard');
 const tabNavBounties = document.getElementById('tabNavBounties');
 const tabNavShop = document.getElementById('tabNavShop');
 const tabNavFaq = document.getElementById('tabNavFaq');
-const tabMemberSettings = document.getElementById('tabMemberSettings');
+const tabHistory = document.getElementById('tabHistory');
 const tabOfficer = document.getElementById('tabOfficer');
 const officerActionBadge = document.getElementById('officerActionBadge');
 const subtabClaimCount = document.getElementById('subtabClaimCount');
@@ -71,13 +71,18 @@ const subtabDeliveryCount = document.getElementById('subtabDeliveryCount');
 const leaderboardTbody = document.getElementById('leaderboardTbody');
 const mobileLeaderboardList = document.getElementById('mobileLeaderboardList');
 const searchLeaderboard = document.getElementById('searchLeaderboard');
+const thLeaderboardActions = document.getElementById('thLeaderboardActions');
+
+const memberHistoryTbody = document.getElementById('memberHistoryTbody');
+const mobileHistoryList = document.getElementById('mobileHistoryList');
+
 const bountiesGrid = document.getElementById('bountiesGrid');
 const shopGrid = document.getElementById('shopGrid');
 const faqAccordionContainer = document.getElementById('faqAccordionContainer');
 
 // Mobile Bottom Nav elements
 const mobileBottomNav = document.getElementById('mobileBottomNav');
-const mobileTabMemberSettings = document.getElementById('mobileTabMemberSettings');
+const mobileTabHistory = document.getElementById('mobileTabHistory');
 const mobileTabOfficer = document.getElementById('mobileTabOfficer');
 const mobileOfficerActionBadge = document.getElementById('mobileOfficerActionBadge');
 
@@ -92,8 +97,6 @@ const ranksBuilderContainer = document.getElementById('ranksBuilderContainer');
 const dataEditorAnnounceEnabled = document.getElementById('dataEditorAnnounceEnabled');
 const dataEditorAnnounceText = document.getElementById('dataEditorAnnounceText');
 const dataEditorAnnounceType = document.getElementById('dataEditorAnnounceType');
-const rawStateJsonTextarea = document.getElementById('rawStateJsonTextarea');
-const rawJsonFeedback = document.getElementById('rawJsonFeedback');
 
 // Initialize
 document.addEventListener('DOMContentLoaded', async () => {
@@ -101,7 +104,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupOfficerSubtabs();
   setupModals();
   setupCharacterManagement();
-  setupMemberSettings();
+  setupHistory();
   setupOfficerTools();
   setupDataEditor();
 
@@ -123,7 +126,6 @@ async function checkAuthSession() {
       state.user = data.user;
       state.userCharacters = data.user.characters || [];
       renderAuthenticatedUser(data.user);
-      applyUserPreferences(data.user.preferences || {});
     } else {
       renderUnauthenticatedUser();
     }
@@ -152,9 +154,7 @@ function renderAuthenticatedUser(user) {
   walletScore.textContent = (user.boneScore || 0).toLocaleString();
 
   // Populate Public Guild Note
-  const guildNoteInput = document.getElementById('memberGuildNoteInput');
   const modalNoteInput = document.getElementById('modalGuildNoteInput');
-  if (guildNoteInput) guildNoteInput.value = user.guildNote || '';
   if (modalNoteInput) modalNoteInput.value = user.guildNote || '';
 
   // Primary Character Pill in Wallet
@@ -167,9 +167,9 @@ function renderAuthenticatedUser(user) {
 
   updatePrestigeBanner(user.boneScore || 0, user.spendableBones || 0);
 
-  // Show Member Settings Tab (Desktop + Mobile)
-  tabMemberSettings.style.display = 'inline-flex';
-  if (mobileTabMemberSettings) mobileTabMemberSettings.style.display = 'flex';
+  // Show Member Transaction History Tab (Desktop + Mobile)
+  if (tabHistory) tabHistory.style.display = 'inline-flex';
+  if (mobileTabHistory) mobileTabHistory.style.display = 'flex';
 
   // STRICT OFFICER PERMISSION CHECK: Show or Hide Officer Hall
   if (user.isOfficer) {
@@ -192,11 +192,11 @@ function renderUnauthenticatedUser() {
   walletSpendable.textContent = '0';
   walletScore.textContent = '0';
   walletCharContainer.style.display = 'none';
-  tabMemberSettings.style.display = 'none';
-  if (mobileTabMemberSettings) mobileTabMemberSettings.style.display = 'none';
+  if (tabHistory) tabHistory.style.display = 'none';
+  if (mobileTabHistory) mobileTabHistory.style.display = 'none';
   tabOfficer.style.display = 'none';
   if (mobileTabOfficer) mobileTabOfficer.style.display = 'none';
-  if (state.activeTab === 'officer' || state.activeTab === 'member-settings') {
+  if (state.activeTab === 'officer' || state.activeTab === 'history') {
     switchTab('leaderboard');
   }
 }
@@ -236,6 +236,7 @@ async function refreshBseState() {
     }
 
     renderLeaderboard();
+    renderMemberHistory();
     renderBounties();
     renderShop();
     renderFaq();
@@ -311,12 +312,6 @@ function applySiteCustomization(bse) {
     tabNavFaq.style.display = modules.faq.enabled === false ? 'none' : 'inline-flex';
   }
 
-  // Default Theme Preset (if user has not set personal preference)
-  const userPrefTheme = state.user?.preferences?.theme;
-  if (!userPrefTheme || userPrefTheme === 'default') {
-    const activePreset = theme.activePreset || 'desert-gold';
-    setThemeClass(`theme-${activePreset}`);
-  }
 }
 
 /**
@@ -387,8 +382,15 @@ function renderLeaderboard() {
     return name.includes(query) || handle.includes(query) || char.includes(query) || note.includes(query);
   });
 
+  const isOfficer = Boolean(state.user?.isOfficer);
+  if (thLeaderboardActions) {
+    thLeaderboardActions.style.display = isOfficer ? 'table-cell' : 'none';
+  }
+
+  const colSpanCount = isOfficer ? 8 : 7;
+
   if (!filtered.length) {
-    leaderboardTbody.innerHTML = `<tr><td colspan="7" style="text-align: center; color: var(--text-dim); padding: 2rem;">No members match the search query.</td></tr>`;
+    leaderboardTbody.innerHTML = `<tr><td colspan="${colSpanCount}" style="text-align: center; color: var(--text-dim); padding: 2rem;">No members match the search query.</td></tr>`;
     if (mobileLeaderboardList) {
       mobileLeaderboardList.innerHTML = `<div style="text-align: center; color: var(--text-dim); padding: 2rem;">No members match the search query.</div>`;
     }
@@ -423,6 +425,16 @@ function renderLeaderboard() {
       ? `<span class="role-pill ${roleCss}">${charRole}</span>`
       : `<span style="color:var(--text-dim); font-size:0.8rem;">—</span>`;
 
+    const officerActionsCell = isOfficer ? `
+      <td style="text-align: center;" onclick="event.stopPropagation()">
+        <div class="officer-inline-actions">
+          <button class="btn-officer-award" title="Award Bones" onclick="event.stopPropagation(); quickAwardMember('${w.discordId}', '${escapeAttr(name)}')">+ Bones</button>
+          <button class="btn-officer-deduct" title="Deduct Bones" onclick="event.stopPropagation(); quickDeductMember('${w.discordId}', '${escapeAttr(name)}', ${w.spendableBones || 0})">- Bones</button>
+          <button class="btn-officer-purge" title="Delete Member from Roster" onclick="event.stopPropagation(); quickDeleteMember('${w.discordId}', '${escapeAttr(name)}', ${w.spendableBones || 0}, ${w.boneScore || 0})">Purge</button>
+        </div>
+      </td>
+    ` : '';
+
     return `
       <tr onclick="inspectMemberProfile('${w.discordId}')" title="Click to inspect ${name}'s WoW characters, roles, and public note">
         <td class="table-rank-cell">#${rankNum}</td>
@@ -440,6 +452,7 @@ function renderLeaderboard() {
         <td><span class="card-badge economy">${rankTitle}</span></td>
         <td style="font-weight: 700; color: var(--gold-300);">${(w.spendableBones || 0).toLocaleString()}</td>
         <td style="font-weight: 700; color: var(--amber);">${(w.boneScore || 0).toLocaleString()}</td>
+        ${officerActionsCell}
       </tr>
     `;
   }).join('');
@@ -461,21 +474,32 @@ function renderLeaderboard() {
       const classCss = `class-${charClass.toLowerCase().replace(/\s+/g, '-')}`;
       const roleCss = (charRole || 'dps').toLowerCase();
 
+      const mobileOfficerStrip = isOfficer ? `
+        <div class="mobile-card-officer-strip" onclick="event.stopPropagation()">
+          <button class="btn-officer-award" onclick="event.stopPropagation(); quickAwardMember('${w.discordId}', '${escapeAttr(name)}')">+ Bones</button>
+          <button class="btn-officer-deduct" onclick="event.stopPropagation(); quickDeductMember('${w.discordId}', '${escapeAttr(name)}', ${w.spendableBones || 0})">- Bones</button>
+          <button class="btn-officer-purge" onclick="event.stopPropagation(); quickDeleteMember('${w.discordId}', '${escapeAttr(name)}', ${w.spendableBones || 0}, ${w.boneScore || 0})">Purge</button>
+        </div>
+      ` : '';
+
       return `
         <div class="mobile-roster-card" onclick="inspectMemberProfile('${w.discordId}')">
-          <div class="mobile-roster-rank rank-${rankNum}">#${rankNum}</div>
-          <img src="${avatarUrl}" class="mobile-roster-avatar" alt="${name}">
-          <div class="mobile-roster-info">
-            <div class="mobile-roster-name">${name}</div>
-            <div class="mobile-roster-meta">
-              ${charName ? `<span class="class-badge ${classCss}" style="padding:0.1rem 0.35rem; font-size:0.7rem;">${charName}</span> <span class="role-pill ${roleCss}">${charRole}</span>` : `<span style="color:var(--text-dim);">No character</span>`}
+          <div style="display: flex; align-items: center; gap: 0.75rem;">
+            <div class="mobile-roster-rank rank-${rankNum}">#${rankNum}</div>
+            <img src="${avatarUrl}" class="mobile-roster-avatar" alt="${name}">
+            <div class="mobile-roster-info">
+              <div class="mobile-roster-name">${name}</div>
+              <div class="mobile-roster-meta">
+                ${charName ? `<span class="class-badge ${classCss}" style="padding:0.1rem 0.35rem; font-size:0.7rem;">${charName}</span> <span class="role-pill ${roleCss}">${charRole}</span>` : `<span style="color:var(--text-dim);">No character</span>`}
+              </div>
             </div>
+            <div class="mobile-roster-score">
+              <span class="score-num">${(w.boneScore || 0).toLocaleString()}</span>
+              <span class="score-label">Score</span>
+            </div>
+            <div class="mobile-roster-arrow">›</div>
           </div>
-          <div class="mobile-roster-score">
-            <span class="score-num">${(w.boneScore || 0).toLocaleString()}</span>
-            <span class="score-label">Score</span>
-          </div>
-          <div class="mobile-roster-arrow">›</div>
+          ${mobileOfficerStrip}
         </div>
       `;
     }).join('');
@@ -561,6 +585,17 @@ window.inspectMemberProfile = function(discordId) {
       <h5 style="color: var(--gold-100); font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem;">Linked Characters (WoW: Forever)</h5>
       ${charactersHtml}
     </div>
+
+    ${state.user?.isOfficer ? `
+      <div class="wow-inner-box" style="margin-top: 1.25rem; padding: 0.85rem;">
+        <div style="font-size: 0.75rem; color: var(--gold-300); font-weight: 700; text-transform: uppercase; margin-bottom: 0.5rem;">Officer Controls</div>
+        <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+          <button class="btn-officer-award" style="padding: 0.4rem 0.8rem; font-size: 0.8rem;" onclick="quickAwardMember('${discordId}', '${escapeAttr(name)}')">+ Award Bones</button>
+          <button class="btn-officer-deduct" style="padding: 0.4rem 0.8rem; font-size: 0.8rem;" onclick="quickDeductMember('${discordId}', '${escapeAttr(name)}', ${w.spendableBones || 0})">- Deduct Bones</button>
+          <button class="btn-officer-purge" style="padding: 0.4rem 0.8rem; font-size: 0.8rem;" onclick="quickDeleteMember('${discordId}', '${escapeAttr(name)}', ${w.spendableBones || 0}, ${w.boneScore || 0})">Purge from Roster</button>
+        </div>
+      </div>
+    ` : ''}
   `;
 
   document.getElementById('modalMemberProfile').classList.add('active');
@@ -678,124 +713,218 @@ window.toggleFaqAccordion = function(element) {
 };
 
 /**
- * Member Settings & Preferences
+ * Personal Transaction History for Signed-In Member
  */
-function setupMemberSettings() {
-  // Theme option clicks
-  document.querySelectorAll('#memberThemePicker .theme-card-option').forEach(card => {
-    card.addEventListener('click', () => {
-      document.querySelectorAll('#memberThemePicker .theme-card-option').forEach(c => c.classList.remove('active'));
-      card.classList.add('active');
-      const themeName = card.getAttribute('data-theme');
-      setThemeClass(themeName);
-    });
-  });
-
-  // Density change
-  const prefDensitySelect = document.getElementById('prefDensitySelect');
-  prefDensitySelect.addEventListener('change', () => {
-    document.body.classList.toggle('density-compact', prefDensitySelect.value === 'compact');
-  });
-
-  // Manage characters shortcut
-  document.getElementById('btnManageCharsFromSettings').addEventListener('click', () => {
-    openCharacterModal();
-  });
-
-  // Save Preferences Button
-  document.getElementById('btnSaveMemberPreferences').addEventListener('click', async () => {
-    const activeThemeCard = document.querySelector('#memberThemePicker .theme-card-option.active');
-    const theme = activeThemeCard ? activeThemeCard.getAttribute('data-theme') : 'theme-desert-gold';
-    const density = prefDensitySelect.value;
-    const defaultCharacter = document.getElementById('prefDefaultCharSelect').value;
-    const notifyToasts = document.getElementById('prefNotifyToasts').checked;
-    const guildNote = (document.getElementById('memberGuildNoteInput')?.value || '').trim();
-
-    try {
-      const res = await fetch('/api/exchange/settings/member', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          preferences: { theme, density, defaultCharacter, notifyToasts }
-        })
-      });
-
-      // Also persist guild note if updated
-      if (guildNote !== (state.user?.guildNote || '')) {
-        await fetch('/api/exchange/characters', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            characters: state.user?.characters || [],
-            primaryCharacter: state.user?.primaryCharacter || null,
-            guildNote
-          })
-        });
-        if (state.user) state.user.guildNote = guildNote;
-      }
-
-      if (res.ok) {
-        showToast('Preferences & Public Guild Note saved.');
-        if (state.user) {
-          state.user.preferences = { theme, density, defaultCharacter, notifyToasts };
-        }
-        await refreshBseState();
-      } else {
-        showToast('Failed to save preferences.');
-      }
-    } catch (err) {
-      showToast(`Error: ${err.message}`);
-    }
-  });
+function setupHistory() {
+  // Personal history listeners if needed
 }
 
-function applyUserPreferences(prefs) {
-  if (prefs.theme) {
-    setThemeClass(prefs.theme);
-    const card = document.querySelector(`#memberThemePicker [data-theme="${prefs.theme}"]`);
-    if (card) {
-      document.querySelectorAll('#memberThemePicker .theme-card-option').forEach(c => c.classList.remove('active'));
-      card.classList.add('active');
+function renderMemberHistory() {
+  if (!memberHistoryTbody) return;
+  if (!state.user) {
+    memberHistoryTbody.innerHTML = `<tr><td colspan="6" style="text-align: center; color: var(--text-dim); padding: 2rem;">Please sign in with Discord to view your transaction history.</td></tr>`;
+    if (mobileHistoryList) {
+      mobileHistoryList.innerHTML = `<div style="text-align: center; color: var(--text-dim); padding: 2rem;">Please sign in with Discord to view your transaction history.</div>`;
     }
-  }
-
-  if (prefs.density) {
-    document.getElementById('prefDensitySelect').value = prefs.density;
-    document.body.classList.toggle('density-compact', prefs.density === 'compact');
-  }
-
-  if (prefs.notifyToasts !== undefined) {
-    document.getElementById('prefNotifyToasts').checked = Boolean(prefs.notifyToasts);
-  }
-
-  // Populate default char select
-  populatePrefCharSelect(prefs.defaultCharacter);
-}
-
-function populatePrefCharSelect(selectedChar) {
-  const select = document.getElementById('prefDefaultCharSelect');
-  const chars = state.user?.characters || [];
-  if (!chars.length) {
-    select.innerHTML = `<option value="">None (Link characters first)</option>`;
     return;
   }
-  select.innerHTML = chars.map(c => `
-    <option value="${c.name}" ${c.name === selectedChar || (c.isPrimary && !selectedChar) ? 'selected' : ''}>
-      ${c.name} (${c.class || 'Character'})
-    </option>
-  `).join('');
+
+  const allLogs = state.bseState?.auditLog || [];
+  const myLogs = allLogs.filter(e => e.targetId === state.user.id).slice().reverse();
+
+  if (!myLogs.length) {
+    memberHistoryTbody.innerHTML = `<tr><td colspan="6" style="text-align: center; color: var(--text-dim); padding: 2rem;">No transactions recorded yet. Complete bounties or redeem items in the Exchange Shop to see activity here.</td></tr>`;
+    if (mobileHistoryList) {
+      mobileHistoryList.innerHTML = `<div style="text-align: center; color: var(--text-dim); padding: 2rem;">No transactions recorded yet. Complete bounties or redeem items in the Exchange Shop to see activity here.</div>`;
+    }
+    return;
+  }
+
+  // 1. Desktop Table
+  memberHistoryTbody.innerHTML = myLogs.map(e => {
+    const timeStr = new Date(e.timestamp).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }) + ' ' +
+                    new Date(e.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+    let badgeClass = 'adjust';
+    let badgeText = e.action;
+    if (e.action === 'AWARD') { badgeClass = 'award'; badgeText = 'Award'; }
+    else if (e.action === 'DEDUCT') { badgeClass = 'deduct'; badgeText = 'Deduct'; }
+    else if (e.action === 'BOUNTY_REWARD') { badgeClass = 'bounty'; badgeText = 'Bounty'; }
+    else if (e.action === 'SHOP_PURCHASE') { badgeClass = 'purchase'; badgeText = 'Purchase'; }
+    else if (e.action === 'SHOP_REFUND') { badgeClass = 'award'; badgeText = 'Refund'; }
+    else if (e.action === 'LEDGER_CORRECTION') { badgeClass = 'adjust'; badgeText = 'Correction'; }
+    else if (e.action === 'MEMBER_DELETE') { badgeClass = 'purge'; badgeText = 'Purged'; }
+
+    let amountHtml = '—';
+    if (e.amount > 0) {
+      amountHtml = `<span class="history-amount-positive">+${e.amount}</span>`;
+    } else if (e.amount < 0) {
+      amountHtml = `<span class="history-amount-negative">${e.amount}</span>`;
+    } else if (e.amount === 0) {
+      amountHtml = `<span class="history-amount-neutral">0</span>`;
+    }
+
+    const balAfter = e.spendableBones !== null && e.spendableBones !== undefined ? `${e.spendableBones} Bones` : '—';
+
+    return `
+      <tr>
+        <td style="font-size: 0.8rem; color: var(--text-dim); white-space: nowrap;">${timeStr}</td>
+        <td><span class="history-tx-badge ${badgeClass}">${badgeText}</span></td>
+        <td style="font-size: 0.95rem;">${amountHtml}</td>
+        <td style="font-size: 0.85rem; color: var(--gold-300);">${balAfter}</td>
+        <td style="font-size: 0.85rem; color: var(--text-main);">${escapeHtml(e.reason || '—')}</td>
+        <td style="font-size: 0.8rem; color: var(--text-muted);">${escapeHtml(e.officerName || 'System')}</td>
+      </tr>
+    `;
+  }).join('');
+
+  // 2. Mobile Card Stream
+  if (mobileHistoryList) {
+    mobileHistoryList.innerHTML = myLogs.map(e => {
+      const timeStr = new Date(e.timestamp).toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' +
+                      new Date(e.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+      let badgeClass = 'adjust';
+      let badgeText = e.action;
+      if (e.action === 'AWARD') { badgeClass = 'award'; badgeText = 'Award'; }
+      else if (e.action === 'DEDUCT') { badgeClass = 'deduct'; badgeText = 'Deduct'; }
+      else if (e.action === 'BOUNTY_REWARD') { badgeClass = 'bounty'; badgeText = 'Bounty'; }
+      else if (e.action === 'SHOP_PURCHASE') { badgeClass = 'purchase'; badgeText = 'Purchase'; }
+      else if (e.action === 'SHOP_REFUND') { badgeClass = 'award'; badgeText = 'Refund'; }
+      else if (e.action === 'LEDGER_CORRECTION') { badgeClass = 'adjust'; badgeText = 'Correction'; }
+      else if (e.action === 'MEMBER_DELETE') { badgeClass = 'purge'; badgeText = 'Purged'; }
+
+      let amountHtml = '—';
+      if (e.amount > 0) {
+        amountHtml = `<span class="history-amount-positive">+${e.amount}</span>`;
+      } else if (e.amount < 0) {
+        amountHtml = `<span class="history-amount-negative">${e.amount}</span>`;
+      } else if (e.amount === 0) {
+        amountHtml = `<span class="history-amount-neutral">0</span>`;
+      }
+
+      const balAfter = e.spendableBones !== null && e.spendableBones !== undefined ? `${e.spendableBones} Bones` : '—';
+
+      return `
+        <div class="mobile-history-card">
+          <div class="history-card-header">
+            <span class="history-tx-badge ${badgeClass}">${badgeText}</span>
+            <span style="font-size: 0.75rem; color: var(--text-dim);">${timeStr}</span>
+          </div>
+          <div style="display: flex; justify-content: space-between; align-items: baseline; margin: 0.2rem 0;">
+            <div style="font-size: 1.1rem;">${amountHtml}</div>
+            <div style="font-size: 0.78rem; color: var(--gold-300);">Balance: <strong>${balAfter}</strong></div>
+          </div>
+          <div style="font-size: 0.82rem; color: var(--text-muted);">${escapeHtml(e.reason || '—')}</div>
+          <div style="font-size: 0.72rem; color: var(--text-dim); text-align: right;">By: ${escapeHtml(e.officerName || 'System')}</div>
+        </div>
+      `;
+    }).join('');
+  }
 }
 
-function setThemeClass(themeClass) {
-  document.body.classList.remove(
-    'theme-desert-gold',
-    'theme-void-purple',
-    'theme-cartel-emerald',
-    'theme-crimson-horde',
-    'theme-frost-alliance'
-  );
-  document.body.classList.add(themeClass);
+function escapeHtml(str) {
+  return String(str || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
+
+function escapeAttr(str) {
+  return String(str || '').replace(/'/g, "\\'").replace(/"/g, '&quot;');
+}
+
+// Global officer quick actions from leaderboard
+window.quickAwardMember = async function(userId, memberName) {
+  const amountStr = prompt(`Award Bones to ${memberName}:\nEnter amount to award (e.g. 25):`);
+  if (!amountStr) return;
+  const amount = parseInt(amountStr, 10);
+  if (isNaN(amount) || amount < 1) {
+    showToast('Invalid award amount entered.');
+    return;
+  }
+  const reason = prompt(`Reason for awarding ${amount} Bones to ${memberName}:`, 'Guild event contribution');
+  if (reason === null) return;
+
+  try {
+    const res = await fetch('/api/exchange/award', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ targetId: userId, amount, reason: reason.trim() })
+    });
+    if (res.ok) {
+      showToast(`Awarded +${amount} Bones to ${memberName}.`);
+      await refreshBseState();
+    } else {
+      const data = await res.json();
+      showToast(`Failed to award Bones: ${data.error || 'Server error'}`);
+    }
+  } catch (err) {
+    showToast(`Error: ${err.message}`);
+  }
+};
+
+window.quickDeductMember = async function(userId, memberName, currentBones) {
+  const amountStr = prompt(`Deduct Bones from ${memberName} (Current balance: ${currentBones} Bones):\nEnter amount to deduct:`);
+  if (!amountStr) return;
+  const amount = parseInt(amountStr, 10);
+  if (isNaN(amount) || amount < 1) {
+    showToast('Invalid deduction amount entered.');
+    return;
+  }
+  const reason = prompt(`Reason for deducting ${amount} Bones from ${memberName}:`, 'Penalty or correction');
+  if (reason === null) return;
+
+  try {
+    const res = await fetch('/api/exchange/deduct', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ targetId: userId, amount, reason: reason.trim() })
+    });
+    if (res.ok) {
+      showToast(`Deducted -${amount} Bones from ${memberName}.`);
+      await refreshBseState();
+    } else {
+      const data = await res.json();
+      showToast(`Failed to deduct Bones: ${data.error || 'Server error'}`);
+    }
+  } catch (err) {
+    showToast(`Error: ${err.message}`);
+  }
+};
+
+window.quickDeleteMember = async function(userId, memberName, spendableBones, boneScore) {
+  const confirmMsg = `WARNING: Are you sure you want to PERMANENTLY remove "${memberName}" from the guild roster?\n\nMember Current Ledger:\n- Spendable Bones: ${spendableBones}\n- Career Score: ${boneScore} Pts\n\nThis will purge their balance and record from the exchange and standings.`;
+  if (!confirm(confirmMsg)) return;
+
+  const finalCheck = prompt(`FINAL CONFIRMATION:\nType DELETE to permanently purge "${memberName}" with ${spendableBones} Bones from the roster:`);
+  if (!finalCheck || finalCheck.trim().toUpperCase() !== 'DELETE') {
+    showToast('Purge cancelled.');
+    return;
+  }
+
+  const reason = prompt(`Reason for purging ${memberName} from roster (logged in audit trail):`, 'Left guild / Inactive purge');
+
+  try {
+    const res = await fetch('/api/exchange/member/delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ targetId: userId, reason: (reason || '').trim() })
+    });
+    if (res.ok) {
+      showToast(`Purged ${memberName} from roster (${spendableBones} Bones logged).`);
+      document.getElementById('modalMemberProfile')?.classList.remove('active');
+      await refreshBseState();
+    } else {
+      const data = await res.json();
+      showToast(`Failed to delete member: ${data.error || 'Server error'}`);
+    }
+  } catch (err) {
+    showToast(`Error: ${err.message}`);
+  }
+};
 
 /**
  * Elaborate Officer Queues & Subtabs
@@ -949,15 +1078,6 @@ function populateOfficerSettingsForms() {
   state.draftFaq = [...(modules.faq?.items || [])];
   renderFaqBuilder();
 
-  // Populate raw JSON editor if not currently focused by the user
-  if (rawStateJsonTextarea && document.activeElement !== rawStateJsonTextarea) {
-    try {
-      rawStateJsonTextarea.value = JSON.stringify(state.bseState, null, 2);
-      if (rawJsonFeedback) {
-        rawJsonFeedback.innerHTML = `<span style="color: var(--text-dim);">Loaded latest database snapshot (${new Date().toLocaleTimeString()})</span>`;
-      }
-    } catch (e) {}
-  }
 }
 
 /**
@@ -1152,74 +1272,6 @@ function setupDataEditor() {
     });
   }
 
-  // 4. Raw JSON Power Editor: Format & Validate
-  const btnFormat = document.getElementById('btnFormatRawJson');
-  if (btnFormat && rawStateJsonTextarea) {
-    btnFormat.addEventListener('click', () => {
-      try {
-        const parsed = JSON.parse(rawStateJsonTextarea.value);
-        rawStateJsonTextarea.value = JSON.stringify(parsed, null, 2);
-        if (rawJsonFeedback) {
-          rawJsonFeedback.innerHTML = `<span style="color: var(--success); font-weight: 600;">Valid JSON. Formatted successfully.</span>`;
-        }
-        showToast('JSON is syntactically valid and formatted.');
-      } catch (err) {
-        if (rawJsonFeedback) {
-          rawJsonFeedback.innerHTML = `<span style="color: var(--danger); font-weight: 600;">JSON Syntax Error: ${err.message}</span>`;
-        }
-        showToast(`Syntax error: ${err.message}`);
-      }
-    });
-  }
-
-  // 5. Raw JSON Power Editor: Save Raw State
-  const btnPublishRaw = document.getElementById('btnPublishRawJson');
-  if (btnPublishRaw && rawStateJsonTextarea) {
-    btnPublishRaw.addEventListener('click', async () => {
-      let parsed;
-      try {
-        parsed = JSON.parse(rawStateJsonTextarea.value);
-      } catch (err) {
-        if (rawJsonFeedback) {
-          rawJsonFeedback.innerHTML = `<span style="color: var(--danger); font-weight: 600;">Cannot save invalid JSON: ${err.message}</span>`;
-        }
-        showToast(`Cannot save invalid JSON: ${err.message}`);
-        return;
-      }
-
-      if (!confirm('Are you sure you want to write this raw state directly to the live database? This will update the guild economy state immediately.')) {
-        return;
-      }
-
-      try {
-        btnPublishRaw.disabled = true;
-        btnPublishRaw.textContent = 'Saving...';
-        const res = await fetch('/api/exchange/state/raw', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ state: parsed })
-        });
-        const data = await res.json();
-        if (res.ok) {
-          if (rawJsonFeedback) {
-            rawJsonFeedback.innerHTML = `<span style="color: var(--success); font-weight: 600;">Database state updated successfully at ${new Date().toLocaleTimeString()}!</span>`;
-          }
-          showToast('Database state updated successfully.');
-          await refreshBseState();
-        } else {
-          if (rawJsonFeedback) {
-            rawJsonFeedback.innerHTML = `<span style="color: var(--danger); font-weight: 600;">Failed: ${data.error || 'Server error'}</span>`;
-          }
-          showToast(`Failed: ${data.error || 'Server error'}`);
-        }
-      } catch (err) {
-        showToast(`Error: ${err.message}`);
-      } finally {
-        btnPublishRaw.disabled = false;
-        btnPublishRaw.textContent = 'Save Raw State to Database';
-      }
-    });
-  }
 }
 
 /**
@@ -1272,24 +1324,50 @@ function renderOfficerShopList() {
  * Render Live Audit Trail
  */
 function renderAuditTrail() {
-  const auditEntries = (state.bseState?.auditLog || []).slice(-20).reverse();
+  if (!auditTrailTbody) return;
+  const auditEntries = (state.bseState?.auditLog || []).slice(-100).reverse();
   if (!auditEntries.length) {
-    auditTrailTbody.innerHTML = `<tr><td colspan="6" style="text-align: center; color: var(--text-dim); padding: 1.5rem;">Audit events will appear as actions occur.</td></tr>`;
+    auditTrailTbody.innerHTML = `<tr><td colspan="7" style="text-align: center; color: var(--text-dim); padding: 1.5rem;">Audit events will appear as actions occur.</td></tr>`;
     return;
   }
 
-  auditTrailTbody.innerHTML = auditEntries.map(e => `
-    <tr>
-      <td style="font-size: 0.75rem; color: var(--text-dim);">${new Date(e.timestamp).toLocaleTimeString()}</td>
-      <td><span class="card-badge raid" style="font-size:0.65rem;">${e.action}</span></td>
-      <td style="font-weight: 600;">${e.officerName || 'System'}</td>
-      <td>${e.targetName || '—'}</td>
-      <td style="font-weight: 700; color: ${e.amount >= 0 ? 'var(--success)' : 'var(--danger)'};">
-        ${e.amount !== undefined ? (e.amount >= 0 ? `+${e.amount}` : e.amount) : '—'}
-      </td>
-      <td style="font-size: 0.8rem; color: var(--text-muted);">${e.reason || '—'}</td>
-    </tr>
-  `).join('');
+  auditTrailTbody.innerHTML = auditEntries.map(e => {
+    const timeStr = new Date(e.timestamp).toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' +
+                    new Date(e.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+    let badgeClass = 'adjust';
+    let badgeText = e.action;
+    if (e.action === 'AWARD') { badgeClass = 'award'; badgeText = 'Award'; }
+    else if (e.action === 'DEDUCT') { badgeClass = 'deduct'; badgeText = 'Deduct'; }
+    else if (e.action === 'BOUNTY_REWARD') { badgeClass = 'bounty'; badgeText = 'Bounty'; }
+    else if (e.action === 'SHOP_PURCHASE') { badgeClass = 'purchase'; badgeText = 'Purchase'; }
+    else if (e.action === 'SHOP_REFUND') { badgeClass = 'award'; badgeText = 'Refund'; }
+    else if (e.action === 'LEDGER_CORRECTION') { badgeClass = 'adjust'; badgeText = 'Correction'; }
+    else if (e.action === 'MEMBER_DELETE') { badgeClass = 'purge'; badgeText = 'Purge'; }
+
+    let amountHtml = '—';
+    if (e.amount > 0) {
+      amountHtml = `<span class="history-amount-positive">+${e.amount}</span>`;
+    } else if (e.amount < 0) {
+      amountHtml = `<span class="history-amount-negative">${e.amount}</span>`;
+    } else if (e.amount === 0) {
+      amountHtml = `<span class="history-amount-neutral">0</span>`;
+    }
+
+    const balAfter = e.spendableBones !== null && e.spendableBones !== undefined ? `${e.spendableBones} Bones` : '—';
+
+    return `
+      <tr>
+        <td style="font-size: 0.75rem; color: var(--text-dim); white-space: nowrap;">${timeStr}</td>
+        <td><span class="history-tx-badge ${badgeClass}">${badgeText}</span></td>
+        <td style="font-weight: 600; font-size: 0.85rem;">${escapeHtml(e.officerName || 'System')}</td>
+        <td style="font-size: 0.85rem; color: var(--gold-100);">${escapeHtml(e.targetName || '—')}</td>
+        <td style="font-size: 0.9rem;">${amountHtml}</td>
+        <td style="font-size: 0.85rem; color: var(--gold-300);">${balAfter}</td>
+        <td style="font-size: 0.8rem; color: var(--text-muted);">${escapeHtml(e.reason || '—')}</td>
+      </tr>
+    `;
+  }).join('');
 }
 
 /**
@@ -1348,9 +1426,7 @@ function setupCharacterManagement() {
         state.user.guildNote = data.guildNote || '';
         walletPrimaryCharName.textContent = data.primaryCharacter || 'None (Click to link)';
         if (document.getElementById('modalGuildNoteInput')) document.getElementById('modalGuildNoteInput').value = data.guildNote || '';
-        if (document.getElementById('memberGuildNoteInput')) document.getElementById('memberGuildNoteInput').value = data.guildNote || '';
         document.getElementById('modalCharacters').classList.remove('active');
-        populatePrefCharSelect(data.primaryCharacter);
         await refreshBseState();
       } else {
         showToast(data.error || 'Failed to save characters');
@@ -1982,6 +2058,11 @@ function switchTab(targetView) {
 
   document.getElementById(`view-${targetView}`)?.classList.add('active');
   state.activeTab = targetView;
+
+  if (targetView === 'history') {
+    renderMemberHistory();
+  }
+
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 

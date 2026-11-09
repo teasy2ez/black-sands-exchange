@@ -2,7 +2,8 @@ import {
   InteractionResponseType,
   Colors,
   sendChannelMessage,
-  addGuildMemberRole
+  addGuildMemberRole,
+  recordAuditLogAndSync
 } from './discord.js';
 import { isOfficer, resolveRank } from './commands.js';
 
@@ -99,18 +100,17 @@ async function handleBountyApprove(interaction, claimId, env, firestore) {
     }
   }
 
-  await firestore.saveBseState(state);
-
-  // Audit log
-  await firestore.logAuditEvent({
-    action: 'BOUNTY_CLAIM_APPROVED',
+  await recordAuditLogAndSync(state, env, firestore, {
+    action: 'BOUNTY_REWARD',
     officerId: officer.id,
     officerName,
     targetId: claim.discordId,
     targetName: claim.serverNickname || claim.discordUsername,
     amount: reward,
+    spendableBones: wallet.spendableBones,
+    boneScore: wallet.boneScore,
     reason: `Approved Bounty: ${claim.bountyTitle} (${claimId})`,
-    timestamp: new Date().toISOString()
+    notifyFeed: false
   });
 
   // Post to #exchange-feed
