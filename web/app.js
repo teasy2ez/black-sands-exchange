@@ -81,13 +81,12 @@ const officerBountiesList = document.getElementById('officerBountiesList');
 const officerShopList = document.getElementById('officerShopList');
 const auditTrailTbody = document.getElementById('auditTrailTbody');
 const ranksBuilderContainer = document.getElementById('ranksBuilderContainer');
-const faqBuilderContainer = document.getElementById('faqBuilderContainer');
-
-// Editor Floating Bar
-const editorFloatingBar = document.getElementById('editorFloatingBar');
-const btnToggleSiteEditorMode = document.getElementById('btnToggleSiteEditorMode');
-const btnFloatingPublish = document.getElementById('btnFloatingPublish');
-const btnFloatingExit = document.getElementById('btnFloatingExit');
+// Data Editor elements
+const dataEditorAnnounceEnabled = document.getElementById('dataEditorAnnounceEnabled');
+const dataEditorAnnounceText = document.getElementById('dataEditorAnnounceText');
+const dataEditorAnnounceType = document.getElementById('dataEditorAnnounceType');
+const rawStateJsonTextarea = document.getElementById('rawStateJsonTextarea');
+const rawJsonFeedback = document.getElementById('rawJsonFeedback');
 
 // Initialize
 document.addEventListener('DOMContentLoaded', async () => {
@@ -97,7 +96,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupCharacterManagement();
   setupMemberSettings();
   setupOfficerTools();
-  setupSiteEditor();
+  setupDataEditor();
 
   await checkAuthSession();
   await refreshBseState();
@@ -144,6 +143,12 @@ function renderAuthenticatedUser(user) {
   walletHandle.textContent = `@${user.username}`;
   walletSpendable.textContent = (user.spendableBones || 0).toLocaleString();
   walletScore.textContent = (user.boneScore || 0).toLocaleString();
+
+  // Populate Public Guild Note
+  const guildNoteInput = document.getElementById('memberGuildNoteInput');
+  const modalNoteInput = document.getElementById('modalGuildNoteInput');
+  if (guildNoteInput) guildNoteInput.value = user.guildNote || '';
+  if (modalNoteInput) modalNoteInput.value = user.guildNote || '';
 
   // Primary Character Pill in Wallet
   walletCharContainer.style.display = 'flex';
@@ -341,7 +346,25 @@ function updatePrestigeBanner(boneScore, spendableBones) {
 }
 
 /**
- * Render Leaderboard with Main Character Column
+ * Helper: Classic WoW Original Class Icons
+ */
+function getClassIcon(className = '') {
+  switch (className.toLowerCase()) {
+    case 'warrior': return '⚔️';
+    case 'paladin': return '🛡️';
+    case 'hunter': return '🏹';
+    case 'rogue': return '🗡️';
+    case 'priest': return '🕊️';
+    case 'shaman': return '⚡';
+    case 'mage': return '🔮';
+    case 'warlock': return '💀';
+    case 'druid': return '🐾';
+    default: return '⚔️';
+  }
+}
+
+/**
+ * Render Leaderboard with Classic WoW Classes, Roles & Profile Click Handler
  */
 function renderLeaderboard() {
   if (!state.bseState) return;
@@ -354,11 +377,12 @@ function renderLeaderboard() {
     const name = (w.serverNickname || w.globalName || w.username || '').toLowerCase();
     const handle = (w.username || '').toLowerCase();
     const char = (w.primaryCharacter || '').toLowerCase();
-    return name.includes(query) || handle.includes(query) || char.includes(query);
+    const note = (w.guildNote || '').toLowerCase();
+    return name.includes(query) || handle.includes(query) || char.includes(query) || note.includes(query);
   });
 
   if (!filtered.length) {
-    leaderboardTbody.innerHTML = `<tr><td colspan="6" style="text-align: center; color: var(--text-dim); padding: 2rem;">No members match the search query.</td></tr>`;
+    leaderboardTbody.innerHTML = `<tr><td colspan="7" style="text-align: center; color: var(--text-dim); padding: 2rem;">No members match the search query.</td></tr>`;
     return;
   }
 
@@ -371,12 +395,27 @@ function renderLeaderboard() {
       : 'assets/favicon.svg';
 
     const rankTitle = resolveRankTitle(w.boneScore);
-    const charDisplay = w.primaryCharacter
-      ? `<span class="char-pill" style="font-size:0.75rem;">⚔️ ${w.primaryCharacter}</span>`
+
+    // Resolve character and class info
+    const chars = w.characters || [];
+    const primChar = chars.find(c => c.isPrimary) || (w.primaryCharacter ? chars.find(c => c.name === w.primaryCharacter) : chars[0]);
+    const charName = primChar ? primChar.name : (w.primaryCharacter || null);
+    const charClass = primChar ? (primChar.class || 'Warrior') : 'Warrior';
+    const charRole = primChar ? (primChar.role || 'DPS') : 'DPS';
+    const classCss = `class-${charClass.toLowerCase().replace(/\s+/g, '-')}`;
+
+    const charDisplay = charName
+      ? `<span class="class-badge ${classCss}">${getClassIcon(charClass)} ${charName}</span>`
+      : `<span style="color:var(--text-dim); font-size:0.8rem;">—</span>`;
+
+    const roleIcon = charRole === 'Tank' ? '🛡️ Tank' : charRole === 'Healer' ? '💚 Healer' : '⚔️ DPS';
+    const roleCss = (charRole || 'dps').toLowerCase();
+    const roleDisplay = charName
+      ? `<span class="role-pill ${roleCss}">${roleIcon}</span>`
       : `<span style="color:var(--text-dim); font-size:0.8rem;">—</span>`;
 
     return `
-      <tr>
+      <tr onclick="inspectMemberProfile('${w.discordId}')" title="Click to inspect ${name}'s WoW characters, roles, and public note">
         <td class="table-rank-cell">${rankMedal}</td>
         <td>
           <div class="member-cell">
@@ -388,6 +427,7 @@ function renderLeaderboard() {
           </div>
         </td>
         <td>${charDisplay}</td>
+        <td>${roleDisplay}</td>
         <td><span class="card-badge economy">${rankTitle}</span></td>
         <td style="font-weight: 700; color: var(--gold-300);">${(w.spendableBones || 0).toLocaleString()}</td>
         <td style="font-weight: 700; color: var(--amber);">${(w.boneScore || 0).toLocaleString()}</td>
@@ -397,6 +437,89 @@ function renderLeaderboard() {
 }
 
 searchLeaderboard.addEventListener('input', renderLeaderboard);
+
+/**
+ * Inspect Member Profile & WoW Characters Modal (Click from Leaderboard)
+ */
+window.inspectMemberProfile = function(discordId) {
+  const w = state.bseState?.wallets?.[discordId];
+  if (!w) return;
+
+  const name = w.serverNickname || w.globalName || w.username || 'Guild Member';
+  const handle = w.username ? `@${w.username}` : '';
+  const avatarUrl = w.avatarHash
+    ? `https://cdn.discordapp.com/avatars/${w.discordId}/${w.avatarHash}.png?size=72`
+    : 'assets/favicon.svg';
+  const rankTitle = resolveRankTitle(w.boneScore);
+  const chars = w.characters || [];
+
+  let charactersHtml = '';
+  if (!chars.length) {
+    if (w.primaryCharacter) {
+      charactersHtml = `
+        <div class="character-card-item">
+          <div>
+            <span class="class-badge class-warrior">⚔️ ${w.primaryCharacter}</span>
+            <span style="font-size:0.75rem; color:var(--text-muted); margin-left:0.5rem;">Classic Character</span>
+          </div>
+          <span class="char-pill" style="font-size:0.7rem;">PRIMARY</span>
+        </div>
+      `;
+    } else {
+      charactersHtml = `<p style="color:var(--text-dim); font-size:0.85rem; text-align:center; padding:1rem;">This member hasn't linked any WoW characters yet.</p>`;
+    }
+  } else {
+    charactersHtml = chars.map(c => {
+      const classCss = `class-${(c.class || 'warrior').toLowerCase().replace(/\s+/g, '-')}`;
+      const roleCss = (c.role || 'dps').toLowerCase();
+      const roleIcon = c.role === 'Tank' ? '🛡️ Tank' : c.role === 'Healer' ? '💚 Healer' : '⚔️ DPS';
+      const profs = (c.professions || '').split(',').map(p => p.trim()).filter(Boolean);
+      const profTags = profs.map(p => `<span class="prof-tag">🔧 ${p}</span>`).join(' ');
+
+      return `
+        <div class="character-card-item">
+          <div style="display:flex; align-items:center; gap:0.6rem; flex-wrap:wrap;">
+            <span class="class-badge ${classCss}">${getClassIcon(c.class)} ${c.name}</span>
+            <span class="role-pill ${roleCss}">${roleIcon}</span>
+            ${c.isPrimary ? '<span class="char-pill" style="font-size:0.65rem;">⭐ PRIMARY</span>' : ''}
+          </div>
+          ${profTags ? `<div style="margin-top:0.35rem; width:100%;">${profTags}</div>` : ''}
+        </div>
+      `;
+    }).join('');
+  }
+
+  const noteHtml = w.guildNote
+    ? `<div class="guild-note-card">📜 "${w.guildNote}"</div>`
+    : `<div style="color:var(--text-dim); font-size:0.85rem; font-style:italic; margin:0.5rem 0;">No public guild note provided yet.</div>`;
+
+  const modalBody = document.getElementById('memberProfileModalBody');
+  modalBody.innerHTML = `
+    <div class="member-profile-header">
+      <img src="${avatarUrl}" class="member-profile-avatar" alt="${name}">
+      <div>
+        <h3 style="color: var(--gold-100); font-size: 1.3rem; margin-bottom: 0.15rem;">${name}</h3>
+        <div style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.5rem;">${handle} &bull; <span class="card-badge economy">${rankTitle}</span></div>
+        <div style="display: flex; gap: 1.5rem; flex-wrap: wrap;">
+          <div><span style="font-size:0.75rem; color:var(--text-muted); display:block;">SPENDABLE BONES</span> <strong style="color:var(--gold-300); font-size:1.15rem;">${(w.spendableBones || 0).toLocaleString()}</strong></div>
+          <div><span style="font-size:0.75rem; color:var(--text-muted); display:block;">CAREER BONE SCORE</span> <strong style="color:var(--amber); font-size:1.15rem;">${(w.boneScore || 0).toLocaleString()}</strong></div>
+        </div>
+      </div>
+    </div>
+
+    <div style="margin-bottom: 1.25rem;">
+      <h5 style="color: var(--gold-100); font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.3rem;">📜 Public Guild Note & Bio</h5>
+      ${noteHtml}
+    </div>
+
+    <div>
+      <h5 style="color: var(--gold-100); font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem;">⚔️ Linked Characters (WoW: Forever)</h5>
+      ${charactersHtml}
+    </div>
+  `;
+
+  document.getElementById('modalMemberProfile').classList.add('active');
+};
 
 function resolveRankTitle(boneScore = 0) {
   const ranks = state.bseState?.ranks || [];
@@ -542,6 +665,7 @@ function setupMemberSettings() {
     const density = prefDensitySelect.value;
     const defaultCharacter = document.getElementById('prefDefaultCharSelect').value;
     const notifyToasts = document.getElementById('prefNotifyToasts').checked;
+    const guildNote = (document.getElementById('memberGuildNoteInput')?.value || '').trim();
 
     try {
       const res = await fetch('/api/exchange/settings/member', {
@@ -551,11 +675,27 @@ function setupMemberSettings() {
           preferences: { theme, density, defaultCharacter, notifyToasts }
         })
       });
+
+      // Also persist guild note if updated
+      if (guildNote !== (state.user?.guildNote || '')) {
+        await fetch('/api/exchange/characters', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            characters: state.user?.characters || [],
+            primaryCharacter: state.user?.primaryCharacter || null,
+            guildNote
+          })
+        });
+        if (state.user) state.user.guildNote = guildNote;
+      }
+
       if (res.ok) {
-        showToast('✅ Preferences saved successfully!');
+        showToast('✅ Preferences & Public Guild Note saved!');
         if (state.user) {
           state.user.preferences = { theme, density, defaultCharacter, notifyToasts };
         }
+        await refreshBseState();
       } else {
         showToast('❌ Failed to save preferences');
       }
@@ -729,28 +869,26 @@ function populateOfficerSettingsForms() {
   const modules = state.bseState?.siteModules || {};
   const ranks = state.bseState?.ranks || [];
 
-  // Economy inputs
-  document.getElementById('settingCurrencyName').value = branding.currencyName || 'Bones';
-  document.getElementById('settingCurrencySymbol').value = branding.currencySymbol || '🦴';
-  document.getElementById('settingCurrencyIcon').value = branding.currencyIcon || '🪙';
-
-  // Site Editor inputs
-  document.getElementById('editorGuildName').value = branding.guildName || 'Black Sands Exchange';
-  document.getElementById('editorTagline').value = branding.tagline || 'Guild Economy & Bounty Hub';
-  document.getElementById('editorLogoUrl').value = branding.logoUrl || 'assets/favicon.svg';
-  document.getElementById('editorAnnounceEnabled').checked = branding.announcement?.enabled !== false;
-  document.getElementById('editorAnnounceText').value = branding.announcement?.text || '';
-  document.getElementById('editorAnnounceType').value = branding.announcement?.type || 'gold';
+  // Data Editor: Announcement inputs
+  if (dataEditorAnnounceEnabled) {
+    dataEditorAnnounceEnabled.checked = branding.announcement?.enabled !== false;
+  }
+  if (dataEditorAnnounceText) {
+    dataEditorAnnounceText.value = branding.announcement?.text || '';
+  }
+  if (dataEditorAnnounceType) {
+    dataEditorAnnounceType.value = branding.announcement?.type || 'gold';
+  }
 
   // Modules toggles
-  document.getElementById('modToggleLeaderboard').checked = modules.leaderboard?.enabled !== false;
-  document.getElementById('modTitleLeaderboard').value = modules.leaderboard?.title || '🏆 Leaderboard';
-  document.getElementById('modToggleBounties').checked = modules.bounties?.enabled !== false;
-  document.getElementById('modTitleBounties').value = modules.bounties?.title || '📜 Bounty Board';
-  document.getElementById('modToggleShop').checked = modules.shop?.enabled !== false;
-  document.getElementById('modTitleShop').value = modules.shop?.title || '⚖️ Exchange Shop';
-  document.getElementById('modToggleFaq').checked = modules.faq?.enabled !== false;
-  document.getElementById('modTitleFaq').value = modules.faq?.title || '📖 Rules & FAQ';
+  const modLead = document.getElementById('modToggleLeaderboard');
+  if (modLead) modLead.checked = modules.leaderboard?.enabled !== false;
+  const modBounties = document.getElementById('modToggleBounties');
+  if (modBounties) modBounties.checked = modules.bounties?.enabled !== false;
+  const modShop = document.getElementById('modToggleShop');
+  if (modShop) modShop.checked = modules.shop?.enabled !== false;
+  const modFaq = document.getElementById('modToggleFaq');
+  if (modFaq) modFaq.checked = modules.faq?.enabled !== false;
 
   // Render Ranks Builder
   state.draftRanks = [...ranks];
@@ -759,6 +897,16 @@ function populateOfficerSettingsForms() {
   // Render FAQ Builder
   state.draftFaq = [...(modules.faq?.items || [])];
   renderFaqBuilder();
+
+  // Populate raw JSON editor if not currently focused by the user
+  if (rawStateJsonTextarea && document.activeElement !== rawStateJsonTextarea) {
+    try {
+      rawStateJsonTextarea.value = JSON.stringify(state.bseState, null, 2);
+      if (rawJsonFeedback) {
+        rawJsonFeedback.innerHTML = `<span style="color: var(--text-dim);">Loaded latest database snapshot (${new Date().toLocaleTimeString()})</span>`;
+      }
+    } catch (e) {}
+  }
 }
 
 /**
@@ -835,105 +983,191 @@ document.getElementById('btnAddFaqItem').addEventListener('click', () => {
 });
 
 /**
- * Setup Visual Site Editor
+ * Setup Master Data & JSON Power Editor
  */
-function setupSiteEditor() {
-  btnToggleSiteEditorMode.addEventListener('click', () => {
-    state.editorMode = !state.editorMode;
-    editorFloatingBar.style.display = state.editorMode ? 'flex' : 'none';
-    if (state.editorMode) {
-      showToast('🎨 Site Editor Mode Active! Changes update in live preview.');
-      // Switch to site-editor subtab
-      document.querySelector('.officer-subtab[data-subtab="site-editor"]')?.click();
-    }
-  });
+function setupDataEditor() {
+  // 1. Save Announcement & Modules
+  const btnSaveAnnounce = document.getElementById('btnSaveAnnouncementAndModules');
+  if (btnSaveAnnounce) {
+    btnSaveAnnounce.addEventListener('click', async () => {
+      const announcement = {
+        enabled: dataEditorAnnounceEnabled ? dataEditorAnnounceEnabled.checked : true,
+        text: dataEditorAnnounceText ? dataEditorAnnounceText.value.trim() : '',
+        type: dataEditorAnnounceType ? dataEditorAnnounceType.value : 'gold'
+      };
 
-  btnFloatingExit.addEventListener('click', () => {
-    state.editorMode = false;
-    editorFloatingBar.style.display = 'none';
-  });
+      const siteModules = {
+        leaderboard: {
+          enabled: document.getElementById('modToggleLeaderboard')?.checked !== false,
+          title: '🏆 Leaderboard',
+          order: 1
+        },
+        bounties: {
+          enabled: document.getElementById('modToggleBounties')?.checked !== false,
+          title: '📜 Bounty Board',
+          order: 2
+        },
+        shop: {
+          enabled: document.getElementById('modToggleShop')?.checked !== false,
+          title: '⚖️ Exchange Shop',
+          order: 3
+        },
+        faq: {
+          enabled: document.getElementById('modToggleFaq')?.checked !== false,
+          title: '📖 Rules & FAQ',
+          order: 4,
+          items: state.draftFaq || []
+        }
+      };
 
-  // Floating Publish
-  btnFloatingPublish.addEventListener('click', () => publishSiteEditorSettings());
-  document.getElementById('btnPublishSiteEditor').addEventListener('click', () => publishSiteEditorSettings());
-  document.getElementById('btnPublishEconomySettings').addEventListener('click', () => publishSiteEditorSettings());
-
-  // Live on-input preview
-  document.getElementById('editorGuildName').addEventListener('input', (e) => {
-    brandGuildName.textContent = e.target.value;
-  });
-  document.getElementById('editorTagline').addEventListener('input', (e) => {
-    brandTagline.textContent = e.target.value;
-  });
-  document.getElementById('editorLogoUrl').addEventListener('input', (e) => {
-    brandLogo.src = e.target.value;
-  });
-  document.getElementById('editorAnnounceText').addEventListener('input', (e) => {
-    announcementText.textContent = e.target.value;
-  });
-  document.getElementById('editorAnnounceEnabled').addEventListener('change', (e) => {
-    announcementBanner.style.display = e.target.checked ? 'flex' : 'none';
-  });
-}
-
-async function publishSiteEditorSettings() {
-  const currencyName = document.getElementById('settingCurrencyName').value.trim() || 'Bones';
-  const currencySymbol = document.getElementById('settingCurrencySymbol').value.trim() || '🦴';
-  const currencyIcon = document.getElementById('settingCurrencyIcon').value.trim() || '🪙';
-
-  const guildName = document.getElementById('editorGuildName').value.trim() || 'Black Sands Exchange';
-  const tagline = document.getElementById('editorTagline').value.trim() || '';
-  const logoUrl = document.getElementById('editorLogoUrl').value.trim() || 'assets/favicon.svg';
-
-  const announcement = {
-    enabled: document.getElementById('editorAnnounceEnabled').checked,
-    text: document.getElementById('editorAnnounceText').value.trim(),
-    type: document.getElementById('editorAnnounceType').value
-  };
-
-  const siteModules = {
-    leaderboard: {
-      enabled: document.getElementById('modToggleLeaderboard').checked,
-      title: document.getElementById('modTitleLeaderboard').value.trim() || '🏆 Leaderboard',
-      order: 1
-    },
-    bounties: {
-      enabled: document.getElementById('modToggleBounties').checked,
-      title: document.getElementById('modTitleBounties').value.trim() || '📜 Bounty Board',
-      order: 2
-    },
-    shop: {
-      enabled: document.getElementById('modToggleShop').checked,
-      title: document.getElementById('modTitleShop').value.trim() || '⚖️ Exchange Shop',
-      order: 3
-    },
-    faq: {
-      enabled: document.getElementById('modToggleFaq').checked,
-      title: document.getElementById('modTitleFaq').value.trim() || '📖 Rules & FAQ',
-      order: 4,
-      items: state.draftFaq
-    }
-  };
-
-  try {
-    const res = await fetch('/api/exchange/settings/officer', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        branding: { guildName, tagline, logoUrl, currencyName, currencySymbol, currencyIcon, announcement },
-        siteModules,
-        ranks: state.draftRanks
-      })
+      try {
+        const res = await fetch('/api/exchange/settings/officer', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            branding: { announcement },
+            siteModules
+          })
+        });
+        const data = await res.json();
+        if (res.ok) {
+          showToast('📢 Announcement & Navigation Modules updated!');
+          await refreshBseState();
+        } else {
+          showToast(`❌ Failed: ${data.error || 'Server error'}`);
+        }
+      } catch (err) {
+        showToast(`❌ Error: ${err.message}`);
+      }
     });
-    const data = await res.json();
-    if (res.ok) {
-      showToast('✨ Published! All changes are now live for the entire guild.');
-      await refreshBseState();
-    } else {
-      showToast(`❌ Failed to publish: ${data.error || 'Server error'}`);
-    }
-  } catch (err) {
-    showToast(`❌ Error: ${err.message}`);
+  }
+
+  // 2. Save Prestige Ranks
+  const btnSaveRanks = document.getElementById('btnSaveRanksHierarchy');
+  if (btnSaveRanks) {
+    btnSaveRanks.addEventListener('click', async () => {
+      try {
+        const res = await fetch('/api/exchange/settings/officer', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ranks: state.draftRanks
+          })
+        });
+        const data = await res.json();
+        if (res.ok) {
+          showToast('🎖️ Prestige Ranks updated!');
+          await refreshBseState();
+        } else {
+          showToast(`❌ Failed: ${data.error || 'Server error'}`);
+        }
+      } catch (err) {
+        showToast(`❌ Error: ${err.message}`);
+      }
+    });
+  }
+
+  // 3. Save FAQ Content
+  const btnSaveFaq = document.getElementById('btnSaveFaqItems');
+  if (btnSaveFaq) {
+    btnSaveFaq.addEventListener('click', async () => {
+      try {
+        const currentModules = state.bseState?.siteModules || {};
+        const updatedModules = {
+          ...currentModules,
+          faq: {
+            ...(currentModules.faq || { enabled: true, title: '📖 Rules & FAQ', order: 4 }),
+            items: state.draftFaq
+          }
+        };
+
+        const res = await fetch('/api/exchange/settings/officer', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            siteModules: updatedModules
+          })
+        });
+        const data = await res.json();
+        if (res.ok) {
+          showToast('📖 Rules & FAQ updated!');
+          await refreshBseState();
+        } else {
+          showToast(`❌ Failed: ${data.error || 'Server error'}`);
+        }
+      } catch (err) {
+        showToast(`❌ Error: ${err.message}`);
+      }
+    });
+  }
+
+  // 4. Raw JSON Power Editor: Format & Validate
+  const btnFormat = document.getElementById('btnFormatRawJson');
+  if (btnFormat && rawStateJsonTextarea) {
+    btnFormat.addEventListener('click', () => {
+      try {
+        const parsed = JSON.parse(rawStateJsonTextarea.value);
+        rawStateJsonTextarea.value = JSON.stringify(parsed, null, 2);
+        if (rawJsonFeedback) {
+          rawJsonFeedback.innerHTML = `<span style="color: var(--success); font-weight: 600;">✅ Valid JSON! Formatted successfully.</span>`;
+        }
+        showToast('✅ JSON is syntactically valid and formatted.');
+      } catch (err) {
+        if (rawJsonFeedback) {
+          rawJsonFeedback.innerHTML = `<span style="color: var(--danger); font-weight: 600;">❌ JSON Syntax Error: ${err.message}</span>`;
+        }
+        showToast(`❌ Syntax error: ${err.message}`);
+      }
+    });
+  }
+
+  // 5. Raw JSON Power Editor: Save Raw State
+  const btnPublishRaw = document.getElementById('btnPublishRawJson');
+  if (btnPublishRaw && rawStateJsonTextarea) {
+    btnPublishRaw.addEventListener('click', async () => {
+      let parsed;
+      try {
+        parsed = JSON.parse(rawStateJsonTextarea.value);
+      } catch (err) {
+        if (rawJsonFeedback) {
+          rawJsonFeedback.innerHTML = `<span style="color: var(--danger); font-weight: 600;">❌ Cannot save invalid JSON: ${err.message}</span>`;
+        }
+        showToast(`❌ Cannot save invalid JSON: ${err.message}`);
+        return;
+      }
+
+      if (!confirm('⚠️ Are you sure you want to write this raw state directly to the live database? This will update the guild economy state immediately.')) {
+        return;
+      }
+
+      try {
+        btnPublishRaw.disabled = true;
+        btnPublishRaw.textContent = 'Saving...';
+        const res = await fetch('/api/exchange/state/raw', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ state: parsed })
+        });
+        const data = await res.json();
+        if (res.ok) {
+          if (rawJsonFeedback) {
+            rawJsonFeedback.innerHTML = `<span style="color: var(--success); font-weight: 600;">💾 Database state updated successfully at ${new Date().toLocaleTimeString()}!</span>`;
+          }
+          showToast('💾 Database state updated successfully!');
+          await refreshBseState();
+        } else {
+          if (rawJsonFeedback) {
+            rawJsonFeedback.innerHTML = `<span style="color: var(--danger); font-weight: 600;">❌ Failed: ${data.error || 'Server error'}</span>`;
+          }
+          showToast(`❌ Failed: ${data.error || 'Server error'}`);
+        }
+      } catch (err) {
+        showToast(`❌ Error: ${err.message}`);
+      } finally {
+        btnPublishRaw.disabled = false;
+        btnPublishRaw.textContent = '💾 Save Raw State to Database';
+      }
+    });
   }
 }
 
@@ -1017,8 +1251,9 @@ function setupCharacterManagement() {
 
   document.getElementById('btnAddCharacter').addEventListener('click', () => {
     const name = document.getElementById('newCharName').value.trim();
-    const realm = document.getElementById('newCharRealm').value.trim();
     const charClass = document.getElementById('newCharClass').value;
+    const charRole = document.getElementById('newCharRole')?.value || 'DPS';
+    const professions = document.getElementById('newCharProfessions')?.value.trim() || '';
 
     if (!name) {
       showToast('⚠️ Please enter a character name.');
@@ -1028,34 +1263,41 @@ function setupCharacterManagement() {
     const isFirst = state.userCharacters.length === 0;
     state.userCharacters.push({
       name,
-      realm: realm || 'Area 52',
       class: charClass,
+      role: charRole,
+      professions,
       isPrimary: isFirst
     });
 
     document.getElementById('newCharName').value = '';
-    document.getElementById('newCharRealm').value = '';
+    if (document.getElementById('newCharProfessions')) document.getElementById('newCharProfessions').value = '';
     renderCharacterModalList();
-    showToast(`Added ${name}! Click "Save Changes" to store.`);
+    showToast(`Added ${name} (${charClass} ${charRole})! Click "Save Changes" to store.`);
   });
 
   document.getElementById('btnSaveCharacters').addEventListener('click', async () => {
     const primary = state.userCharacters.find(c => c.isPrimary)?.name || state.userCharacters[0]?.name || null;
+    const guildNote = (document.getElementById('modalGuildNoteInput')?.value || document.getElementById('memberGuildNoteInput')?.value || '').trim();
+
     try {
       const res = await fetch('/api/exchange/characters', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           characters: state.userCharacters,
-          primaryCharacter: primary
+          primaryCharacter: primary,
+          guildNote
         })
       });
       const data = await res.json();
       if (res.ok) {
-        showToast('✅ Characters updated successfully!');
+        showToast('✅ Characters & Public Guild Note saved!');
         state.user.characters = data.characters;
         state.user.primaryCharacter = data.primaryCharacter;
+        state.user.guildNote = data.guildNote || '';
         walletPrimaryCharName.textContent = data.primaryCharacter || 'None (Click to link)';
+        if (document.getElementById('modalGuildNoteInput')) document.getElementById('modalGuildNoteInput').value = data.guildNote || '';
+        if (document.getElementById('memberGuildNoteInput')) document.getElementById('memberGuildNoteInput').value = data.guildNote || '';
         document.getElementById('modalCharacters').classList.remove('active');
         populatePrefCharSelect(data.primaryCharacter);
         await refreshBseState();
@@ -1070,6 +1312,9 @@ function setupCharacterManagement() {
 
 function openCharacterModal() {
   state.userCharacters = [...(state.user?.characters || [])];
+  if (document.getElementById('modalGuildNoteInput')) {
+    document.getElementById('modalGuildNoteInput').value = state.user?.guildNote || '';
+  }
   renderCharacterModalList();
   document.getElementById('modalCharacters').classList.add('active');
 }
@@ -1077,23 +1322,31 @@ function openCharacterModal() {
 function renderCharacterModalList() {
   const container = document.getElementById('characterListContainer');
   if (!state.userCharacters.length) {
-    container.innerHTML = `<p style="color: var(--text-dim); font-size: 0.85rem; text-align: center; padding: 1rem;">No characters added yet. Add your main character below!</p>`;
+    container.innerHTML = `<p style="color: var(--text-dim); font-size: 0.85rem; text-align: center; padding: 1rem;">No characters added yet. Add your main Classic character below!</p>`;
     return;
   }
 
-  container.innerHTML = state.userCharacters.map((c, idx) => `
-    <div style="display: flex; justify-content: space-between; align-items: center; background: var(--bg-primary); padding: 0.6rem 0.85rem; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle); margin-bottom: 0.4rem;">
-      <div style="display: flex; align-items: center; gap: 0.6rem;">
-        <input type="radio" name="primaryCharRadio" ${c.isPrimary ? 'checked' : ''} onchange="setPrimaryCharacter(${idx})">
-        <div>
-          <strong style="color: var(--gold-100);">${c.name}</strong>
-          <span style="font-size: 0.75rem; color: var(--text-muted);">(${c.class || 'Character'} &bull; ${c.realm || 'Area 52'})</span>
-          ${c.isPrimary ? '<span class="char-pill" style="font-size: 0.65rem; margin-left: 0.4rem;">PRIMARY</span>' : ''}
+  container.innerHTML = state.userCharacters.map((c, idx) => {
+    const classCss = `class-${(c.class || 'warrior').toLowerCase().replace(/\s+/g, '-')}`;
+    const roleCss = (c.role || 'dps').toLowerCase();
+    const roleIcon = c.role === 'Tank' ? '🛡️ Tank' : c.role === 'Healer' ? '💚 Healer' : '⚔️ DPS';
+    const profs = c.professions ? `<span style="font-size:0.7rem; color:var(--text-muted); margin-left:0.35rem;">(${c.professions})</span>` : '';
+
+    return `
+      <div style="display: flex; justify-content: space-between; align-items: center; background: var(--bg-primary); padding: 0.6rem 0.85rem; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle); margin-bottom: 0.4rem; gap: 0.5rem; flex-wrap: wrap;">
+        <div style="display: flex; align-items: center; gap: 0.6rem;">
+          <input type="radio" name="primaryCharRadio" ${c.isPrimary ? 'checked' : ''} onchange="setPrimaryCharacter(${idx})" title="Set as primary character">
+          <div>
+            <span class="class-badge ${classCss}">${getClassIcon(c.class)} ${c.name}</span>
+            <span class="role-pill ${roleCss}" style="margin-left: 0.3rem;">${roleIcon}</span>
+            ${profs}
+            ${c.isPrimary ? '<span class="char-pill" style="font-size: 0.65rem; margin-left: 0.4rem;">PRIMARY</span>' : ''}
+          </div>
         </div>
+        <button class="btn-danger" style="padding: 0.2rem 0.5rem; font-size: 0.7rem;" onclick="removeCharacter(${idx})">✕</button>
       </div>
-      <button class="btn-danger" style="padding: 0.2rem 0.5rem; font-size: 0.7rem;" onclick="removeCharacter(${idx})">✕</button>
-    </div>
-  `).join('');
+    `;
+  }).join('');
 }
 
 window.setPrimaryCharacter = function(index) {

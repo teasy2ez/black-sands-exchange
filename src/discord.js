@@ -193,6 +193,10 @@ export function buildWalletEmbed(userData, rankInfo) {
     fields.push({ name: '⚔️ Primary Character', value: `**${userData.primaryCharacter}**`, inline: true });
   }
 
+  if (userData.guildNote) {
+    fields.push({ name: '📜 Guild Note', value: userData.guildNote, inline: false });
+  }
+
   return {
     title: `${rankIcon} Black Sands Wallet — ${name}`,
     description: `${handle ? `*${handle}*` : ''}${charDisplay}`,

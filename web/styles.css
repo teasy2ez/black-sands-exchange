@@ -70,18 +70,27 @@ body {
   gap: 1rem;
 }
 
+@media (max-width: 640px) {
+  .header-container {
+    padding: 0.6rem 0.85rem;
+    gap: 0.5rem;
+  }
+}
+
 .brand {
   display: flex;
   align-items: center;
   gap: 0.75rem;
   text-decoration: none;
   color: inherit;
+  min-width: 0;
 }
 
 .brand-icon {
   width: 36px;
   height: 36px;
   filter: drop-shadow(0 0 8px var(--border-glow));
+  flex-shrink: 0;
 }
 
 .brand-text h1 {
@@ -90,6 +99,15 @@ body {
   letter-spacing: 0.05em;
   color: var(--gold-300);
   text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@media (max-width: 640px) {
+  .brand-text h1 {
+    font-size: 1rem;
+  }
 }
 
 .brand-tag {
@@ -97,12 +115,22 @@ body {
   text-transform: uppercase;
   letter-spacing: 0.1em;
   color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@media (max-width: 480px) {
+  .brand-tag {
+    display: none;
+  }
 }
 
 .header-actions {
   display: flex;
   align-items: center;
-  gap: 1rem;
+  gap: 0.75rem;
+  flex-shrink: 0;
 }
 
 .server-status-pill {
@@ -115,6 +143,13 @@ body {
   border: 1px solid rgba(46, 204, 113, 0.25);
   border-radius: 999px;
   color: var(--success);
+  white-space: nowrap;
+}
+
+@media (max-width: 720px) {
+  .server-status-pill {
+    display: none;
+  }
 }
 
 .status-dot {
@@ -203,6 +238,12 @@ body {
   flex: 1;
 }
 
+@media (max-width: 640px) {
+  .main-content {
+    padding: 0.75rem;
+  }
+}
+
 /* Discord Wallet Banner */
 .wallet-banner {
   background: linear-gradient(135deg, rgba(28, 25, 21, 0.95), rgba(46, 40, 32, 0.7));
@@ -213,6 +254,14 @@ body {
   box-shadow: var(--shadow-main);
   position: relative;
   overflow: hidden;
+}
+
+@media (max-width: 640px) {
+  .wallet-banner {
+    padding: 1rem;
+    margin-bottom: 1.25rem;
+    border-radius: var(--radius-md);
+  }
 }
 
 .wallet-banner::before {
@@ -233,10 +282,26 @@ body {
   align-items: center;
 }
 
-@media (max-width: 800px) {
+@media (max-width: 860px) {
   .wallet-grid {
     grid-template-columns: 1fr;
     text-align: center;
+    gap: 1.25rem;
+  }
+  .wallet-member-info {
+    justify-content: center;
+    flex-direction: column;
+    text-align: center;
+  }
+  .wallet-stats-row {
+    gap: 1.25rem;
+    justify-content: space-around;
+  }
+  .stat-box {
+    align-items: center;
+  }
+  .rank-progress-container {
+    min-width: 100%;
   }
 }
 
@@ -252,6 +317,7 @@ body {
   border-radius: 50%;
   border: 2px solid var(--border-gold);
   box-shadow: var(--shadow-glow);
+  flex-shrink: 0;
 }
 
 .wallet-member-names h2 {
@@ -335,6 +401,12 @@ body {
   margin-bottom: 1.5rem;
   overflow-x: auto;
   padding-bottom: 0.5rem;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+
+.nav-tabs::-webkit-scrollbar {
+  display: none;
 }
 
 .nav-tab {
@@ -351,6 +423,14 @@ body {
   align-items: center;
   gap: 0.5rem;
   white-space: nowrap;
+  user-select: none;
+}
+
+@media (max-width: 640px) {
+  .nav-tab {
+    padding: 0.5rem 0.85rem;
+    font-size: 0.85rem;
+  }
 }
 
 .nav-tab:hover {
@@ -396,7 +476,7 @@ body {
 
 .cards-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr));
   gap: 1.25rem;
 }
 
@@ -550,8 +630,9 @@ body {
   background: var(--bg-card);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
-  overflow: hidden;
+  overflow-x: auto;
   box-shadow: var(--shadow-main);
+  -webkit-overflow-scrolling: touch;
 }
 
 .table-search {
@@ -582,6 +663,7 @@ body {
   width: 100%;
   border-collapse: collapse;
   text-align: left;
+  min-width: 600px;
 }
 
 .leaderboard-table th {
@@ -600,8 +682,17 @@ body {
   font-size: 0.9rem;
 }
 
-.leaderboard-table tr:hover td {
+.leaderboard-table tbody tr {
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.leaderboard-table tbody tr:hover td {
   background: var(--bg-card-hover);
+}
+
+.leaderboard-table tbody tr:active td {
+  background: var(--bg-accent);
 }
 
 .table-rank-cell {
@@ -620,6 +711,69 @@ body {
   height: 32px;
   border-radius: 50%;
   border: 1px solid var(--border-subtle);
+}
+
+/* Classic WoW: Forever Edition Class Styles */
+.class-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.2rem 0.6rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.class-warrior  { color: #C79C6E; background: rgba(199, 156, 110, 0.15); border: 1px solid rgba(199, 156, 110, 0.4); }
+.class-paladin  { color: #F58CBA; background: rgba(245, 140, 186, 0.15); border: 1px solid rgba(245, 140, 186, 0.4); }
+.class-hunter   { color: #ABD473; background: rgba(171, 212, 115, 0.15); border: 1px solid rgba(171, 212, 115, 0.4); }
+.class-rogue    { color: #FFF569; background: rgba(255, 245, 105, 0.15); border: 1px solid rgba(255, 245, 105, 0.4); }
+.class-priest   { color: #FFFFFF; background: rgba(255, 255, 255, 0.15); border: 1px solid rgba(255, 255, 255, 0.4); }
+.class-shaman   { color: #0070DE; background: rgba(0, 112, 222, 0.15); border: 1px solid rgba(0, 112, 222, 0.4); }
+.class-mage     { color: #69CCF0; background: rgba(105, 204, 240, 0.15); border: 1px solid rgba(105, 204, 240, 0.4); }
+.class-warlock  { color: #9482C9; background: rgba(148, 130, 201, 0.15); border: 1px solid rgba(148, 130, 201, 0.4); }
+.class-druid    { color: #FF7D0A; background: rgba(255, 125, 10, 0.15); border: 1px solid rgba(255, 125, 10, 0.4); }
+
+.role-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.7rem;
+  font-weight: 600;
+  background: var(--bg-accent);
+  color: var(--text-muted);
+  border: 1px solid var(--border-subtle);
+  white-space: nowrap;
+}
+.role-pill.tank { color: #3498db; border-color: rgba(52, 152, 219, 0.4); }
+.role-pill.healer { color: #2ecc71; border-color: rgba(46, 204, 113, 0.4); }
+.role-pill.dps { color: #e74c3c; border-color: rgba(231, 76, 60, 0.4); }
+
+.prof-tag {
+  background: var(--bg-primary);
+  border: 1px solid var(--border-subtle);
+  color: var(--gold-300);
+  font-size: 0.72rem;
+  padding: 0.15rem 0.45rem;
+  border-radius: var(--radius-sm);
+  display: inline-block;
+  margin: 2px;
+}
+
+.guild-note-card {
+  background: var(--bg-primary);
+  border-left: 3px solid var(--border-gold);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  padding: 0.85rem 1.15rem;
+  font-size: 0.85rem;
+  color: var(--text-main);
+  line-height: 1.5;
+  margin: 0.75rem 0;
+  font-style: italic;
 }
 
 /* Officer Panel */
@@ -1100,45 +1254,115 @@ body.density-compact .leaderboard-table td {
   display: block;
 }
 
-/* Floating Site Editor Mode Bar */
-.editor-floating-bar {
-  position: fixed;
-  bottom: 1.5rem;
-  left: 50%;
-  transform: translateX(-50%);
-  background: rgba(22, 20, 17, 0.95);
-  border: 2px solid var(--amber);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.8), 0 0 20px rgba(229, 169, 59, 0.3);
-  backdrop-filter: blur(12px);
-  padding: 0.6rem 1.5rem;
-  border-radius: 999px;
-  z-index: 1500;
+/* ==========================================================================
+   OFFICER DATA EDITOR & JSON POWER EDITOR STYLES
+   ========================================================================== */
+.data-editor-section {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 1.25rem;
+  margin-bottom: 1.5rem;
+}
+
+.data-table-wrapper {
+  overflow-x: auto;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+  margin-top: 1rem;
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+  font-size: 0.85rem;
+}
+
+.data-table th {
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+  padding: 0.65rem 0.85rem;
+  border-bottom: 1px solid var(--border-subtle);
+  text-transform: uppercase;
+  font-size: 0.7rem;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+}
+
+.data-table td {
+  padding: 0.65rem 0.85rem;
+  border-bottom: 1px solid var(--border-subtle);
+  vertical-align: middle;
+}
+
+.data-table tr:hover td {
+  background: var(--bg-card-hover);
+}
+
+.json-code-editor {
+  width: 100%;
+  min-height: 380px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 0.85rem;
+  background: #060605;
+  color: #6ee7b7;
+  padding: 1rem;
+  border: 1px solid var(--border-gold);
+  border-radius: var(--radius-sm);
+  resize: vertical;
+  line-height: 1.5;
+  white-space: pre;
+}
+
+.json-code-editor:focus {
+  outline: none;
+  box-shadow: 0 0 16px rgba(212, 175, 55, 0.25);
+}
+
+/* ==========================================================================
+   MEMBER PROFILE & CHARACTER INSPECTION MODAL
+   ========================================================================== */
+.member-profile-header {
   display: flex;
   align-items: center;
   gap: 1.25rem;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-gold);
+  border-radius: var(--radius-md);
+  padding: 1.25rem;
+  margin-bottom: 1.25rem;
 }
 
-.editor-badge-pulse {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  font-size: 0.75rem;
-  font-weight: 800;
-  text-transform: uppercase;
-  color: var(--amber);
+@media (max-width: 520px) {
+  .member-profile-header {
+    flex-direction: column;
+    text-align: center;
+  }
 }
 
-.editor-pulse-dot {
-  width: 8px;
-  height: 8px;
+.member-profile-avatar {
+  width: 72px;
+  height: 72px;
   border-radius: 50%;
-  background: var(--amber);
-  box-shadow: 0 0 10px var(--amber);
-  animation: pulse 1.5s infinite;
+  border: 2px solid var(--border-gold);
+  box-shadow: var(--shadow-glow);
+  flex-shrink: 0;
 }
 
-@keyframes pulse {
-  0% { transform: scale(0.9); opacity: 0.7; }
-  50% { transform: scale(1.2); opacity: 1; }
-  100% { transform: scale(0.9); opacity: 0.7; }
+.character-card-item {
+  background: var(--bg-primary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 0.85rem 1rem;
+  margin-bottom: 0.6rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.character-card-item:hover {
+  border-color: var(--border-gold);
 }

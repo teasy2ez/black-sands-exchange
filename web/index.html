@@ -127,7 +127,9 @@
       <div class="section-header">
         <div>
           <h3 id="headingLeaderboard">Roster Standings</h3>
-          <p style="font-size: 0.85rem; color: var(--text-muted);" id="subheadingLeaderboard">Real-time guild rankings ordered by verified Career Bone Score.</p>
+          <p style="font-size: 0.85rem; color: var(--text-muted);" id="subheadingLeaderboard">
+            Real-time rankings by Career Bone Score. <strong style="color: var(--gold-300);">Click any member to inspect their WoW characters, roles, professions & guild note!</strong>
+          </p>
         </div>
       </div>
 
@@ -140,10 +142,11 @@
             <tr>
               <th>Rank</th>
               <th>Guild Member</th>
-              <th>Main Character</th>
+              <th>Main Character & Class</th>
+              <th>Role</th>
               <th>Prestige Tier</th>
-              <th id="thSpendable">Spendable Bones</th>
-              <th id="thScore">Bone Score</th>
+              <th>Spendable Bones</th>
+              <th>Bone Score</th>
             </tr>
           </thead>
           <tbody id="leaderboardTbody">
@@ -259,6 +262,11 @@
               <input type="checkbox" id="prefNotifyToasts" checked> Enable in-app notification toasts
             </label>
           </div>
+          <div class="form-group">
+            <label>📜 Your Public Guild Note</label>
+            <textarea class="form-control" id="memberGuildNoteInput" rows="2" placeholder="e.g. Holy Priest / Alch 300 / Available for Tue/Thu raids..."></textarea>
+            <div style="font-size: 0.72rem; color: var(--text-dim); margin-top: 0.2rem;">Visible to all guild members when clicking your name on the Leaderboard.</div>
+          </div>
           <button class="btn-secondary" id="btnManageCharsFromSettings" style="width: 100%; margin-top: 0.5rem;">
             ⚔️ Open Full Character Manager
           </button>
@@ -274,9 +282,6 @@
           <p style="font-size: 0.85rem; color: var(--text-muted);">Restricted to Black Sands Officers & Moderators. Real-time control and audits.</p>
         </div>
         <div style="display: flex; gap: 0.5rem;">
-          <button class="btn-secondary" id="btnToggleSiteEditorMode">
-            🎨 Toggle Live Site Editor Mode
-          </button>
           <button class="btn-primary" id="btnSyncDiscordStandings">
             🔄 Push Standings to Discord
           </button>
@@ -300,11 +305,8 @@
         <button class="officer-subtab" data-subtab="manage-shop">
           🏷️ Shop Catalog Manager
         </button>
-        <button class="officer-subtab" data-subtab="economy-settings">
-          ⚙️ Economy & Bot Settings
-        </button>
-        <button class="officer-subtab" data-subtab="site-editor">
-          🎨 Site Visual Editor
+        <button class="officer-subtab" data-subtab="data-editor">
+          🛠️ Master Data & JSON Editor
         </button>
         <button class="officer-subtab" data-subtab="audit">
           📜 Live Audit Trail
@@ -462,141 +464,96 @@
         </div>
       </div>
 
-      <!-- Officer Subtab 6: Economy & Bot System Settings -->
-      <div class="officer-subview" id="subview-economy-settings">
+      <!-- Officer Subtab 6: Master Data & JSON Editor -->
+      <div class="officer-subview" id="subview-data-editor">
         <div class="section-header">
           <div>
-            <h4 style="color: var(--gold-100);">⚙️ Economy Rules & Rank Progression Builder</h4>
-            <p style="font-size: 0.8rem; color: var(--text-muted);">Configure currency naming, prestige ranks, and Discord role bindings with zero coding.</p>
+            <h4 style="color: var(--gold-100);">🛠️ Master Data & Content Editor</h4>
+            <p style="font-size: 0.8rem; color: var(--text-muted);">Directly edit announcements, modules, FAQ items, prestige tiers, or the raw JSON database.</p>
           </div>
-          <button class="btn-primary" id="btnPublishEconomySettings">Publish Settings to Guild</button>
         </div>
 
         <div class="officer-dashboard-grid">
-          <!-- Currency Customizer -->
+          <!-- 1. Announcement Banner & Modules -->
           <div class="officer-box">
-            <h4>💰 Currency Configuration</h4>
-            <div class="form-group">
-              <label>Currency Name (e.g. Bones, Gold, Marks, Cartel Coins)</label>
-              <input type="text" class="form-control" id="settingCurrencyName" value="Bones">
-            </div>
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem;">
-              <div class="form-group">
-                <label>Symbol / Emoji</label>
-                <input type="text" class="form-control" id="settingCurrencySymbol" value="🦴">
-              </div>
-              <div class="form-group">
-                <label>Coin Icon</label>
-                <input type="text" class="form-control" id="settingCurrencyIcon" value="🪙">
-              </div>
-            </div>
-          </div>
-
-          <!-- Prestige Rank Hierarchy Builder -->
-          <div class="officer-box" style="grid-column: 1 / -1;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
-              <h4>🎖️ Prestige Ranks & Discord Role Bindings</h4>
-              <button class="btn-secondary" id="btnAddRankTier">+ Add Rank Tier</button>
-            </div>
-            <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 1rem;">
-              Members spend currency to purchase rank promotions. Reaching each tier automatically grants the configured Discord Role ID!
-            </p>
-            <div id="ranksBuilderContainer" class="officer-cards-list"></div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Officer Subtab 7: Site Visual Editor Mode -->
-      <div class="officer-subview" id="subview-site-editor">
-        <div class="section-header">
-          <div>
-            <h4 style="color: var(--amber);">🎨 Live Visual Site Editor</h4>
-            <p style="font-size: 0.8rem; color: var(--text-muted);">Customize the website look, branding, announcement ticker, tabs, and FAQ with 0 code.</p>
-          </div>
-          <button class="btn-primary" id="btnPublishSiteEditor">Publish Site to Guild</button>
-        </div>
-
-        <div class="officer-dashboard-grid">
-          <!-- Branding & Identity -->
-          <div class="officer-box">
-            <h4>🏷️ Branding & Identity</h4>
-            <div class="form-group">
-              <label>Guild / Community Name</label>
-              <input type="text" class="form-control" id="editorGuildName" value="Black Sands Exchange">
-            </div>
-            <div class="form-group">
-              <label>Slogan / Tagline</label>
-              <input type="text" class="form-control" id="editorTagline" value="Guild Economy & Bounty Hub">
-            </div>
-            <div class="form-group">
-              <label>Logo URL (Direct image link)</label>
-              <input type="url" class="form-control" id="editorLogoUrl" value="assets/favicon.svg">
-            </div>
-          </div>
-
-          <!-- Hero Announcement Banner -->
-          <div class="officer-box">
-            <h4>📢 Hero Announcement Ticker Banner</h4>
+            <h4>📢 Guild Announcement & Navigation Modules</h4>
             <div class="form-group">
               <label style="display: flex; align-items: center; gap: 0.4rem; cursor: pointer; text-transform: none;">
-                <input type="checkbox" id="editorAnnounceEnabled" checked> Display Banner at Top of Website
+                <input type="checkbox" id="dataEditorAnnounceEnabled" checked> Display Announcement Banner at Top
               </label>
             </div>
             <div class="form-group">
               <label>Announcement Text</label>
-              <textarea class="form-control" id="editorAnnounceText" rows="2">Welcome to Season 1! Complete guild bounties or attend raids to earn Bones.</textarea>
+              <textarea class="form-control" id="dataEditorAnnounceText" rows="2">Welcome to Season 1! Complete guild bounties or attend raids to earn Bones.</textarea>
             </div>
             <div class="form-group">
               <label>Banner Highlight Style</label>
-              <select class="form-control" id="editorAnnounceType">
+              <select class="form-control" id="dataEditorAnnounceType">
                 <option value="gold">Gold & Amber (Default)</option>
                 <option value="raid">Raid Alert (Crimson / Urgent)</option>
                 <option value="info">Info Notice (Glacial Blue)</option>
               </select>
             </div>
-          </div>
-
-          <!-- Module / Navigation Tabs Visibility -->
-          <div class="officer-box">
-            <h4>📑 Navigation Modules Visibility & Titles</h4>
-            <div style="display: flex; flex-direction: column; gap: 0.6rem;">
-              <div style="display: flex; align-items: center; justify-content: space-between; background: var(--bg-primary); padding: 0.5rem 0.75rem; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
-                <label style="display: flex; align-items: center; gap: 0.4rem; text-transform: none; font-size: 0.85rem; margin: 0;">
-                  <input type="checkbox" id="modToggleLeaderboard" checked> Leaderboard Module
+            <div style="margin-top: 1rem; border-top: 1px solid var(--border-subtle); padding-top: 0.75rem;">
+              <label style="font-size:0.8rem; color:var(--text-muted); margin-bottom:0.5rem; display:block;">Navigation Modules Visibility</label>
+              <div style="display: flex; flex-direction: column; gap: 0.4rem;">
+                <label style="display: flex; align-items: center; gap: 0.4rem; text-transform: none; font-size: 0.8rem; cursor: pointer;">
+                  <input type="checkbox" id="modToggleLeaderboard" checked> 🏆 Leaderboard Module
                 </label>
-                <input type="text" class="form-control" id="modTitleLeaderboard" value="🏆 Leaderboard" style="max-width: 160px; padding: 0.3rem 0.5rem; font-size: 0.8rem;">
-              </div>
-              <div style="display: flex; align-items: center; justify-content: space-between; background: var(--bg-primary); padding: 0.5rem 0.75rem; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
-                <label style="display: flex; align-items: center; gap: 0.4rem; text-transform: none; font-size: 0.85rem; margin: 0;">
-                  <input type="checkbox" id="modToggleBounties" checked> Bounty Board Module
+                <label style="display: flex; align-items: center; gap: 0.4rem; text-transform: none; font-size: 0.8rem; cursor: pointer;">
+                  <input type="checkbox" id="modToggleBounties" checked> 📜 Bounty Board Module
                 </label>
-                <input type="text" class="form-control" id="modTitleBounties" value="📜 Bounty Board" style="max-width: 160px; padding: 0.3rem 0.5rem; font-size: 0.8rem;">
-              </div>
-              <div style="display: flex; align-items: center; justify-content: space-between; background: var(--bg-primary); padding: 0.5rem 0.75rem; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
-                <label style="display: flex; align-items: center; gap: 0.4rem; text-transform: none; font-size: 0.85rem; margin: 0;">
-                  <input type="checkbox" id="modToggleShop" checked> Exchange Shop Module
+                <label style="display: flex; align-items: center; gap: 0.4rem; text-transform: none; font-size: 0.8rem; cursor: pointer;">
+                  <input type="checkbox" id="modToggleShop" checked> ⚖️ Exchange Shop Module
                 </label>
-                <input type="text" class="form-control" id="modTitleShop" value="⚖️ Exchange Shop" style="max-width: 160px; padding: 0.3rem 0.5rem; font-size: 0.8rem;">
-              </div>
-              <div style="display: flex; align-items: center; justify-content: space-between; background: var(--bg-primary); padding: 0.5rem 0.75rem; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
-                <label style="display: flex; align-items: center; gap: 0.4rem; text-transform: none; font-size: 0.85rem; margin: 0;">
-                  <input type="checkbox" id="modToggleFaq" checked> Rules & FAQ Module
+                <label style="display: flex; align-items: center; gap: 0.4rem; text-transform: none; font-size: 0.8rem; cursor: pointer;">
+                  <input type="checkbox" id="modToggleFaq" checked> 📖 Rules & FAQ Module
                 </label>
-                <input type="text" class="form-control" id="modTitleFaq" value="📖 Rules & FAQ" style="max-width: 160px; padding: 0.3rem 0.5rem; font-size: 0.8rem;">
               </div>
             </div>
+            <button class="btn-primary" id="btnSaveAnnouncementAndModules" style="width: 100%; margin-top: 1rem;">Save Announcement & Modules</button>
           </div>
 
-          <!-- Rules & FAQ Accordion Builder -->
+          <!-- 2. Prestige Ranks Builder -->
+          <div class="officer-box">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+              <h4>🎖️ Prestige Ranks & Discord Roles</h4>
+              <button class="btn-secondary" id="btnAddRankTier">+ Add Tier</button>
+            </div>
+            <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.85rem;">
+              Reaching each Bone Score threshold unlocks the configured Discord Role ID.
+            </p>
+            <div id="ranksBuilderContainer" class="officer-cards-list" style="max-height: 280px; overflow-y: auto;"></div>
+            <button class="btn-primary" id="btnSaveRanksHierarchy" style="width: 100%; margin-top: 1rem;">Save Prestige Ranks</button>
+          </div>
+
+          <!-- 3. FAQ Builder -->
           <div class="officer-box" style="grid-column: 1 / -1;">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
-              <h4>📖 Rules & FAQ Builder</h4>
-              <button class="btn-secondary" id="btnAddFaqItem">+ Add Question & Answer</button>
+              <h4>📖 Rules & FAQ Items Builder</h4>
+              <button class="btn-secondary" id="btnAddFaqItem">+ Add Question</button>
             </div>
-            <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 1rem;">
-              Add, edit, or delete FAQ accordion items shown to members. Instant no-code edits!
+            <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.85rem;">
+              Manage the collapsible questions and answers displayed in the Rules & FAQ tab.
             </p>
             <div id="faqBuilderContainer" class="officer-cards-list"></div>
+            <button class="btn-primary" id="btnSaveFaqItems" style="max-width: 200px; margin-top: 1rem;">Save FAQ Content</button>
+          </div>
+
+          <!-- 4. Raw JSON Database Power Editor -->
+          <div class="officer-box" style="grid-column: 1 / -1;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; flex-wrap: wrap; gap: 0.5rem;">
+              <div>
+                <h4 style="color: var(--gold-300);">💻 Master Database JSON Power Editor</h4>
+                <p style="font-size: 0.8rem; color: var(--text-muted);">Directly view, modify, or restore the central Firestore database JSON state.</p>
+              </div>
+              <div style="display: flex; gap: 0.5rem;">
+                <button class="btn-secondary" id="btnFormatRawJson">⚡ Format & Validate</button>
+                <button class="btn-primary" id="btnPublishRawJson">💾 Save Raw State to Database</button>
+              </div>
+            </div>
+            <textarea class="json-code-editor" id="rawStateJsonTextarea" spellcheck="false"></textarea>
+            <div id="rawJsonFeedback" style="font-size: 0.8rem; margin-top: 0.4rem; color: var(--text-dim);"></div>
           </div>
         </div>
       </div>
@@ -642,45 +599,68 @@
       <div id="characterListContainer" style="margin-bottom: 1.25rem;"></div>
 
       <div style="background: var(--bg-primary); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 1rem; margin-bottom: 1rem;">
-        <h5 style="color: var(--gold-100); margin-bottom: 0.5rem; font-size: 0.85rem;">+ Add New Character</h5>
+        <h5 style="color: var(--gold-100); margin-bottom: 0.5rem; font-size: 0.85rem;">+ Add Character (WoW: Forever Edition)</h5>
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; margin-bottom: 0.5rem;">
           <div>
             <label style="font-size: 0.75rem; color: var(--text-muted);">Character Name</label>
             <input type="text" class="form-control" id="newCharName" placeholder="e.g. Grimfang">
           </div>
           <div>
-            <label style="font-size: 0.75rem; color: var(--text-muted);">Realm (Optional)</label>
-            <input type="text" class="form-control" id="newCharRealm" placeholder="e.g. Area 52">
-          </div>
-        </div>
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; align-items: center;">
-          <div>
-            <label style="font-size: 0.75rem; color: var(--text-muted);">Class</label>
+            <label style="font-size: 0.75rem; color: var(--text-muted);">Original Class (Classic)</label>
             <select class="form-control" id="newCharClass">
               <option value="Warrior">Warrior</option>
               <option value="Paladin">Paladin</option>
               <option value="Hunter">Hunter</option>
               <option value="Rogue">Rogue</option>
               <option value="Priest">Priest</option>
-              <option value="Death Knight">Death Knight</option>
               <option value="Shaman">Shaman</option>
               <option value="Mage">Mage</option>
               <option value="Warlock">Warlock</option>
-              <option value="Monk">Monk</option>
               <option value="Druid">Druid</option>
-              <option value="Demon Hunter">Demon Hunter</option>
-              <option value="Evoker">Evoker</option>
             </select>
           </div>
-          <div style="padding-top: 1.2rem;">
-            <button class="btn-secondary" id="btnAddCharacter" style="width: 100%;">Add to Roster</button>
+        </div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; margin-bottom: 0.5rem;">
+          <div>
+            <label style="font-size: 0.75rem; color: var(--text-muted);">Role</label>
+            <select class="form-control" id="newCharRole">
+              <option value="DPS">⚔️ DPS</option>
+              <option value="Tank">🛡️ Tank</option>
+              <option value="Healer">💚 Healer</option>
+            </select>
+          </div>
+          <div>
+            <label style="font-size: 0.75rem; color: var(--text-muted);">Professions / Spec</label>
+            <input type="text" class="form-control" id="newCharProfessions" placeholder="e.g. Alchemy 300, Herbalism 300">
           </div>
         </div>
+        <button class="btn-secondary" id="btnAddCharacter" style="width: 100%; margin-top: 0.25rem;">+ Add to Roster</button>
+      </div>
+
+      <div class="form-group">
+        <label>📜 Your Public Guild Note</label>
+        <textarea class="form-control" id="modalGuildNoteInput" rows="2" placeholder="Describe specs, professions, crafting recipes, raid availability..."></textarea>
       </div>
 
       <div style="display: flex; gap: 0.5rem;">
         <button class="btn-secondary" data-close-modal="modalCharacters" style="flex: 1;">Cancel</button>
         <button class="btn-primary" id="btnSaveCharacters" style="flex: 1;">Save Changes</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Inspect Member Profile & WoW Characters (Click from Leaderboard) -->
+  <div class="modal-overlay" id="modalMemberProfile">
+    <div class="modal-content" style="max-width: 560px;">
+      <div class="modal-header">
+        <h4 style="color: var(--gold-300);">👤 Member Guild Profile</h4>
+        <button class="modal-close" data-close-modal="modalMemberProfile">✕</button>
+      </div>
+      <div id="memberProfileModalBody">
+        <!-- Dynamically rendered -->
+      </div>
+      <div style="display: flex; justify-content: flex-end; margin-top: 1rem;">
+        <button class="btn-secondary" data-close-modal="modalMemberProfile">Close</button>
       </div>
     </div>
   </div>
@@ -752,20 +732,6 @@
       <button class="modal-close" data-close-modal="modalImageZoom" style="align-self: flex-end; color: #fff; font-size: 2rem; margin-bottom: 0.5rem;">✕</button>
       <img src="" id="zoomImageTarget" style="max-width: 100%; max-height: 80vh; object-fit: contain; border-radius: 8px; border: 2px solid var(--border-gold);" alt="Proof">
     </div>
-  </div>
-
-  <!-- Floating Site Editor Toolbar (Appears in Editor Mode) -->
-  <div class="editor-floating-bar" id="editorFloatingBar" style="display: none;">
-    <div class="editor-badge-pulse">
-      <span class="editor-pulse-dot"></span>
-      <span>Live Editor Mode Active</span>
-    </div>
-    <button class="btn-primary" id="btnFloatingPublish" style="padding: 0.35rem 0.85rem; font-size: 0.8rem;">
-      ✨ Publish Changes
-    </button>
-    <button class="btn-secondary" id="btnFloatingExit" style="padding: 0.35rem 0.85rem; font-size: 0.8rem;">
-      ✕ Exit Editor
-    </button>
   </div>
 
   <!-- Toast Notifications Container -->

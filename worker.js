@@ -257,6 +257,7 @@ async function handleDiscordAuthMe(request, env, firestore) {
       boneScore: wallet.boneScore || 0,
       primaryCharacter: wallet.primaryCharacter || null,
       characters: wallet.characters || [],
+      guildNote: wallet.guildNote || '',
       preferences: wallet.preferences || {
         theme: 'default',
         density: 'expanded',
@@ -324,12 +325,12 @@ async function handleExchangeApi(url, request, env, firestore) {
   const session = await getSessionFromRequest(request, env);
   const isAuthorizedOfficer = Boolean(session && session.isOfficer);
 
-  // POST Manage Character Name(s) and Primary Character
+  // POST Manage Character Name(s), Classic Classes, Professions, & Public Guild Note
   if (path === 'characters' && request.method === 'POST') {
     if (!session) {
       return jsonResponse({ error: 'Unauthorized: Discord login required' }, 401);
     }
-    const { characters, primaryCharacter } = body;
+    const { characters, primaryCharacter, guildNote } = body;
     if (!Array.isArray(characters)) {
       return jsonResponse({ error: 'characters must be an array' }, 400);
     }
@@ -346,10 +347,16 @@ async function handleExchangeApi(url, request, env, firestore) {
 
     wallet.characters = characters.map(c => ({
       name: String(c.name || '').trim(),
-      realm: String(c.realm || '').trim(),
-      class: String(c.class || '').trim(),
+      class: String(c.class || 'Warrior').trim(),
+      role: String(c.role || 'DPS').trim(),
+      professions: String(c.professions || '').trim(),
       isPrimary: Boolean(c.isPrimary)
     })).filter(c => c.name.length > 0);
+
+    // Save expanded public guild note if provided
+    if (typeof guildNote === 'string') {
+      wallet.guildNote = guildNote.trim();
+    }
 
     // Determine primary character
     const primaryObj = wallet.characters.find(c => c.isPrimary);
@@ -362,7 +369,8 @@ async function handleExchangeApi(url, request, env, firestore) {
     return jsonResponse({
       success: true,
       characters: wallet.characters,
-      primaryCharacter: wallet.primaryCharacter
+      primaryCharacter: wallet.primaryCharacter,
+      guildNote: wallet.guildNote || ''
     });
   }
 
@@ -954,6 +962,144 @@ async function handleExchangeApi(url, request, env, firestore) {
     await firestore.saveBseState(state);
 
     return jsonResponse({ success: true, faq: state.siteModules.faq });
+  }
+
+  // POST Delete Shop Item
+  if (path === 'shop/delete' && request.method === 'POST') {
+    const { itemId } = body;
+    const state = await firestore.getBseState();
+    state.shop = (state.shop || []).filter(i => i.id !== itemId);
+    state.updatedAt = new Date().toISOString();
+    await firestore.saveBseState(state);
+    return jsonResponse({ success: true });
+  }
+
+  // POST Officer Edit Member Data (Balances, Public Guild Note, Characters)
+  if (path === 'member/update' && request.method === 'POST') {
+    const { targetId, spendableBones, boneScore, guildNote, characters, primaryCharacter } = body;
+    if (!targetId) return jsonResponse({ error: 'Missing targetId' }, 400);
+
+    const state = await firestore.getBseState();
+    state.wallets = state.wallets || {};
+    const wallet = state.wallets[targetId] || {
+      discordId: targetId,
+      username: 'Member',
+      serverNickname: 'Member',
+      spendableBones: 0,
+      boneScore: 0
+    };
+
+    if (spendableBones !== undefined) wallet.spendableBones = Math.max(0, parseInt(spendableBones, 10) || 0);
+    if (boneScore !== undefined) wallet.boneScore = Math.max(0, parseInt(boneScore, 10) || 0);
+    if (typeof guildNote === 'string') wallet.guildNote = guildNote.trim();
+    if (Array.isArray(characters)) wallet.characters = characters;
+    if (primaryCharacter !== undefined) wallet.primaryCharacter = primaryCharacter;
+    wallet.updatedAt = new Date().toISOString();
+    state.wallets[targetId] = wallet;
+
+    await firestore.saveBseState(state);
+
+    await firestore.logAuditEvent({
+      action: 'OFFICER_MEMBER_DATA_EDIT',
+      officerId,
+      officerName,
+      targetId,
+      reason: 'Officer updated member profile and ledger in Data Editor',
+      timestamp: new Date().toISOString()
+    });
+
+    return jsonResponse({ success: true, wallet });
+  }
+
+  // POST Delete Member Record from Ledger
+  if (path === 'member/delete' && request.method === 'POST') {
+    const { targetId } = body;
+    if (!targetId) return jsonResponse({ error: 'Missing targetId' }, 400);
+
+    const state = await firestore.getBseState();
+    if (state.wallets && state.wallets[targetId]) {
+      delete state.wallets[targetId];
+      state.updatedAt = new Date().toISOString();
+      await firestore.saveBseState(state);
+
+      await firestore.logAuditEvent({
+        action: 'OFFICER_DELETE_MEMBER_RECORD',
+        officerId,
+        officerName,
+        targetId,
+        reason: 'Officer purged member ledger entry',
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    return jsonResponse({ success: true });
+  }
+
+  // POST Delete Bounty Claim Record
+  if (path === 'claim/delete' && request.method === 'POST') {
+    const { claimId } = body;
+    const state = await firestore.getBseState();
+    if (state.claims && state.claims[claimId]) {
+      delete state.claims[claimId];
+      state.updatedAt = new Date().toISOString();
+      await firestore.saveBseState(state);
+    }
+    return jsonResponse({ success: true });
+  }
+
+  // POST Delete Delivery Order Record
+  if (path === 'deliver/delete' && request.method === 'POST') {
+    const { orderId } = body;
+    const state = await firestore.getBseState();
+    if (state.deliveries && state.deliveries[orderId]) {
+      delete state.deliveries[orderId];
+      state.updatedAt = new Date().toISOString();
+      await firestore.saveBseState(state);
+    }
+    return jsonResponse({ success: true });
+  }
+
+  // POST Update Announcement Banner
+  if (path === 'settings/announcement' && request.method === 'POST') {
+    const { enabled, text, type } = body;
+    const state = await firestore.getBseState();
+    state.branding = state.branding || {};
+    state.branding.announcement = {
+      enabled: Boolean(enabled),
+      text: String(text || '').trim(),
+      type: String(type || 'gold').trim()
+    };
+    state.updatedAt = new Date().toISOString();
+    await firestore.saveBseState(state);
+    return jsonResponse({ success: true, announcement: state.branding.announcement });
+  }
+
+  // POST Raw Central State Direct Override (Full Master Data Control)
+  if (path === 'state/raw' && request.method === 'POST') {
+    const { rawState } = body;
+    if (!rawState || typeof rawState !== 'object') {
+      return jsonResponse({ error: 'rawState must be a valid JSON object' }, 400);
+    }
+
+    // Ensure core keys exist
+    rawState.wallets = rawState.wallets || {};
+    rawState.bounties = Array.isArray(rawState.bounties) ? rawState.bounties : [];
+    rawState.shop = Array.isArray(rawState.shop) ? rawState.shop : [];
+    rawState.claims = rawState.claims || {};
+    rawState.deliveries = rawState.deliveries || {};
+    rawState.updatedAt = new Date().toISOString();
+
+    await firestore.saveBseState(rawState);
+
+    await firestore.logAuditEvent({
+      action: 'OFFICER_RAW_STATE_APPLIED',
+      officerId,
+      officerName,
+      reason: 'Officer published full raw database state',
+      timestamp: new Date().toISOString()
+    });
+
+    return jsonResponse({ success: true, state: rawState });
   }
 
   return jsonResponse({ error: 'Endpoint not found' }, 404);
