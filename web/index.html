@@ -151,19 +151,25 @@
               <th>Main Character &amp; Class</th>
               <th>Role</th>
               <th>Prestige Tier</th>
-              <th>Spendable Bones</th>
-              <th>Career Score</th>
+              <th id="thSpendable">Spendable Bones</th>
+              <th id="thScore">Career Score</th>
               <th id="thLeaderboardActions" style="display: none; text-align: center;">Actions</th>
             </tr>
           </thead>
           <tbody id="leaderboardTbody">
-            <!-- Dynamically populated -->
+            <tr>
+              <td colspan="7" style="text-align: center; color: var(--gold-200); padding: 2.5rem; font-family: 'Cinzel', serif;">
+                Loading guild standings...
+              </td>
+            </tr>
           </tbody>
         </table>
 
         <!-- Mobile Roster Stream (< 768px) -->
         <div class="mobile-roster-list" id="mobileLeaderboardList">
-          <!-- Dynamically populated -->
+          <div style="text-align: center; color: var(--gold-200); padding: 2.5rem; font-family: 'Cinzel', serif;">
+            Loading guild standings...
+          </div>
         </div>
       </div>
     </section>

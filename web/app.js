@@ -108,8 +108,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupOfficerTools();
   setupDataEditor();
 
-  await checkAuthSession();
-  await refreshBseState();
+  // Concurrently fetch auth session and central BSE state
+  await Promise.allSettled([checkAuthSession(), refreshBseState()]);
+
+  // Ensure leaderboard renders immediately
+  renderLeaderboard();
 
   // Poll state every 4 seconds for real-time reactivity
   state.pollTimer = setInterval(refreshBseState, 4000);
@@ -126,6 +129,9 @@ async function checkAuthSession() {
       state.user = data.user;
       state.userCharacters = data.user.characters || [];
       renderAuthenticatedUser(data.user);
+      if (state.bseState) {
+        renderLeaderboard();
+      }
     } else {
       renderUnauthenticatedUser();
     }
@@ -259,6 +265,7 @@ async function refreshBseState() {
  * Apply Modular Branding, Theme, and Navigation Modules
  */
 function applySiteCustomization(bse) {
+  if (!bse) return;
   const branding = bse.branding || {};
   const modules = bse.siteModules || {};
   const theme = bse.theme || {};
@@ -266,27 +273,29 @@ function applySiteCustomization(bse) {
   const currName = branding.currencyName || 'Bones';
 
   // Currency Labels
-  labelSpendableCurrency.textContent = `Spendable ${currName}`;
-  labelCareerScore.textContent = `Career ${currName} Score`;
-  thSpendable.textContent = `Spendable ${currName}`;
-  thScore.textContent = `Career Score`;
+  if (labelSpendableCurrency) labelSpendableCurrency.textContent = `Spendable ${currName}`;
+  if (labelCareerScore) labelCareerScore.textContent = `Career ${currName} Score`;
+  if (thSpendable) thSpendable.textContent = `Spendable ${currName}`;
+  if (thScore) thScore.textContent = `Career Score`;
 
   // Branding text & title
   if (branding.guildName) {
-    brandGuildName.textContent = branding.guildName;
-    pageTitle.textContent = `${branding.guildName} — Guild Economy & Bounty Board`;
+    if (brandGuildName) brandGuildName.textContent = branding.guildName;
+    if (pageTitle) pageTitle.textContent = `${branding.guildName} — Guild Economy & Bounty Board`;
   }
-  if (branding.tagline) brandTagline.textContent = branding.tagline;
-  if (branding.logoUrl) brandLogo.src = branding.logoUrl;
-  if (branding.logoUrl) pageFavicon.href = branding.logoUrl;
+  if (branding.tagline && brandTagline) brandTagline.textContent = branding.tagline;
+  if (branding.logoUrl && brandLogo) brandLogo.src = branding.logoUrl;
+  if (branding.logoUrl && pageFavicon) pageFavicon.href = branding.logoUrl;
 
   // Announcement Banner
-  if (branding.announcement?.enabled && branding.announcement?.text) {
-    announcementBanner.style.display = 'flex';
-    announcementBanner.className = `announcement-banner ${branding.announcement.type || 'gold'}`;
-    announcementText.textContent = branding.announcement.text;
-  } else {
-    announcementBanner.style.display = 'none';
+  if (announcementBanner && announcementText) {
+    if (branding.announcement?.enabled && branding.announcement?.text) {
+      announcementBanner.style.display = 'flex';
+      announcementBanner.className = `announcement-banner ${branding.announcement.type || 'gold'}`;
+      announcementText.textContent = branding.announcement.text;
+    } else {
+      announcementBanner.style.display = 'none';
+    }
   }
 
   // Navigation Module Visibility & Custom Titles (Clean non-emoji labels)
@@ -295,23 +304,22 @@ function applySiteCustomization(bse) {
     return raw.replace(/[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/gu, '').trim() || fallback;
   };
 
-  if (modules.leaderboard) {
+  if (modules.leaderboard && tabNavLeaderboard) {
     tabNavLeaderboard.textContent = cleanTitle(modules.leaderboard.title, 'Leaderboard');
     tabNavLeaderboard.style.display = modules.leaderboard.enabled === false ? 'none' : 'inline-flex';
   }
-  if (modules.bounties) {
+  if (modules.bounties && tabNavBounties) {
     tabNavBounties.textContent = cleanTitle(modules.bounties.title, 'Bounty Board');
     tabNavBounties.style.display = modules.bounties.enabled === false ? 'none' : 'inline-flex';
   }
-  if (modules.shop) {
+  if (modules.shop && tabNavShop) {
     tabNavShop.textContent = cleanTitle(modules.shop.title, 'Exchange Shop');
     tabNavShop.style.display = modules.shop.enabled === false ? 'none' : 'inline-flex';
   }
-  if (modules.faq) {
+  if (modules.faq && tabNavFaq) {
     tabNavFaq.textContent = cleanTitle(modules.faq.title, 'Rules & FAQ');
     tabNavFaq.style.display = modules.faq.enabled === false ? 'none' : 'inline-flex';
   }
-
 }
 
 /**
@@ -2059,6 +2067,9 @@ function switchTab(targetView) {
   document.getElementById(`view-${targetView}`)?.classList.add('active');
   state.activeTab = targetView;
 
+  if (targetView === 'leaderboard') {
+    renderLeaderboard();
+  }
   if (targetView === 'history') {
     renderMemberHistory();
   }
