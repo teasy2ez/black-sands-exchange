@@ -1,0 +1,22 @@
+{
+  "name": "black-sands-exchange",
+  "version": "2.0.0",
+  "description": "Black Sands Exchange (BSE) - Cloud-Native 2-Way Discord Bot & Web Portal",
+  "main": "worker.js",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "register:commands": "node scripts/register-commands.js",
+    "migrate:season0": "node scripts/migrate-season0.js"
+  },
+  "dependencies": {
+    "tweetnacl": "^1.0.3"
+  },
+  "devDependencies": {
+    "wrangler": "^4.158.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

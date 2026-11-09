@@ -1,0 +1,28 @@
+# Discord Configuration
+DISCORD_CLIENT_ID=1568455199113084950
+DISCORD_CLIENT_SECRET=your_discord_client_secret_here
+DISCORD_PUBLIC_KEY=your_discord_public_key_here
+DISCORD_BOT_TOKEN=your_discord_bot_token_here
+DISCORD_GUILD_ID=your_discord_guild_id_here
+
+# Channel IDs for 3-Channel Topology
+DISCORD_STANDINGS_CHANNEL_ID=your_standings_channel_id_here
+DISCORD_FEED_CHANNEL_ID=your_feed_channel_id_here
+DISCORD_OFFICER_CHANNEL_ID=your_officer_channel_id_here
+
+# Role Configuration
+DISCORD_OFFICER_ROLE_ID=your_officer_role_id_here
+
+# Prestige Role IDs (Optional for automated Discord role assignments)
+DISCORD_ROLE_SCAVENGER=
+DISCORD_ROLE_RAIDER=
+DISCORD_ROLE_SHADOW_BROKER=
+DISCORD_ROLE_EXALTED_BROKER=
+
+# Firestore / GCP Service Account Key (JSON string)
+FIRESTORE_PROJECT_ID=black-sands-exchange-addon
+GCP_SERVICE_ACCOUNT_KEY=
+
+# Security
+OFFICER_PASSCODE=blacksands2026
+SESSION_SECRET=super_secret_session_key_change_me
