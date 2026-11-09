@@ -1,4 +1,5 @@
-import 'dotenv/config';
+import dotenv from 'dotenv';
+dotenv.config({ path: '.dev.vars' });
 
 /**
  * Script to register all Black Sands Exchange Slash Commands with Discord.

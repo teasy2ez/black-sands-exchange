@@ -11,6 +11,7 @@
     "migrate:season0": "node scripts/migrate-season0.js"
   },
   "dependencies": {
+    "dotenv": "^18.0.10",
     "tweetnacl": "^1.0.3"
   },
   "devDependencies": {

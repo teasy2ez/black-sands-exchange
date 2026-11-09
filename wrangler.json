@@ -1,6 +1,7 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "black-sands-exchange",
+  "account_id": "c246a2fd3abda2d9964384ab55b02020",
   "main": "worker.js",
   "compatibility_date": "2024-11-01",
   "compatibility_flags": [
@@ -10,9 +11,18 @@
     "directory": "./web",
     "binding": "ASSETS"
   },
+  "routes": [
+    { "pattern": "bse.teasy2ez.win", "custom_domain": true },
+    { "pattern": "www.bse.teasy2ez.win", "custom_domain": true }
+  ],
   "vars": {
     "DISCORD_CLIENT_ID": "1568455199113084950",
     "FIRESTORE_PROJECT_ID": "black-sands-exchange-addon",
-    "OFFICER_PASSCODE": "blacksands2026"
+    "OFFICER_PASSCODE": "blacksands2026",
+    "DISCORD_GUILD_ID": "892592536181411880",
+    "DISCORD_STANDINGS_CHANNEL_ID": "1569275856415625257",
+    "DISCORD_FEED_CHANNEL_ID": "1569275805471871036",
+    "DISCORD_OFFICER_CHANNEL_ID": "1569274835392270436",
+    "DISCORD_OFFICER_ROLE_ID": "892595166031015937"
   }
 }
