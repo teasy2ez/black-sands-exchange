@@ -16,7 +16,8 @@ const state = {
   pollTimer: null,
   // Draft rank and FAQ builders for live officer editing
   draftRanks: [],
-  draftFaq: []
+  draftFaq: [],
+  officerLeaderboardFilter: 'active'
 };
 
 // DOM Elements
@@ -98,6 +99,38 @@ const dataEditorAnnounceEnabled = document.getElementById('dataEditorAnnounceEna
 const dataEditorAnnounceText = document.getElementById('dataEditorAnnounceText');
 const dataEditorAnnounceType = document.getElementById('dataEditorAnnounceType');
 
+// Leaderboard Officer Filter Elements
+const officerLeaderboardFilters = document.getElementById('officerLeaderboardFilters');
+const btnFilterActive = document.getElementById('btnFilterActive');
+const btnFilterZero = document.getElementById('btnFilterZero');
+const btnFilterHidden = document.getElementById('btnFilterHidden');
+const btnFilterAll = document.getElementById('btnFilterAll');
+const cntActive = document.getElementById('cntActive');
+const cntZero = document.getElementById('cntZero');
+const cntHidden = document.getElementById('cntHidden');
+const cntAll = document.getElementById('cntAll');
+
+// Officer Hall Header Workflow Buttons
+const btnSyncDiscordRoster = document.getElementById('btnSyncDiscordRoster');
+const btnOpenRaidAwardModal = document.getElementById('btnOpenRaidAwardModal');
+const btnExportLedgerCsv = document.getElementById('btnExportLedgerCsv');
+const btnSyncDiscordStandings = document.getElementById('btnSyncDiscordStandings');
+
+// Raid Multi-Award Modal elements
+const modalRaidAward = document.getElementById('modalRaidAward');
+const raidAwardMemberList = document.getElementById('raidAwardMemberList');
+const batchAwardAmount = document.getElementById('batchAwardAmount');
+const batchEventName = document.getElementById('batchEventName');
+const batchAwardReason = document.getElementById('batchAwardReason');
+const btnSelectAllRaid = document.getElementById('btnSelectAllRaid');
+const btnDeselectAllRaid = document.getElementById('btnDeselectAllRaid');
+const filterRaidMembers = document.getElementById('filterRaidMembers');
+const raidAwardSummary = document.getElementById('raidAwardSummary');
+const btnExecuteBatchAward = document.getElementById('btnExecuteBatchAward');
+
+// Inspector officer hide checkbox
+const inspectorOfficerHidden = document.getElementById('inspectorOfficerHidden');
+
 // Initialize
 document.addEventListener('DOMContentLoaded', async () => {
   setupNavigation();
@@ -106,6 +139,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupCharacterManagement();
   setupHistory();
   setupOfficerTools();
+  setupOfficerLeaderboardFilters();
+  setupRaidMultiAward();
   setupDataEditor();
 
   // Concurrently fetch auth session and central BSE state
@@ -377,12 +412,78 @@ function getClassIcon(className = '') {
  */
 function renderLeaderboard() {
   if (!state.bseState) return;
-  const wallets = Object.values(state.bseState.wallets || {});
-  const query = (searchLeaderboard.value || '').toLowerCase().trim();
+  const allWallets = Object.values(state.bseState.wallets || {});
+  const query = (searchLeaderboard?.value || '').toLowerCase().trim();
+  const isOfficer = Boolean(state.user?.isOfficer);
 
-  wallets.sort((a, b) => (b.boneScore || b.spendableBones || 0) - (a.boneScore || a.spendableBones || 0));
+  // Helper check: Zero-Bones member (separate from officer-hidden)
+  const isZeroBones = (w) => (w.boneScore || 0) === 0 && (w.spendableBones || 0) === 0;
 
-  const filtered = wallets.filter(w => {
+  // Counts for officer filter pills
+  const activeCount = allWallets.filter(w => !w.officerHidden && !isZeroBones(w)).length;
+  const zeroCount = allWallets.filter(w => !w.officerHidden && isZeroBones(w)).length;
+  const hiddenCount = allWallets.filter(w => Boolean(w.officerHidden)).length;
+  const totalCount = allWallets.length;
+
+  if (cntActive) cntActive.textContent = activeCount;
+  if (cntZero) cntZero.textContent = zeroCount;
+  if (cntHidden) cntHidden.textContent = hiddenCount;
+  if (cntAll) cntAll.textContent = totalCount;
+
+  if (officerLeaderboardFilters) {
+    officerLeaderboardFilters.style.display = isOfficer ? 'flex' : 'none';
+  }
+
+  // Determine visible pool based on permissions and filter selection
+  let visiblePool = [];
+  if (!isOfficer) {
+    // Regular Guild Members:
+    // 1. Hide members who have 0 bones (auto-unhidden once earning bones)
+    // 2. Hide members who are officer-hidden
+    visiblePool = allWallets.filter(w => !w.officerHidden && !isZeroBones(w));
+    visiblePool.sort((a, b) => (b.boneScore || b.spendableBones || 0) - (a.boneScore || a.spendableBones || 0));
+  } else {
+    // Officers: respect selected filter tab
+    const currentFilter = state.officerLeaderboardFilter || 'active';
+    let pool = [];
+
+    if (currentFilter === 'active') {
+      pool = allWallets.filter(w => !w.officerHidden && !isZeroBones(w));
+      pool.sort((a, b) => (b.boneScore || b.spendableBones || 0) - (a.boneScore || a.spendableBones || 0));
+    } else if (currentFilter === 'zero') {
+      pool = allWallets.filter(w => !w.officerHidden && isZeroBones(w));
+      pool.sort((a, b) => {
+        const nameA = (a.serverNickname || a.globalName || a.username || '').toLowerCase();
+        const nameB = (b.serverNickname || b.globalName || b.username || '').toLowerCase();
+        return nameA.localeCompare(nameB);
+      });
+    } else if (currentFilter === 'hidden') {
+      pool = allWallets.filter(w => Boolean(w.officerHidden));
+      pool.sort((a, b) => (b.boneScore || 0) - (a.boneScore || 0));
+    } else {
+      // 'all'
+      // Segregate into: active members (top), zero-bones members (middle), officer-hidden (bottom)
+      const activePart = allWallets.filter(w => !w.officerHidden && !isZeroBones(w));
+      activePart.sort((a, b) => (b.boneScore || b.spendableBones || 0) - (a.boneScore || a.spendableBones || 0));
+
+      const zeroPart = allWallets.filter(w => !w.officerHidden && isZeroBones(w));
+      zeroPart.sort((a, b) => {
+        const nameA = (a.serverNickname || a.globalName || a.username || '').toLowerCase();
+        const nameB = (b.serverNickname || b.globalName || b.username || '').toLowerCase();
+        return nameA.localeCompare(nameB);
+      });
+
+      const hiddenPart = allWallets.filter(w => Boolean(w.officerHidden));
+      hiddenPart.sort((a, b) => (b.boneScore || 0) - (a.boneScore || 0));
+
+      pool = [...activePart, ...zeroPart, ...hiddenPart];
+    }
+    visiblePool = pool;
+  }
+
+  // Apply search query filter
+  const filtered = visiblePool.filter(w => {
+    if (!query) return true;
     const name = (w.serverNickname || w.globalName || w.username || '').toLowerCase();
     const handle = (w.username || '').toLowerCase();
     const char = (w.primaryCharacter || '').toLowerCase();
@@ -390,7 +491,6 @@ function renderLeaderboard() {
     return name.includes(query) || handle.includes(query) || char.includes(query) || note.includes(query);
   });
 
-  const isOfficer = Boolean(state.user?.isOfficer);
   if (thLeaderboardActions) {
     thLeaderboardActions.style.display = isOfficer ? 'table-cell' : 'none';
   }
@@ -398,16 +498,31 @@ function renderLeaderboard() {
   const colSpanCount = isOfficer ? 8 : 7;
 
   if (!filtered.length) {
-    leaderboardTbody.innerHTML = `<tr><td colspan="${colSpanCount}" style="text-align: center; color: var(--text-dim); padding: 2rem;">No members match the search query.</td></tr>`;
+    let emptyMsg = 'No members match the search query.';
+    if (!query) {
+      if (!isOfficer && !activeCount) {
+        emptyMsg = 'The season standings are reset! Complete bounties or attend guild events to claim the #1 rank on the leaderboard.';
+      } else if (isOfficer && state.officerLeaderboardFilter === 'active' && !activeCount) {
+        emptyMsg = 'All members currently have 0 Bones. Use "0-Bones Members" or "All Guild Members" filter tab above to view the roster and award Bones.';
+      }
+    }
+    leaderboardTbody.innerHTML = `<tr><td colspan="${colSpanCount}" style="text-align: center; color: var(--gold-200); padding: 3rem; font-family: 'Cinzel', serif;">${emptyMsg}</td></tr>`;
     if (mobileLeaderboardList) {
-      mobileLeaderboardList.innerHTML = `<div style="text-align: center; color: var(--text-dim); padding: 2rem;">No members match the search query.</div>`;
+      mobileLeaderboardList.innerHTML = `<div style="text-align: center; color: var(--gold-200); padding: 3rem; font-family: 'Cinzel', serif;">${emptyMsg}</div>`;
     }
     return;
   }
 
   // 1. Render Desktop Table (>= 768px)
-  leaderboardTbody.innerHTML = filtered.map((w, idx) => {
-    const rankNum = idx + 1;
+  let activeRankCounter = 1;
+  leaderboardTbody.innerHTML = filtered.map(w => {
+    const isHidden = Boolean(w.officerHidden);
+    const isZero = isZeroBones(w);
+    let rankDisplay = '—';
+    if (!isHidden && !isZero) {
+      rankDisplay = `#${activeRankCounter++}`;
+    }
+
     const name = w.serverNickname || w.globalName || w.username || 'Guild Member';
     const handle = w.username ? `@${w.username}` : '';
     const avatarUrl = w.avatarHash
@@ -438,19 +553,29 @@ function renderLeaderboard() {
         <div class="officer-inline-actions">
           <button class="btn-officer-award" title="Award Bones" onclick="event.stopPropagation(); quickAwardMember('${w.discordId}', '${escapeAttr(name)}')">+ Bones</button>
           <button class="btn-officer-deduct" title="Deduct Bones" onclick="event.stopPropagation(); quickDeductMember('${w.discordId}', '${escapeAttr(name)}', ${w.spendableBones || 0})">- Bones</button>
+          <button class="btn-officer-adjust" title="Adjust Lifetime Career Score" onclick="event.stopPropagation(); quickAdjustLifetime('${w.discordId}', '${escapeAttr(name)}', ${w.boneScore || 0})">Lifetime</button>
+          <button class="btn-officer-hide" title="${isHidden ? 'Unhide member from public board' : 'Hide member from public board'}" onclick="event.stopPropagation(); quickToggleHideMember('${w.discordId}', '${escapeAttr(name)}', ${isHidden})">${isHidden ? 'Unhide' : 'Hide'}</button>
           <button class="btn-officer-purge" title="Delete Member from Roster" onclick="event.stopPropagation(); quickDeleteMember('${w.discordId}', '${escapeAttr(name)}', ${w.spendableBones || 0}, ${w.boneScore || 0})">Purge</button>
         </div>
       </td>
     ` : '';
 
+    const statusBadge = isHidden
+      ? `<span class="badge-officer-hidden">Hidden</span>`
+      : (isZero ? `<span class="badge-zero-bones">0 Bones</span>` : '');
+
+    const rowClass = isHidden ? 'class="officer-hidden-row"' : '';
+
     return `
-      <tr onclick="inspectMemberProfile('${w.discordId}')" title="Click to inspect ${name}'s WoW characters, roles, and public note">
-        <td class="table-rank-cell">#${rankNum}</td>
+      <tr ${rowClass} onclick="inspectMemberProfile('${w.discordId}')" title="Click to inspect ${name}'s WoW characters, roles, and guild note">
+        <td class="table-rank-cell">${rankDisplay}</td>
         <td>
           <div class="member-cell">
             <img src="${avatarUrl}" class="table-avatar" alt="${name}">
             <div>
-              <div style="font-weight: 700; color: var(--gold-100);">${name}</div>
+              <div style="font-weight: 700; color: var(--gold-100); display: flex; align-items: center; flex-wrap: wrap;">
+                ${name} ${statusBadge}
+              </div>
               <div style="font-size: 0.75rem; color: var(--text-muted);">${handle}</div>
             </div>
           </div>
@@ -467,8 +592,12 @@ function renderLeaderboard() {
 
   // 2. Render Mobile Roster Stream (< 768px)
   if (mobileLeaderboardList) {
-    mobileLeaderboardList.innerHTML = filtered.map((w, idx) => {
-      const rankNum = idx + 1;
+    let mobCounter = 1;
+    mobileLeaderboardList.innerHTML = filtered.map(w => {
+      const isHidden = Boolean(w.officerHidden);
+      const isZero = isZeroBones(w);
+      const rankNum = (!isHidden && !isZero) ? `#${mobCounter++}` : '—';
+
       const name = w.serverNickname || w.globalName || w.username || 'Guild Member';
       const avatarUrl = w.avatarHash
         ? `https://cdn.discordapp.com/avatars/${w.discordId}/${w.avatarHash}.png?size=48`
@@ -486,17 +615,26 @@ function renderLeaderboard() {
         <div class="mobile-card-officer-strip" onclick="event.stopPropagation()">
           <button class="btn-officer-award" onclick="event.stopPropagation(); quickAwardMember('${w.discordId}', '${escapeAttr(name)}')">+ Bones</button>
           <button class="btn-officer-deduct" onclick="event.stopPropagation(); quickDeductMember('${w.discordId}', '${escapeAttr(name)}', ${w.spendableBones || 0})">- Bones</button>
-          <button class="btn-officer-purge" onclick="event.stopPropagation(); quickDeleteMember('${w.discordId}', '${escapeAttr(name)}', ${w.spendableBones || 0}, ${w.boneScore || 0})">Purge</button>
+          <button class="btn-officer-adjust" onclick="event.stopPropagation(); quickAdjustLifetime('${w.discordId}', '${escapeAttr(name)}', ${w.boneScore || 0})">Lifetime</button>
+          <button class="btn-officer-hide" onclick="event.stopPropagation(); quickToggleHideMember('${w.discordId}', '${escapeAttr(name)}', ${isHidden})">${isHidden ? 'Unhide' : 'Hide'}</button>
         </div>
       ` : '';
 
+      const statusBadge = isHidden
+        ? `<span class="badge-officer-hidden">Hidden</span>`
+        : (isZero ? `<span class="badge-zero-bones">0 Bones</span>` : '');
+
+      const cardClass = isHidden ? 'mobile-roster-card officer-hidden-card' : 'mobile-roster-card';
+
       return `
-        <div class="mobile-roster-card" onclick="inspectMemberProfile('${w.discordId}')">
+        <div class="${cardClass}" onclick="inspectMemberProfile('${w.discordId}')">
           <div style="display: flex; align-items: center; gap: 0.75rem;">
-            <div class="mobile-roster-rank rank-${rankNum}">#${rankNum}</div>
+            <div class="mobile-roster-rank">${rankNum}</div>
             <img src="${avatarUrl}" class="mobile-roster-avatar" alt="${name}">
             <div class="mobile-roster-info">
-              <div class="mobile-roster-name">${name}</div>
+              <div class="mobile-roster-name" style="display: flex; align-items: center; flex-wrap: wrap;">
+                ${name} ${statusBadge}
+              </div>
               <div class="mobile-roster-meta">
                 ${charName ? `<span class="class-badge ${classCss}" style="padding:0.1rem 0.35rem; font-size:0.7rem;">${charName}</span> <span class="role-pill ${roleCss}">${charRole}</span>` : `<span style="color:var(--text-dim);">No character</span>`}
               </div>
@@ -596,16 +734,22 @@ window.inspectMemberProfile = function(discordId) {
 
     ${state.user?.isOfficer ? `
       <div class="wow-inner-box" style="margin-top: 1.25rem; padding: 0.85rem;">
-        <div style="font-size: 0.75rem; color: var(--gold-300); font-weight: 700; text-transform: uppercase; margin-bottom: 0.5rem;">Officer Controls</div>
+        <div style="font-size: 0.75rem; color: var(--gold-300); font-weight: 700; text-transform: uppercase; margin-bottom: 0.5rem; display: flex; justify-content: space-between; align-items: center;">
+          <span>Officer Controls</span>
+          ${w.officerHidden ? `<span class="badge-officer-hidden">Hidden from Leaderboard</span>` : ''}
+        </div>
         <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
           <button class="btn-officer-award" style="padding: 0.4rem 0.8rem; font-size: 0.8rem;" onclick="quickAwardMember('${discordId}', '${escapeAttr(name)}')">+ Award Bones</button>
           <button class="btn-officer-deduct" style="padding: 0.4rem 0.8rem; font-size: 0.8rem;" onclick="quickDeductMember('${discordId}', '${escapeAttr(name)}', ${w.spendableBones || 0})">- Deduct Bones</button>
+          <button class="btn-officer-adjust" style="padding: 0.4rem 0.8rem; font-size: 0.8rem;" onclick="quickAdjustLifetime('${discordId}', '${escapeAttr(name)}', ${w.boneScore || 0})">⚙️ Adjust Lifetime Bones</button>
+          <button class="btn-officer-hide" style="padding: 0.4rem 0.8rem; font-size: 0.8rem;" onclick="quickToggleHideMember('${discordId}', '${escapeAttr(name)}', ${Boolean(w.officerHidden)})">${w.officerHidden ? '👁️ Unhide Member' : '👁️ Hide from Leaderboard'}</button>
           <button class="btn-officer-purge" style="padding: 0.4rem 0.8rem; font-size: 0.8rem;" onclick="quickDeleteMember('${discordId}', '${escapeAttr(name)}', ${w.spendableBones || 0}, ${w.boneScore || 0})">Purge from Roster</button>
         </div>
       </div>
     ` : ''}
   `;
 
+  state.inspectedMemberId = discordId;
   document.getElementById('modalMemberProfile').classList.add('active');
 };
 
@@ -928,6 +1072,71 @@ window.quickDeleteMember = async function(userId, memberName, spendableBones, bo
     } else {
       const data = await res.json();
       showToast(`Failed to delete member: ${data.error || 'Server error'}`);
+    }
+  } catch (err) {
+    showToast(`Error: ${err.message}`);
+  }
+};
+
+window.quickAdjustLifetime = async function(userId, memberName, currentScore = 0) {
+  const input = prompt(`Enter new Lifetime Bones (Career Score) for ${memberName}:\n(Current Lifetime Score: ${currentScore})`, currentScore);
+  if (input === null) return;
+  const newScore = parseInt(input.trim(), 10);
+  if (isNaN(newScore) || newScore < 0) {
+    showToast('Invalid lifetime score amount.');
+    return;
+  }
+
+  const reason = prompt(`Reason for adjusting ${memberName}'s lifetime bones:`, 'Officer score calibration');
+  if (reason === null) return;
+
+  try {
+    const res = await fetch('/api/exchange/member/adjust', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        targetId: userId,
+        boneScore: newScore,
+        reason: reason.trim() || 'Officer lifetime score calibration'
+      })
+    });
+    if (res.ok) {
+      showToast(`Adjusted ${memberName}'s lifetime bones to ${newScore.toLocaleString()}.`);
+      await refreshBseState();
+      if (state.inspectedMemberId === userId) {
+        inspectMemberProfile(userId);
+      }
+    } else {
+      const data = await res.json();
+      showToast(`Failed: ${data.error || 'Server error'}`);
+    }
+  } catch (err) {
+    showToast(`Error: ${err.message}`);
+  }
+};
+
+window.quickToggleHideMember = async function(userId, memberName, isCurrentlyHidden) {
+  const confirmMsg = isCurrentlyHidden
+    ? `Unhide ${memberName}? They will be restored to the public leaderboard (if they have > 0 bones).`
+    : `Hide ${memberName} from the leaderboard? They will be removed from the public leaderboard and placed at the bottom for officers.`;
+  if (!confirm(confirmMsg)) return;
+
+  try {
+    const res = await fetch('/api/exchange/member/toggle-hide', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ targetId: userId })
+    });
+    if (res.ok) {
+      const data = await res.json();
+      showToast(data.officerHidden ? `Hid ${memberName} from public leaderboard.` : `Restored ${memberName} to public leaderboard.`);
+      await refreshBseState();
+      if (state.inspectedMemberId === userId) {
+        inspectMemberProfile(userId);
+      }
+    } else {
+      const data = await res.json();
+      showToast(`Failed: ${data.error || 'Server error'}`);
     }
   } catch (err) {
     showToast(`Error: ${err.message}`);
@@ -1797,6 +2006,7 @@ function setupOfficerTools() {
     const spendable = parseInt(document.getElementById('inspectorSpendable').value, 10);
     const score = parseInt(document.getElementById('inspectorScore').value, 10);
     const reason = document.getElementById('inspectorReason').value.trim();
+    const officerHidden = inspectorOfficerHidden ? inspectorOfficerHidden.checked : false;
 
     const res = await fetch('/api/exchange/member/adjust', {
       method: 'POST',
@@ -1805,6 +2015,7 @@ function setupOfficerTools() {
         targetId: state.inspectedMemberId,
         spendableBones: spendable,
         boneScore: score,
+        officerHidden,
         reason
       })
     });
@@ -1871,16 +2082,103 @@ function setupOfficerTools() {
   });
 
   // Push Standings to Discord
-  document.getElementById('btnSyncDiscordStandings').addEventListener('click', async () => {
-    showToast('Syncing in-place embeds in #exchange-standings...');
-    const res = await fetch('/api/discord/sync-standings', { method: 'POST' });
-    const data = await res.json();
-    if (res.ok) {
-      showToast('Standings embeds updated in Discord in-place.');
-    } else {
-      showToast(`Sync failed: ${data.error || 'Server error'}`);
-    }
-  });
+  if (btnSyncDiscordStandings) {
+    btnSyncDiscordStandings.addEventListener('click', async () => {
+      const orig = btnSyncDiscordStandings.textContent;
+      btnSyncDiscordStandings.textContent = 'Pushing...';
+      btnSyncDiscordStandings.disabled = true;
+      try {
+        const res = await fetch('/api/exchange/push-discord-standings', { method: 'POST' });
+        const data = await res.json();
+        if (res.ok) {
+          showToast('Standings embeds successfully updated in Discord.');
+        } else {
+          showToast(`Push failed: ${data.error || 'Server error'}`);
+        }
+      } catch (err) {
+        showToast('Network error pushing standings to Discord.');
+      } finally {
+        btnSyncDiscordStandings.textContent = orig;
+        btnSyncDiscordStandings.disabled = false;
+      }
+    });
+  }
+
+  // Sync Guild Roster from Discord
+  if (btnSyncDiscordRoster) {
+    btnSyncDiscordRoster.addEventListener('click', async () => {
+      if (!confirm('Synchronize the guild roster from the Discord server?\nThis will import any newly joined members and refresh nicknames/avatars.')) return;
+      const orig = btnSyncDiscordRoster.textContent;
+      btnSyncDiscordRoster.textContent = 'Syncing...';
+      btnSyncDiscordRoster.disabled = true;
+      try {
+        const res = await fetch('/api/exchange/sync-discord-roster', { method: 'POST' });
+        const data = await res.json();
+        if (data.success) {
+          showToast(`Synced ${data.totalMembers} Discord members (${data.importedCount} new, ${data.updatedCount} refreshed).`);
+          await refreshBseState();
+        } else {
+          showToast(`Sync failed: ${data.error || 'Server error'}`);
+        }
+      } catch (err) {
+        showToast('Network error syncing Discord roster.');
+      } finally {
+        btnSyncDiscordRoster.textContent = orig;
+        btnSyncDiscordRoster.disabled = false;
+      }
+    });
+  }
+
+  // Export Guild Ledger to CSV
+  if (btnExportLedgerCsv) {
+    btnExportLedgerCsv.addEventListener('click', () => {
+      if (!state.bseState?.wallets) {
+        showToast('No roster data to export.');
+        return;
+      }
+      const wallets = Object.values(state.bseState.wallets);
+      wallets.sort((a, b) => (b.boneScore || 0) - (a.boneScore || 0));
+
+      const rows = [
+        ['Rank', 'Discord ID', 'Username', 'Server Nickname', 'Primary Character', 'Class', 'Role', 'Spendable Bones', 'Lifetime Bones', 'Status', 'Guild Note']
+      ];
+
+      wallets.forEach((w, idx) => {
+        const chars = w.characters || [];
+        const prim = chars.find(c => c.isPrimary) || (w.primaryCharacter ? chars.find(c => c.name === w.primaryCharacter) : chars[0]);
+        const charName = prim ? prim.name : (w.primaryCharacter || '');
+        const charClass = prim ? prim.class : '';
+        const charRole = prim ? prim.role : '';
+        const status = w.officerHidden ? 'Officer Hidden' : ((w.boneScore || 0) === 0 && (w.spendableBones || 0) === 0 ? '0 Bones' : 'Active');
+
+        rows.push([
+          idx + 1,
+          `"${w.discordId}"`,
+          `"${(w.username || '').replace(/"/g, '""')}"`,
+          `"${(w.serverNickname || w.globalName || '').replace(/"/g, '""')}"`,
+          `"${charName.replace(/"/g, '""')}"`,
+          `"${charClass.replace(/"/g, '""')}"`,
+          `"${charRole.replace(/"/g, '""')}"`,
+          w.spendableBones || 0,
+          w.boneScore || 0,
+          `"${status}"`,
+          `"${(w.guildNote || '').replace(/"/g, '""')}"`
+        ]);
+      });
+
+      const csvContent = rows.map(r => r.join(',')).join('\n');
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.setAttribute('href', url);
+      link.setAttribute('download', `Black_Sands_Exchange_Ledger_${new Date().toISOString().slice(0, 10)}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      showToast(`Exported ${wallets.length} members to CSV.`);
+    });
+  }
 }
 
 function loadMemberIntoInspector(userId) {
@@ -1912,7 +2210,211 @@ function loadMemberIntoInspector(userId) {
 
   document.getElementById('inspectorSpendable').value = wallet.spendableBones || 0;
   document.getElementById('inspectorScore').value = wallet.boneScore || 0;
+  if (inspectorOfficerHidden) {
+    inspectorOfficerHidden.checked = Boolean(wallet.officerHidden);
+  }
   form.style.display = 'block';
+}
+
+/**
+ * Setup Officer Leaderboard Filter Pills
+ */
+function setupOfficerLeaderboardFilters() {
+  const filterButtons = [
+    { btn: btnFilterActive, filter: 'active' },
+    { btn: btnFilterZero, filter: 'zero' },
+    { btn: btnFilterHidden, filter: 'hidden' },
+    { btn: btnFilterAll, filter: 'all' }
+  ];
+
+  filterButtons.forEach(({ btn, filter }) => {
+    if (!btn) return;
+    btn.addEventListener('click', () => {
+      state.officerLeaderboardFilter = filter;
+      document.querySelectorAll('.filter-pill').forEach(p => p.classList.remove('active'));
+      btn.classList.add('active');
+      renderLeaderboard();
+    });
+  });
+}
+
+/**
+ * Setup Raid & Event Multi-Award Tool
+ */
+function setupRaidMultiAward() {
+  if (!btnOpenRaidAwardModal) return;
+
+  const selectedIds = new Set();
+
+  function updateRaidSummary() {
+    const amount = Math.max(1, parseInt(batchAwardAmount.value, 10) || 0);
+    const count = selectedIds.size;
+    const total = count * amount;
+    if (raidAwardSummary) {
+      raidAwardSummary.textContent = `${count} member${count === 1 ? '' : 's'} selected (${total.toLocaleString()} Total Bones)`;
+    }
+  }
+
+  function renderRaidChecklist(filterText = '') {
+    if (!raidAwardMemberList || !state.bseState) return;
+    const wallets = Object.values(state.bseState.wallets || {});
+    wallets.sort((a, b) => {
+      const nameA = (a.serverNickname || a.globalName || a.username || '').toLowerCase();
+      const nameB = (b.serverNickname || b.globalName || b.username || '').toLowerCase();
+      return nameA.localeCompare(nameB);
+    });
+
+    const search = filterText.toLowerCase().trim();
+    const filtered = wallets.filter(w => {
+      if (!search) return true;
+      const name = (w.serverNickname || w.globalName || w.username || '').toLowerCase();
+      const handle = (w.username || '').toLowerCase();
+      const char = (w.primaryCharacter || '').toLowerCase();
+      return name.includes(search) || handle.includes(search) || char.includes(search);
+    });
+
+    if (!filtered.length) {
+      raidAwardMemberList.innerHTML = `<div style="text-align:center; color:var(--text-dim); padding:1rem; font-size:0.85rem;">No members match filter.</div>`;
+      return;
+    }
+
+    raidAwardMemberList.innerHTML = filtered.map(w => {
+      const name = w.serverNickname || w.globalName || w.username || 'Guild Member';
+      const handle = w.username ? `@${w.username}` : '';
+      const isChecked = selectedIds.has(w.discordId);
+      const chars = w.characters || [];
+      const primChar = chars.find(c => c.isPrimary) || (w.primaryCharacter ? chars.find(c => c.name === w.primaryCharacter) : chars[0]);
+      const charName = primChar ? primChar.name : (w.primaryCharacter || null);
+      const charClass = primChar ? (primChar.class || 'Warrior') : 'Warrior';
+      const classCss = `class-${charClass.toLowerCase().replace(/\s+/g, '-')}`;
+
+      return `
+        <div class="raid-member-check-row ${isChecked ? 'selected' : ''}" onclick="toggleRaidMemberCheck('${w.discordId}')">
+          <div style="display:flex; align-items:center; gap:0.6rem;">
+            <input type="checkbox" id="chk_raid_${w.discordId}" ${isChecked ? 'checked' : ''} onclick="event.stopPropagation(); toggleRaidMemberCheck('${w.discordId}')">
+            <div>
+              <strong style="color:var(--gold-100); font-size:0.85rem;">${name}</strong>
+              <span style="font-size:0.75rem; color:var(--text-muted); margin-left:0.35rem;">${handle}</span>
+            </div>
+          </div>
+          <div style="display:flex; align-items:center; gap:0.5rem;">
+            ${charName ? `<span class="class-badge ${classCss}" style="padding:0.1rem 0.35rem; font-size:0.7rem;">${charName}</span>` : ''}
+            <span style="font-size:0.75rem; color:var(--amber); font-weight:700;">${(w.boneScore || 0).toLocaleString()} Pts</span>
+          </div>
+        </div>
+      `;
+    }).join('');
+    updateRaidSummary();
+  }
+
+  window.toggleRaidMemberCheck = function(id) {
+    if (selectedIds.has(id)) {
+      selectedIds.delete(id);
+    } else {
+      selectedIds.add(id);
+    }
+    const row = document.getElementById(`chk_raid_${id}`)?.closest('.raid-member-check-row');
+    const chk = document.getElementById(`chk_raid_${id}`);
+    if (chk) chk.checked = selectedIds.has(id);
+    if (row) {
+      if (selectedIds.has(id)) row.classList.add('selected');
+      else row.classList.remove('selected');
+    }
+    updateRaidSummary();
+  };
+
+  btnOpenRaidAwardModal.addEventListener('click', () => {
+    selectedIds.clear();
+    if (filterRaidMembers) filterRaidMembers.value = '';
+    renderRaidChecklist();
+    modalRaidAward.classList.add('active');
+  });
+
+  if (filterRaidMembers) {
+    filterRaidMembers.addEventListener('input', () => {
+      renderRaidChecklist(filterRaidMembers.value);
+    });
+  }
+
+  if (batchAwardAmount) {
+    batchAwardAmount.addEventListener('input', updateRaidSummary);
+  }
+
+  if (btnSelectAllRaid) {
+    btnSelectAllRaid.addEventListener('click', () => {
+      const search = (filterRaidMembers?.value || '').toLowerCase().trim();
+      const wallets = Object.values(state.bseState?.wallets || {});
+      wallets.forEach(w => {
+        if (!search) {
+          selectedIds.add(w.discordId);
+        } else {
+          const name = (w.serverNickname || w.globalName || w.username || '').toLowerCase();
+          const handle = (w.username || '').toLowerCase();
+          const char = (w.primaryCharacter || '').toLowerCase();
+          if (name.includes(search) || handle.includes(search) || char.includes(search)) {
+            selectedIds.add(w.discordId);
+          }
+        }
+      });
+      renderRaidChecklist(search);
+    });
+  }
+
+  if (btnDeselectAllRaid) {
+    btnDeselectAllRaid.addEventListener('click', () => {
+      selectedIds.clear();
+      renderRaidChecklist(filterRaidMembers?.value || '');
+    });
+  }
+
+  if (btnExecuteBatchAward) {
+    btnExecuteBatchAward.addEventListener('click', async () => {
+      const amount = parseInt(batchAwardAmount.value, 10);
+      const eventName = (batchEventName.value || '').trim();
+      const reason = (batchAwardReason.value || '').trim();
+
+      if (selectedIds.size === 0) {
+        showToast('Please select at least one guild member.');
+        return;
+      }
+      if (isNaN(amount) || amount < 1) {
+        showToast('Please enter a valid Bones amount.');
+        return;
+      }
+
+      const orig = btnExecuteBatchAward.textContent;
+      btnExecuteBatchAward.textContent = 'Awarding...';
+      btnExecuteBatchAward.disabled = true;
+
+      try {
+        const res = await fetch('/api/exchange/batch-award', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            targetIds: Array.from(selectedIds),
+            amount,
+            eventName,
+            reason
+          })
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          showToast(`Successfully awarded +${amount} Bones to ${data.awardedCount} members!`);
+          modalRaidAward.classList.remove('active');
+          await refreshBseState();
+        } else {
+          const err = await res.json();
+          showToast(err.error || 'Batch award failed.');
+        }
+      } catch (err) {
+        showToast('Network error during batch award.');
+      } finally {
+        btnExecuteBatchAward.textContent = orig;
+        btnExecuteBatchAward.disabled = false;
+      }
+    });
+  }
 }
 
 // Global officer queue handlers

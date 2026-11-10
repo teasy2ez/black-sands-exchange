@@ -1,4 +1,5 @@
 import nacl from 'tweetnacl';
+import { resolveRank } from './commands.js';
 
 /**
  * Verifies that an incoming HTTP request originated from Discord using Ed25519.
@@ -417,9 +418,13 @@ export async function pushStandingsToDiscord(env, firestore, state) {
     const channelId = env.DISCORD_STANDINGS_CHANNEL_ID;
     const token = env.DISCORD_BOT_TOKEN;
 
-    const members = Object.values(state.wallets || {});
-    members.sort((a, b) => (b.boneScore || b.spendableBones || 0) - (a.boneScore || a.spendableBones || 0));
-    const top10 = members.slice(0, 10).map(m => ({
+    const activeMembers = Object.values(state.wallets || {}).filter(m => {
+      if (m.officerHidden) return false;
+      const total = (m.boneScore || 0) + (m.spendableBones || 0);
+      return total > 0;
+    });
+    activeMembers.sort((a, b) => (b.boneScore || b.spendableBones || 0) - (a.boneScore || a.spendableBones || 0));
+    const top10 = activeMembers.slice(0, 10).map(m => ({
       ...m,
       rankTitle: resolveRank(m.boneScore, state.ranks).title
     }));

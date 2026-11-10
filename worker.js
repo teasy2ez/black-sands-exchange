@@ -778,9 +778,9 @@ async function handleExchangeApi(url, request, env, firestore) {
     return jsonResponse({ success: true, wallet });
   }
 
-  // POST Member Balance Adjust / Ledger Correction
+  // POST Member Balance Adjust / Ledger Correction (Spendable and/or Lifetime Bones)
   if (path === 'member/adjust' && request.method === 'POST') {
-    const { targetId, spendableBones, boneScore, reason } = body;
+    const { targetId, spendableBones, boneScore, officerHidden, reason } = body;
     const state = await firestore.getBseState();
     state.wallets = state.wallets || {};
     const wallet = state.wallets[targetId] || {
@@ -792,16 +792,26 @@ async function handleExchangeApi(url, request, env, firestore) {
     const oldSpendable = wallet.spendableBones || 0;
     const oldScore = wallet.boneScore || 0;
 
-    if (spendableBones !== undefined) wallet.spendableBones = Math.max(0, parseInt(spendableBones, 10) || 0);
-    if (boneScore !== undefined) wallet.boneScore = Math.max(0, parseInt(boneScore, 10) || 0);
+    if (spendableBones !== undefined && spendableBones !== null) {
+      wallet.spendableBones = Math.max(0, parseInt(spendableBones, 10) || 0);
+    }
+    if (boneScore !== undefined && boneScore !== null) {
+      wallet.boneScore = Math.max(0, parseInt(boneScore, 10) || 0);
+    }
+    if (officerHidden !== undefined) {
+      wallet.officerHidden = Boolean(officerHidden);
+    }
     wallet.updatedAt = new Date().toISOString();
     state.wallets[targetId] = wallet;
 
     const targetName = wallet.serverNickname || wallet.globalName || wallet.username || targetId;
     const diff = (wallet.spendableBones || 0) - oldSpendable;
 
+    const action = (spendableBones === undefined && boneScore !== undefined) ? 'LIFETIME_BONES_ADJUST' : 'LEDGER_CORRECTION';
+    const detailMsg = reason || `Adjusted balances: Spendable ${oldSpendable} -> ${wallet.spendableBones}, Lifetime ${oldScore} -> ${wallet.boneScore}`;
+
     await recordAuditLogAndSync(state, env, firestore, {
-      action: 'LEDGER_CORRECTION',
+      action,
       officerId,
       officerName,
       targetId,
@@ -809,10 +819,169 @@ async function handleExchangeApi(url, request, env, firestore) {
       amount: diff,
       spendableBones: wallet.spendableBones,
       boneScore: wallet.boneScore,
-      reason: reason || `Ledger balance adjustment (was: ${oldSpendable} Bones / ${oldScore} Pts)`
+      reason: detailMsg
     });
 
     return jsonResponse({ success: true, wallet });
+  }
+
+  // POST Toggle Member Hide (Officer Override)
+  if (path === 'member/toggle-hide' && request.method === 'POST') {
+    const { targetId, reason } = body;
+    if (!targetId) return jsonResponse({ error: 'Missing targetId' }, 400);
+
+    const state = await firestore.getBseState();
+    state.wallets = state.wallets || {};
+    const wallet = state.wallets[targetId];
+    if (!wallet) return jsonResponse({ error: 'Member not found' }, 404);
+
+    wallet.officerHidden = !wallet.officerHidden;
+    wallet.updatedAt = new Date().toISOString();
+
+    const targetName = wallet.serverNickname || wallet.globalName || wallet.username || targetId;
+    const action = wallet.officerHidden ? 'MEMBER_HIDE' : 'MEMBER_UNHIDE';
+
+    await recordAuditLogAndSync(state, env, firestore, {
+      action,
+      officerId,
+      officerName,
+      targetId,
+      targetName,
+      amount: 0,
+      spendableBones: wallet.spendableBones || 0,
+      boneScore: wallet.boneScore || 0,
+      reason: reason || (wallet.officerHidden ? 'Officer hid member from public leaderboard' : 'Officer restored member to public leaderboard')
+    });
+
+    return jsonResponse({ success: true, officerHidden: wallet.officerHidden, wallet });
+  }
+
+  // POST Batch Award Bones (Raid & Event Multi-Award)
+  if (path === 'batch-award' && request.method === 'POST') {
+    const { targetIds, amount, reason, eventName } = body;
+    if (!Array.isArray(targetIds) || targetIds.length === 0) {
+      return jsonResponse({ error: 'targetIds array is required' }, 400);
+    }
+    const numAmount = Math.max(1, parseInt(amount, 10) || 0);
+
+    const state = await firestore.getBseState();
+    state.wallets = state.wallets || {};
+
+    const awardedNames = [];
+    for (const tid of targetIds) {
+      const w = state.wallets[tid] || {
+        discordId: tid,
+        spendableBones: 0,
+        boneScore: 0
+      };
+      w.spendableBones = (w.spendableBones || 0) + numAmount;
+      w.boneScore = (w.boneScore || 0) + numAmount;
+      w.updatedAt = new Date().toISOString();
+      state.wallets[tid] = w;
+      awardedNames.push(w.serverNickname || w.globalName || w.username || tid);
+    }
+
+    const eventPrefix = eventName ? `[${eventName}] ` : '';
+    const fullReason = `${eventPrefix}${reason || 'Raid/Event participation reward'} (${targetIds.length} members awarded)`;
+
+    await recordAuditLogAndSync(state, env, firestore, {
+      action: 'BATCH_AWARD',
+      officerId,
+      officerName,
+      targetId: targetIds.slice(0, 5).join(',') + (targetIds.length > 5 ? ` (+${targetIds.length - 5} more)` : ''),
+      targetName: `${targetIds.length} Guild Members`,
+      amount: numAmount,
+      spendableBones: null,
+      boneScore: null,
+      reason: fullReason
+    });
+
+    return jsonResponse({
+      success: true,
+      awardedCount: targetIds.length,
+      amountPerMember: numAmount,
+      members: awardedNames
+    });
+  }
+
+  // POST Sync Roster from Guild Discord Server
+  if (path === 'sync-discord-roster' && request.method === 'POST') {
+    if (!env.DISCORD_GUILD_ID || !env.DISCORD_BOT_TOKEN) {
+      return jsonResponse({ error: 'Missing Discord Guild ID or Bot Token' }, 500);
+    }
+
+    const res = await fetch(`https://discord.com/api/v10/guilds/${env.DISCORD_GUILD_ID}/members?limit=1000`, {
+      headers: { Authorization: `Bot ${env.DISCORD_BOT_TOKEN}` }
+    });
+    if (!res.ok) {
+      return jsonResponse({ error: `Discord API error: ${res.status}` }, 502);
+    }
+    const rawMembers = await res.json();
+    const members = rawMembers.filter(m => !m.user?.bot);
+
+    const state = await firestore.getBseState();
+    state.wallets = state.wallets || {};
+
+    let newlyImported = 0;
+    let updatedCount = 0;
+
+    for (const m of members) {
+      const uid = m.user.id;
+      const existing = state.wallets[uid];
+      if (existing) {
+        existing.username = m.user.username;
+        existing.globalName = m.user.global_name || m.user.username;
+        existing.serverNickname = m.nick || existing.serverNickname || null;
+        existing.avatarHash = m.user.avatar || null;
+        existing.roles = m.roles || [];
+        updatedCount++;
+      } else {
+        state.wallets[uid] = {
+          discordId: uid,
+          username: m.user.username,
+          globalName: m.user.global_name || m.user.username,
+          serverNickname: m.nick || null,
+          avatarHash: m.user.avatar || null,
+          roles: m.roles || [],
+          spendableBones: 0,
+          boneScore: 0,
+          characters: [],
+          primaryCharacter: null,
+          guildNote: '',
+          officerHidden: false,
+          createdAt: new Date().toISOString()
+        };
+        newlyImported++;
+      }
+    }
+
+    state.updatedAt = new Date().toISOString();
+
+    await recordAuditLogAndSync(state, env, firestore, {
+      action: 'ROSTER_DISCORD_SYNC',
+      officerId,
+      officerName,
+      targetId: 'ALL',
+      targetName: 'Guild Roster',
+      amount: 0,
+      spendableBones: null,
+      boneScore: null,
+      reason: `Synchronized ${members.length} Discord members (${newlyImported} new, ${updatedCount} refreshed)`
+    });
+
+    return jsonResponse({
+      success: true,
+      totalMembers: members.length,
+      importedCount: newlyImported,
+      updatedCount
+    });
+  }
+
+  // POST Push Standings to Discord
+  if (path === 'push-discord-standings' && request.method === 'POST') {
+    const state = await firestore.getBseState();
+    const ok = await pushStandingsToDiscord(env, firestore, state);
+    return jsonResponse({ success: ok !== false, message: 'Standings pushed to Discord' });
   }
 
   // POST Create Bounty
