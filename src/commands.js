@@ -39,21 +39,18 @@ export function isOfficer(interaction, env) {
 }
 
 /**
- * Resolve rank metadata from Bone Score or Rank Tier
+ * Resolve rank metadata from Rank Tier (default tier 0 Initiate)
  */
-export function resolveRank(boneScore = 0, ranks = []) {
+export function resolveRank(boneScore = 0, ranks = [], rankTier = null) {
   if (!ranks.length) {
     return { tier: 0, title: 'Initiate', icon: '🪙' };
   }
-  // Sort ranks ascending by cost/tier
   const sorted = [...ranks].sort((a, b) => (a.tier || 0) - (b.tier || 0));
-  let currentRank = sorted[0];
-  for (const r of sorted) {
-    if (boneScore >= (r.costBones || 0)) {
-      currentRank = r;
-    }
+  if (rankTier !== null && rankTier !== undefined) {
+    const byTier = sorted.find(r => r.tier === rankTier);
+    if (byTier) return byTier;
   }
-  return currentRank;
+  return sorted[0];
 }
 
 /**
@@ -121,7 +118,7 @@ async function handleBonesCommand(interaction, opts, env, firestore) {
     boneScore: 0
   };
 
-  const rank = resolveRank(wallet.boneScore, state.ranks);
+  const rank = resolveRank(wallet.boneScore, state.ranks, wallet.rankTier);
   const embed = buildWalletEmbed(wallet, rank);
 
   return {
@@ -140,10 +137,14 @@ async function handleLeaderboardCommand(interaction, env, firestore) {
     const total = (m.boneScore || 0) + (m.spendableBones || 0);
     return total > 0;
   });
-  activeMembers.sort((a, b) => (b.boneScore || b.spendableBones || 0) - (a.boneScore || a.spendableBones || 0));
+  activeMembers.sort((a, b) => {
+    const diffSpendable = (b.spendableBones || 0) - (a.spendableBones || 0);
+    if (diffSpendable !== 0) return diffSpendable;
+    return (b.boneScore || 0) - (a.boneScore || 0);
+  });
   const top10 = activeMembers.slice(0, 10).map(m => ({
     ...m,
-    rankTitle: resolveRank(m.boneScore, state.ranks).title
+    rankTitle: resolveRank(m.boneScore, state.ranks, m.rankTier).title
   }));
 
   const embed = buildLeaderboardEmbed(top10);
@@ -178,12 +179,12 @@ async function handleShopCommand(interaction, env, firestore) {
 }
 
 /**
- * /claim <bounty_id> <proof_url> [notes]
+ * /claim <bounty_id> [proof_url] [notes]
  */
 async function handleClaimCommand(interaction, opts, env, firestore) {
   const caller = interaction.member?.user || interaction.user;
   const bountyId = opts.bounty_id;
-  const proofUrl = opts.proof_url;
+  const proofUrl = opts.proof_url || opts.proof || '';
   const notes = opts.notes || '';
 
   const state = await firestore.getBseState();
@@ -209,7 +210,7 @@ async function handleClaimCommand(interaction, opts, env, firestore) {
     discordUsername: caller.username,
     serverNickname: interaction.member?.nick || caller.global_name || caller.username,
     characterName: wallet?.primaryCharacter || null,
-    proofUrl,
+    proofUrl: proofUrl || '',
     notes,
     status: 'pending',
     createdAt: new Date().toISOString()

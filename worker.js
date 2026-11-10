@@ -246,11 +246,14 @@ async function handleDiscordAuthMe(request, env, firestore) {
     discordId: session.id,
     spendableBones: 0,
     boneScore: 0,
+    bountiesCompleted: 0,
+    postedBountiesCompleted: 0,
+    rankTier: 0,
     primaryCharacter: null,
     characters: []
   };
 
-  const rank = resolveRank(wallet.boneScore, state.ranks);
+  const rank = resolveRank(wallet.boneScore, state.ranks, wallet.rankTier);
 
   return jsonResponse({
     authenticated: true,
@@ -258,6 +261,9 @@ async function handleDiscordAuthMe(request, env, firestore) {
       ...session,
       spendableBones: wallet.spendableBones || 0,
       boneScore: wallet.boneScore || 0,
+      bountiesCompleted: wallet.bountiesCompleted || 0,
+      postedBountiesCompleted: wallet.postedBountiesCompleted || 0,
+      rankTier: wallet.rankTier || 0,
       primaryCharacter: wallet.primaryCharacter || null,
       characters: wallet.characters || [],
       guildNote: wallet.guildNote || '',
@@ -410,9 +416,165 @@ async function handleExchangeApi(url, request, env, firestore) {
     return jsonResponse({ success: true, preferences: wallet.preferences });
   }
 
+  // POST Member Prestige Rank Promotion (Purchased strictly with spendable bones)
+  if (path === 'promote' && request.method === 'POST') {
+    if (!session) {
+      return jsonResponse({ error: 'Unauthorized: Discord login required' }, 401);
+    }
+    const state = await firestore.getBseState();
+    state.wallets = state.wallets || {};
+    const wallet = state.wallets[session.id] || {
+      discordId: session.id,
+      username: session.username,
+      serverNickname: session.serverNickname,
+      spendableBones: 0,
+      boneScore: 0,
+      rankTier: 0
+    };
+
+    const currentTier = wallet.rankTier || 0;
+    const sortedRanks = [...(state.ranks || [])].sort((a, b) => (a.tier || 0) - (b.tier || 0));
+    const nextRank = sortedRanks.find(r => r.tier === currentTier + 1);
+
+    if (!nextRank) {
+      return jsonResponse({ error: 'Max prestige rank already achieved!' }, 400);
+    }
+
+    if ((wallet.spendableBones || 0) < nextRank.costBones) {
+      return jsonResponse({ error: `Insufficient spendable Bones. Need ${nextRank.costBones} Bones, but you have ${wallet.spendableBones || 0}.` }, 400);
+    }
+
+    wallet.spendableBones -= nextRank.costBones;
+    wallet.rankTier = nextRank.tier;
+    wallet.rankTitle = nextRank.title;
+    wallet.updatedAt = new Date().toISOString();
+    state.wallets[session.id] = wallet;
+
+    // Grant Discord Role if configured
+    if (nextRank.roleId && env.DISCORD_GUILD_ID && env.DISCORD_BOT_TOKEN) {
+      try {
+        await addGuildMemberRole(env.DISCORD_GUILD_ID, session.id, nextRank.roleId, env.DISCORD_BOT_TOKEN);
+      } catch (err) {
+        console.error('Failed to grant promotion role in Discord:', err);
+      }
+    }
+
+    await recordAuditLogAndSync(state, env, firestore, {
+      action: 'PRESTIGE_PROMOTION',
+      officerId: null,
+      officerName: 'System',
+      targetId: session.id,
+      targetName: wallet.serverNickname || session.username,
+      amount: -nextRank.costBones,
+      spendableBones: wallet.spendableBones,
+      boneScore: wallet.boneScore,
+      reason: `Purchased Prestige Promotion to ${nextRank.title} (Tier ${nextRank.tier}) for ${nextRank.costBones} Bones`
+    });
+
+    return jsonResponse({
+      success: true,
+      rank: nextRank,
+      remainingBones: wallet.spendableBones,
+      rankTier: wallet.rankTier
+    });
+  }
+
+  // POST Member Request to Post a Bounty (Held in Escrow until approved or refunded)
+  if (path === 'bounty/request' && request.method === 'POST') {
+    if (!session) {
+      return jsonResponse({ error: 'Unauthorized: Discord login required' }, 401);
+    }
+    const { title, rewardBones, description, category, bonuses } = body;
+    const bonesOffered = Math.max(1, parseInt(rewardBones, 10) || 0);
+
+    if (!title || title.trim().length === 0) {
+      return jsonResponse({ error: 'Bounty title is required' }, 400);
+    }
+
+    const state = await firestore.getBseState();
+    state.wallets = state.wallets || {};
+    const wallet = state.wallets[session.id] || {
+      discordId: session.id,
+      username: session.username,
+      serverNickname: session.serverNickname,
+      spendableBones: 0,
+      boneScore: 0
+    };
+
+    if ((wallet.spendableBones || 0) < bonesOffered) {
+      return jsonResponse({ error: `Insufficient Bones. You have ${wallet.spendableBones || 0} Bones, but offered ${bonesOffered}.` }, 400);
+    }
+
+    // Deduct bones into escrow
+    wallet.spendableBones -= bonesOffered;
+    wallet.updatedAt = new Date().toISOString();
+    state.wallets[session.id] = wallet;
+
+    const bountyId = `bounty_req_${Date.now()}_${session.id.slice(-4)}`;
+    const parsedBonuses = Array.isArray(bonuses) ? bonuses.map((b, idx) => ({
+      id: b.id || `bonus_${Date.now()}_${idx}`,
+      description: String(b.description || '').trim(),
+      bonusBones: Math.max(0, parseInt(b.bonusBones, 10) || 0)
+    })).filter(b => b.description.length > 0 && b.bonusBones > 0) : [];
+
+    const newBounty = {
+      id: bountyId,
+      title: title.trim(),
+      description: (description || '').trim(),
+      category: category || 'General',
+      creatorId: session.id,
+      creatorUsername: session.username,
+      creatorNickname: session.serverNickname || session.username,
+      baseRewardBones: bonesOffered,
+      officerBonusBones: 0,
+      rewardBones: bonesOffered,
+      status: 'pending_review',
+      bonuses: parsedBonuses,
+      createdAt: new Date().toISOString()
+    };
+
+    state.bounties = state.bounties || [];
+    state.bounties.push(newBounty);
+
+    await recordAuditLogAndSync(state, env, firestore, {
+      action: 'BOUNTY_REQUEST_ESCROW',
+      officerId: null,
+      officerName: 'System',
+      targetId: session.id,
+      targetName: session.serverNickname || session.username,
+      amount: -bonesOffered,
+      spendableBones: wallet.spendableBones,
+      boneScore: wallet.boneScore,
+      reason: `Member submitted bounty request "${newBounty.title}" with ${bonesOffered} Bones held in escrow`
+    });
+
+    // Notify #officer-exchange if configured
+    if (env.DISCORD_OFFICER_CHANNEL_ID && env.DISCORD_BOT_TOKEN) {
+      try {
+        await sendChannelMessage(env.DISCORD_OFFICER_CHANNEL_ID, {
+          embeds: [{
+            title: '📜 Member Bounty Request Pending Review',
+            description: `**${session.serverNickname || session.username}** requested to post a player bounty:\n**${newBounty.title}**\n\n> ${newBounty.description || 'No description provided'}\n\nEscrow Offered: **${bonesOffered} Bones**\nCategory: **${newBounty.category}**`,
+            color: Colors.BLUE,
+            footer: { text: 'Review in Officer Hall' },
+            timestamp: new Date().toISOString()
+          }]
+        }, env.DISCORD_BOT_TOKEN);
+      } catch (err) {
+        console.error('Failed to notify #officer-exchange of bounty request:', err);
+      }
+    }
+
+    return jsonResponse({
+      success: true,
+      bounty: newBounty,
+      remainingBones: wallet.spendableBones
+    });
+  }
+
   // POST Submit Bounty Claim (Member or Officer)
   if (path === 'claim' && request.method === 'POST') {
-    const { bountyId, proofUrl, notes, discordId, discordUsername, characterName } = body;
+    const { bountyId, proofUrl, notes, discordId, discordUsername, characterName, achievedBonusIds } = body;
     const targetId = session?.id || discordId;
     const targetUsername = session?.username || discordUsername || 'Anonymous';
 
@@ -433,12 +595,13 @@ async function handleExchangeApi(url, request, env, firestore) {
       bountyId: bounty.id,
       bountyTitle: bounty.title,
       rewardBones: bounty.rewardBones,
+      achievedBonusIds: Array.isArray(achievedBonusIds) ? achievedBonusIds : [],
       discordId: targetId,
       discordUsername: targetUsername,
       serverNickname: session?.serverNickname || targetUsername,
       characterName: resolvedChar,
-      proofUrl: proofUrl || '',
-      notes: notes || '',
+      proofUrl: proofUrl ? String(proofUrl).trim() : '',
+      notes: notes ? String(notes).trim() : '',
       status: 'pending',
       createdAt: new Date().toISOString()
     };
@@ -591,8 +754,17 @@ async function handleExchangeApi(url, request, env, firestore) {
 
     wallet.spendableBones = (wallet.spendableBones || 0) + reward;
     wallet.boneScore = (wallet.boneScore || 0) + reward;
+    wallet.bountiesCompleted = (wallet.bountiesCompleted || 0) + 1; // Track member verified bounties completed
     wallet.updatedAt = new Date().toISOString();
     state.wallets[claim.discordId] = wallet;
+
+    // Increment postedBountiesCompleted for the creator if player-sponsored
+    const bounty = (state.bounties || []).find(b => b.id === claim.bountyId);
+    if (bounty?.creatorId && state.wallets[bounty.creatorId]) {
+      const creatorWallet = state.wallets[bounty.creatorId];
+      creatorWallet.postedBountiesCompleted = (creatorWallet.postedBountiesCompleted || 0) + 1;
+      creatorWallet.updatedAt = new Date().toISOString();
+    }
 
     await recordAuditLogAndSync(state, env, firestore, {
       action: 'BOUNTY_REWARD',
@@ -635,6 +807,75 @@ async function handleExchangeApi(url, request, env, firestore) {
     });
 
     return jsonResponse({ success: true, claim });
+  }
+
+  // POST Approve Member Bounty Request (Officer Review)
+  if (path === 'bounty/approve-request' && request.method === 'POST') {
+    const { bountyId, officerBonusBones } = body;
+    const state = await firestore.getBseState();
+    const bounty = (state.bounties || []).find(b => b.id === bountyId);
+    if (!bounty) return jsonResponse({ error: 'Bounty not found' }, 404);
+
+    const bonus = Math.max(0, parseInt(officerBonusBones, 10) || 0);
+    bounty.status = 'active';
+    bounty.officerBonusBones = bonus;
+    bounty.rewardBones = (bounty.baseRewardBones || bounty.rewardBones || 0) + bonus;
+    bounty.approvedBy = officerName;
+    bounty.approvedAt = new Date().toISOString();
+
+    state.updatedAt = new Date().toISOString();
+    await firestore.saveBseState(state);
+
+    await recordAuditLogAndSync(state, env, firestore, {
+      action: 'BOUNTY_REQUEST_APPROVED',
+      officerId,
+      officerName,
+      targetId: bounty.creatorId,
+      targetName: bounty.creatorNickname || bounty.creatorUsername,
+      amount: 0,
+      reason: `Approved member bounty "${bounty.title}" (Base: ${bounty.baseRewardBones} Bones, Officer Bonus: +${bonus} Bones, Total Payout: ${bounty.rewardBones} Bones)`
+    });
+
+    return jsonResponse({ success: true, bounty });
+  }
+
+  // POST Reject Member Bounty Request with Full Escrow Refund (Officer Review)
+  if (path === 'bounty/reject-request' && request.method === 'POST') {
+    const { bountyId, rejectReason } = body;
+    const state = await firestore.getBseState();
+    const bounty = (state.bounties || []).find(b => b.id === bountyId);
+    if (!bounty) return jsonResponse({ error: 'Bounty not found' }, 404);
+
+    if (bounty.status === 'rejected') {
+      return jsonResponse({ error: 'Bounty request was already rejected' }, 400);
+    }
+
+    bounty.status = 'rejected';
+    bounty.rejectedBy = officerName;
+    bounty.rejectedAt = new Date().toISOString();
+    bounty.rejectReason = rejectReason || 'Does not align with guild guidelines';
+
+    // Refund escrowed bones to creator
+    const refundAmount = bounty.baseRewardBones || bounty.rewardBones || 0;
+    state.wallets = state.wallets || {};
+    const creatorWallet = state.wallets[bounty.creatorId];
+    if (creatorWallet && refundAmount > 0) {
+      creatorWallet.spendableBones = (creatorWallet.spendableBones || 0) + refundAmount;
+      creatorWallet.updatedAt = new Date().toISOString();
+    }
+
+    await recordAuditLogAndSync(state, env, firestore, {
+      action: 'BOUNTY_ESCROW_REFUND',
+      officerId,
+      officerName,
+      targetId: bounty.creatorId,
+      targetName: bounty.creatorNickname || bounty.creatorUsername,
+      amount: refundAmount,
+      spendableBones: creatorWallet?.spendableBones,
+      reason: `Rejected member bounty "${bounty.title}": ${bounty.rejectReason} (${refundAmount} Bones refunded to creator)`
+    });
+
+    return jsonResponse({ success: true, bounty, refundedBones: refundAmount });
   }
 
   // POST Mark Order Delivered
@@ -797,6 +1038,15 @@ async function handleExchangeApi(url, request, env, firestore) {
     }
     if (boneScore !== undefined && boneScore !== null) {
       wallet.boneScore = Math.max(0, parseInt(boneScore, 10) || 0);
+    }
+    if (body.bountiesCompleted !== undefined && body.bountiesCompleted !== null) {
+      wallet.bountiesCompleted = Math.max(0, parseInt(body.bountiesCompleted, 10) || 0);
+    }
+    if (body.postedBountiesCompleted !== undefined && body.postedBountiesCompleted !== null) {
+      wallet.postedBountiesCompleted = Math.max(0, parseInt(body.postedBountiesCompleted, 10) || 0);
+    }
+    if (body.rankTier !== undefined && body.rankTier !== null) {
+      wallet.rankTier = Math.max(0, parseInt(body.rankTier, 10) || 0);
     }
     if (officerHidden !== undefined) {
       wallet.officerHidden = Boolean(officerHidden);
@@ -986,8 +1236,14 @@ async function handleExchangeApi(url, request, env, firestore) {
 
   // POST Create Bounty
   if (path === 'bounty/create' && request.method === 'POST') {
-    const { title, rewardBones, description, category } = body;
+    const { title, rewardBones, description, category, bonuses } = body;
     const state = await firestore.getBseState();
+    const parsedBonuses = Array.isArray(bonuses) ? bonuses.map((b, idx) => ({
+      id: b.id || `bonus_${Date.now()}_${idx}`,
+      description: String(b.description || '').trim(),
+      bonusBones: Math.max(0, parseInt(b.bonusBones, 10) || 0)
+    })).filter(b => b.description.length > 0 && b.bonusBones > 0) : [];
+
     const bounty = {
       id: `bounty_${Date.now()}`,
       title,
@@ -995,6 +1251,7 @@ async function handleExchangeApi(url, request, env, firestore) {
       description: description || '',
       category: category || 'General',
       status: 'active',
+      bonuses: parsedBonuses,
       createdAt: new Date().toISOString()
     };
     state.bounties = state.bounties || [];
@@ -1006,7 +1263,7 @@ async function handleExchangeApi(url, request, env, firestore) {
 
   // POST Update Existing Bounty
   if (path === 'bounty/update' && request.method === 'POST') {
-    const { bountyId, title, rewardBones, description, category, status } = body;
+    const { bountyId, title, rewardBones, description, category, status, bonuses } = body;
     const state = await firestore.getBseState();
     const bounty = (state.bounties || []).find(b => b.id === bountyId);
     if (!bounty) return jsonResponse({ error: 'Bounty not found' }, 404);
@@ -1016,6 +1273,13 @@ async function handleExchangeApi(url, request, env, firestore) {
     if (description !== undefined) bounty.description = description;
     if (category) bounty.category = category;
     if (status) bounty.status = status;
+    if (Array.isArray(bonuses)) {
+      bounty.bonuses = bonuses.map((b, idx) => ({
+        id: b.id || `bonus_${Date.now()}_${idx}`,
+        description: String(b.description || '').trim(),
+        bonusBones: Math.max(0, parseInt(b.bonusBones, 10) || 0)
+      })).filter(b => b.description.length > 0 && b.bonusBones > 0);
+    }
     bounty.updatedAt = new Date().toISOString();
 
     await firestore.saveBseState(state);
@@ -1167,6 +1431,9 @@ async function handleExchangeApi(url, request, env, firestore) {
 
     if (spendableBones !== undefined) wallet.spendableBones = Math.max(0, parseInt(spendableBones, 10) || 0);
     if (boneScore !== undefined) wallet.boneScore = Math.max(0, parseInt(boneScore, 10) || 0);
+    if (body.bountiesCompleted !== undefined) wallet.bountiesCompleted = Math.max(0, parseInt(body.bountiesCompleted, 10) || 0);
+    if (body.postedBountiesCompleted !== undefined) wallet.postedBountiesCompleted = Math.max(0, parseInt(body.postedBountiesCompleted, 10) || 0);
+    if (body.rankTier !== undefined) wallet.rankTier = Math.max(0, parseInt(body.rankTier, 10) || 0);
     if (typeof guildNote === 'string') wallet.guildNote = guildNote.trim();
     if (Array.isArray(characters)) wallet.characters = characters;
     if (primaryCharacter !== undefined) wallet.primaryCharacter = primaryCharacter;
@@ -1305,11 +1572,19 @@ async function handleSyncStandingsApi(request, env, firestore) {
   const channelId = env.DISCORD_STANDINGS_CHANNEL_ID;
   const token = env.DISCORD_BOT_TOKEN;
 
-  const members = Object.values(state.wallets || {});
-  members.sort((a, b) => (b.boneScore || b.spendableBones || 0) - (a.boneScore || a.spendableBones || 0));
+  const members = Object.values(state.wallets || {}).filter(m => {
+    if (m.officerHidden) return false;
+    const total = (m.boneScore || 0) + (m.spendableBones || 0);
+    return total > 0;
+  });
+  members.sort((a, b) => {
+    const diffSpendable = (b.spendableBones || 0) - (a.spendableBones || 0);
+    if (diffSpendable !== 0) return diffSpendable;
+    return (b.boneScore || 0) - (a.boneScore || 0);
+  });
   const top10 = members.slice(0, 10).map(m => ({
     ...m,
-    rankTitle: resolveRank(m.boneScore, state.ranks).title
+    rankTitle: resolveRank(m.boneScore, state.ranks, m.rankTier).title
   }));
 
   const lbEmbed = buildLeaderboardEmbed(top10);

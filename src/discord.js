@@ -221,9 +221,10 @@ export function buildLeaderboardEmbed(topMembers = []) {
       const name = m.serverNickname || m.globalName || m.username || 'Unknown';
       const handle = m.username ? `(@${m.username})` : '';
       const charPart = m.primaryCharacter ? ` [${m.primaryCharacter}]` : '';
-      const score = (m.boneScore ?? m.spendableBones ?? 0).toLocaleString();
+      const spendable = (m.spendableBones || 0).toLocaleString();
+      const score = (m.boneScore || 0).toLocaleString();
       const rank = m.rankTitle || 'Initiate';
-      return `${medal} **${name}**${charPart} ${handle} — **${score}** Bone Score • *${rank}*`;
+      return `${medal} **${name}**${charPart} ${handle} — **${spendable}** Spendable Bones (${score} Score) • *${rank}*`;
     }).join('\n');
   }
 
@@ -423,10 +424,14 @@ export async function pushStandingsToDiscord(env, firestore, state) {
       const total = (m.boneScore || 0) + (m.spendableBones || 0);
       return total > 0;
     });
-    activeMembers.sort((a, b) => (b.boneScore || b.spendableBones || 0) - (a.boneScore || a.spendableBones || 0));
+    activeMembers.sort((a, b) => {
+      const diffSpendable = (b.spendableBones || 0) - (a.spendableBones || 0);
+      if (diffSpendable !== 0) return diffSpendable;
+      return (b.boneScore || 0) - (a.boneScore || 0);
+    });
     const top10 = activeMembers.slice(0, 10).map(m => ({
       ...m,
-      rankTitle: resolveRank(m.boneScore, state.ranks).title
+      rankTitle: resolveRank(m.boneScore, state.ranks, m.rankTier).title
     }));
 
     const lbEmbed = buildLeaderboardEmbed(top10);

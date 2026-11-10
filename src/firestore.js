@@ -12,6 +12,16 @@ export function toFirestoreValue(val) {
   }
   if (typeof val === 'string') return { stringValue: val };
   if (Array.isArray(val)) {
+    // Safety check: If the array has non-numeric properties, it's being used as a dictionary/map.
+    // Convert it to a mapValue so named keys (like claims['claim_123']) are never lost.
+    const nonNumericKeys = Object.keys(val).filter(k => !/^\d+$/.test(k));
+    if (nonNumericKeys.length > 0) {
+      const fields = {};
+      for (const [k, v] of Object.entries(val)) {
+        fields[k] = toFirestoreValue(v);
+      }
+      return { mapValue: { fields } };
+    }
     return { arrayValue: { values: val.map(toFirestoreValue) } };
   }
   if (typeof val === 'object') {
@@ -59,6 +69,63 @@ export function fromFirestoreDoc(doc) {
     obj._id = doc.name.split('/').pop();
   }
   return obj;
+}
+
+// Normalizer: Ensure claims, deliveries, wallets are plain objects, and bounties/shop are arrays
+export function normalizeStateObjects(state) {
+  if (!state || typeof state !== 'object') return state;
+
+  // 1. Claims MUST be a plain dictionary/object
+  if (Array.isArray(state.claims)) {
+    const map = {};
+    for (const [k, v] of Object.entries(state.claims)) {
+      if (v && typeof v === 'object' && v.id) {
+        map[v.id] = v;
+      }
+    }
+    state.claims = map;
+  } else if (!state.claims || typeof state.claims !== 'object') {
+    state.claims = {};
+  }
+
+  // 2. Deliveries MUST be a plain dictionary/object
+  if (Array.isArray(state.deliveries)) {
+    const map = {};
+    for (const [k, v] of Object.entries(state.deliveries)) {
+      if (v && typeof v === 'object' && v.id) {
+        map[v.id] = v;
+      }
+    }
+    state.deliveries = map;
+  } else if (!state.deliveries || typeof state.deliveries !== 'object') {
+    state.deliveries = {};
+  }
+
+  // 3. Wallets MUST be a plain dictionary/object
+  if (Array.isArray(state.wallets)) {
+    const map = {};
+    for (const [k, v] of Object.entries(state.wallets)) {
+      if (v && typeof v === 'object' && v.discordId) {
+        map[v.discordId] = v;
+      }
+    }
+    state.wallets = map;
+  } else if (!state.wallets || typeof state.wallets !== 'object') {
+    state.wallets = {};
+  }
+
+  // 4. Bounties and Shop MUST be arrays
+  if (!Array.isArray(state.bounties)) {
+    state.bounties = state.bounties && typeof state.bounties === 'object' ? Object.values(state.bounties) : [];
+  }
+  if (!Array.isArray(state.shop)) {
+    state.shop = state.shop && typeof state.shop === 'object' ? Object.values(state.shop) : [];
+  }
+  if (!Array.isArray(state.auditLog)) {
+    state.auditLog = state.auditLog && typeof state.auditLog === 'object' ? Object.values(state.auditLog) : [];
+  }
+
+  return state;
 }
 
 // Helper: Convert JS object to Firestore document fields
@@ -168,18 +235,19 @@ export class FirestoreClient {
       const headers = await this.getHeaders();
       const res = await fetch(`${this.baseUrl}/exchange/bse_state`, { headers });
       if (res.status === 404) {
-        return this.getDefaultBseState();
+        return normalizeStateObjects(this.getDefaultBseState());
       }
       if (!res.ok) {
         const text = await res.text();
         console.warn(`Firestore read warning (${res.status}):`, text);
-        return this.getDefaultBseState();
+        return normalizeStateObjects(this.getDefaultBseState());
       }
       const doc = await res.json();
-      return fromFirestoreDoc(doc) || this.getDefaultBseState();
+      const state = fromFirestoreDoc(doc) || this.getDefaultBseState();
+      return normalizeStateObjects(state);
     } catch (err) {
       console.error('Failed to get BSE state from Firestore:', err);
-      return this.getDefaultBseState();
+      return normalizeStateObjects(this.getDefaultBseState());
     }
   }
 
@@ -188,6 +256,7 @@ export class FirestoreClient {
    */
   async saveBseState(state) {
     try {
+      normalizeStateObjects(state);
       const headers = await this.getHeaders();
       const body = toFirestoreFields(state);
       const res = await fetch(`${this.baseUrl}/exchange/bse_state`, {

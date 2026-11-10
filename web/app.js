@@ -369,22 +369,16 @@ function updatePrestigeBanner(boneScore, spendableBones) {
     { tier: 4, title: 'Exalted Broker', costBones: 300 }
   ];
 
-  let currentRank = ranks[0];
-  let nextRank = null;
-
-  for (let i = 0; i < ranks.length; i++) {
-    if (boneScore >= ranks[i].costBones) {
-      currentRank = ranks[i];
-      nextRank = ranks[i + 1] || null;
-    }
-  }
+  const currentTier = state.user?.rankTier || 0;
+  const currentRank = ranks.find(r => r.tier === currentTier) || ranks[0];
+  const nextRank = ranks.find(r => r.tier === currentTier + 1) || null;
 
   const currName = state.bseState?.branding?.currencyName || 'Bones';
   walletRankTitle.textContent = currentRank.title;
 
   if (!nextRank) {
     nextRankTitle.textContent = 'Max Prestige Achieved';
-    rankProgressText.textContent = `${boneScore} ${currName}`;
+    rankProgressText.textContent = `${spendableBones} ${currName}`;
     rankProgressBar.style.width = '100%';
     btnPromoteRank.style.display = 'none';
   } else {
@@ -551,11 +545,8 @@ function renderLeaderboard() {
     const officerActionsCell = isOfficer ? `
       <td style="text-align: center;" onclick="event.stopPropagation()">
         <div class="officer-inline-actions">
-          <button class="btn-officer-award" title="Award Bones" onclick="event.stopPropagation(); quickAwardMember('${w.discordId}', '${escapeAttr(name)}')">+ Bones</button>
-          <button class="btn-officer-deduct" title="Deduct Bones" onclick="event.stopPropagation(); quickDeductMember('${w.discordId}', '${escapeAttr(name)}', ${w.spendableBones || 0})">- Bones</button>
-          <button class="btn-officer-adjust" title="Adjust Lifetime Career Score" onclick="event.stopPropagation(); quickAdjustLifetime('${w.discordId}', '${escapeAttr(name)}', ${w.boneScore || 0})">Lifetime</button>
-          <button class="btn-officer-hide" title="${isHidden ? 'Unhide member from public board' : 'Hide member from public board'}" onclick="event.stopPropagation(); quickToggleHideMember('${w.discordId}', '${escapeAttr(name)}', ${isHidden})">${isHidden ? 'Unhide' : 'Hide'}</button>
-          <button class="btn-officer-purge" title="Delete Member from Roster" onclick="event.stopPropagation(); quickDeleteMember('${w.discordId}', '${escapeAttr(name)}', ${w.spendableBones || 0}, ${w.boneScore || 0})">Purge</button>
+          <button class="btn-officer-award" title="Award Bones" onclick="event.stopPropagation(); openBonesAdjustModal('${w.discordId}', '${escapeAttr(name)}', 'award')">+ Bones</button>
+          <button class="btn-officer-deduct" title="Deduct Bones" onclick="event.stopPropagation(); openBonesAdjustModal('${w.discordId}', '${escapeAttr(name)}', 'deduct')">- Bones</button>
         </div>
       </td>
     ` : '';
@@ -613,10 +604,8 @@ function renderLeaderboard() {
 
       const mobileOfficerStrip = isOfficer ? `
         <div class="mobile-card-officer-strip" onclick="event.stopPropagation()">
-          <button class="btn-officer-award" onclick="event.stopPropagation(); quickAwardMember('${w.discordId}', '${escapeAttr(name)}')">+ Bones</button>
-          <button class="btn-officer-deduct" onclick="event.stopPropagation(); quickDeductMember('${w.discordId}', '${escapeAttr(name)}', ${w.spendableBones || 0})">- Bones</button>
-          <button class="btn-officer-adjust" onclick="event.stopPropagation(); quickAdjustLifetime('${w.discordId}', '${escapeAttr(name)}', ${w.boneScore || 0})">Lifetime</button>
-          <button class="btn-officer-hide" onclick="event.stopPropagation(); quickToggleHideMember('${w.discordId}', '${escapeAttr(name)}', ${isHidden})">${isHidden ? 'Unhide' : 'Hide'}</button>
+          <button class="btn-officer-award" onclick="event.stopPropagation(); openBonesAdjustModal('${w.discordId}', '${escapeAttr(name)}', 'award')">+ Bones</button>
+          <button class="btn-officer-deduct" onclick="event.stopPropagation(); openBonesAdjustModal('${w.discordId}', '${escapeAttr(name)}', 'deduct')">- Bones</button>
         </div>
       ` : '';
 
@@ -666,7 +655,7 @@ window.inspectMemberProfile = function(discordId) {
   const avatarUrl = w.avatarHash
     ? `https://cdn.discordapp.com/avatars/${w.discordId}/${w.avatarHash}.png?size=72`
     : 'assets/favicon.svg';
-  const rankTitle = resolveRankTitle(w.boneScore);
+  const rankTitle = resolveRankTitle(w.rankTier || 0);
   const chars = w.characters || [];
 
   let charactersHtml = '';
@@ -715,9 +704,11 @@ window.inspectMemberProfile = function(discordId) {
       <div>
         <h3 style="color: var(--gold-100); font-size: 1.3rem; margin-bottom: 0.15rem;">${name}</h3>
         <div style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.5rem;">${handle} &bull; <span class="card-badge economy">${rankTitle}</span></div>
-        <div style="display: flex; gap: 1.5rem; flex-wrap: wrap;">
-          <div><span style="font-size:0.75rem; color:var(--text-muted); display:block;">SPENDABLE BONES</span> <strong style="color:var(--gold-300); font-size:1.15rem;">${(w.spendableBones || 0).toLocaleString()}</strong></div>
-          <div><span style="font-size:0.75rem; color:var(--text-muted); display:block;">CAREER SCORE</span> <strong style="color:var(--amber); font-size:1.15rem;">${(w.boneScore || 0).toLocaleString()}</strong></div>
+        <div style="display: flex; gap: 1.25rem; flex-wrap: wrap;">
+          <div><span style="font-size:0.7rem; color:var(--text-muted); display:block; text-transform:uppercase;">Spendable Bones</span> <strong style="color:var(--gold-300); font-size:1.15rem;">${(w.spendableBones || 0).toLocaleString()}</strong></div>
+          <div><span style="font-size:0.7rem; color:var(--text-muted); display:block; text-transform:uppercase;">Career Score</span> <strong style="color:var(--amber); font-size:1.15rem;">${(w.boneScore || 0).toLocaleString()}</strong></div>
+          <div><span style="font-size:0.7rem; color:var(--text-muted); display:block; text-transform:uppercase;">Bounties Completed</span> <strong style="color:var(--blue); font-size:1.15rem;">${(w.bountiesCompleted || 0).toLocaleString()}</strong></div>
+          <div><span style="font-size:0.7rem; color:var(--text-muted); display:block; text-transform:uppercase;">Posted Bounties</span> <strong style="color:var(--legendary); font-size:1.15rem;">${(w.postedBountiesCompleted || 0).toLocaleString()}</strong></div>
         </div>
       </div>
     </div>
@@ -739,9 +730,10 @@ window.inspectMemberProfile = function(discordId) {
           ${w.officerHidden ? `<span class="badge-officer-hidden">Hidden from Leaderboard</span>` : ''}
         </div>
         <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
-          <button class="btn-officer-award" style="padding: 0.4rem 0.8rem; font-size: 0.8rem;" onclick="quickAwardMember('${discordId}', '${escapeAttr(name)}')">+ Award Bones</button>
-          <button class="btn-officer-deduct" style="padding: 0.4rem 0.8rem; font-size: 0.8rem;" onclick="quickDeductMember('${discordId}', '${escapeAttr(name)}', ${w.spendableBones || 0})">- Deduct Bones</button>
+          <button class="btn-officer-award" style="padding: 0.4rem 0.8rem; font-size: 0.8rem;" onclick="openBonesAdjustModal('${discordId}', '${escapeAttr(name)}', 'award')">+ Award Bones</button>
+          <button class="btn-officer-deduct" style="padding: 0.4rem 0.8rem; font-size: 0.8rem;" onclick="openBonesAdjustModal('${discordId}', '${escapeAttr(name)}', 'deduct')">- Deduct Bones</button>
           <button class="btn-officer-adjust" style="padding: 0.4rem 0.8rem; font-size: 0.8rem;" onclick="quickAdjustLifetime('${discordId}', '${escapeAttr(name)}', ${w.boneScore || 0})">⚙️ Adjust Lifetime Bones</button>
+          <button class="btn-officer-adjust" style="padding: 0.4rem 0.8rem; font-size: 0.8rem;" onclick="quickAdjustBountyStats('${discordId}', '${escapeAttr(name)}', ${w.bountiesCompleted || 0}, ${w.postedBountiesCompleted || 0})">🎯 Override Bounty Stats</button>
           <button class="btn-officer-hide" style="padding: 0.4rem 0.8rem; font-size: 0.8rem;" onclick="quickToggleHideMember('${discordId}', '${escapeAttr(name)}', ${Boolean(w.officerHidden)})">${w.officerHidden ? '👁️ Unhide Member' : '👁️ Hide from Leaderboard'}</button>
           <button class="btn-officer-purge" style="padding: 0.4rem 0.8rem; font-size: 0.8rem;" onclick="quickDeleteMember('${discordId}', '${escapeAttr(name)}', ${w.spendableBones || 0}, ${w.boneScore || 0})">Purge from Roster</button>
         </div>
@@ -753,13 +745,10 @@ window.inspectMemberProfile = function(discordId) {
   document.getElementById('modalMemberProfile').classList.add('active');
 };
 
-function resolveRankTitle(boneScore = 0) {
+function resolveRankTitle(rankTier = 0) {
   const ranks = state.bseState?.ranks || [];
-  let title = 'Initiate';
-  for (const r of ranks) {
-    if (boneScore >= r.costBones) title = r.title;
-  }
-  return title;
+  const found = ranks.find(r => r.tier === rankTier);
+  return found ? found.title : (ranks[0]?.title || 'Initiate');
 }
 
 /**
@@ -770,6 +759,12 @@ function renderBounties() {
   const bounties = (state.bseState.bounties || []).filter(b => b.status === 'active');
   const currName = state.bseState?.branding?.currencyName || 'Bones';
 
+  // Toggle Request a Bounty button for logged-in members
+  const reqBtn = document.getElementById('btnOpenRequestBountyModal');
+  if (reqBtn) {
+    reqBtn.style.display = state.user?.authenticated ? 'inline-flex' : 'none';
+  }
+
   if (!bounties.length) {
     bountiesGrid.innerHTML = `<div style="grid-column: 1 / -1; text-align: center; color: var(--text-dim); padding: 3rem;">No active bounties posted right now.</div>`;
     return;
@@ -777,15 +772,31 @@ function renderBounties() {
 
   bountiesGrid.innerHTML = bounties.map(b => {
     const badgeClass = (b.category || 'General').toLowerCase();
+    const isPlayerSponsored = Boolean(b.creatorId);
+    const sponsorName = b.creatorNickname || b.creatorUsername || 'Guild Member';
+
+    const bonusesHtml = (b.bonuses && b.bonuses.length) ? `
+      <div class="bounty-bonuses-box">
+        <div style="font-size: 0.7rem; color: var(--gold-300); font-weight: 700; text-transform: uppercase;">Optional Bonus Objectives:</div>
+        <div style="display: flex; flex-wrap: wrap; margin-top: 0.2rem;">
+          ${b.bonuses.map(bonus => `
+            <span class="bounty-bonus-pill">⭐ ${escapeHtml(bonus.description)} (<strong>+${bonus.bonusBones} Bones</strong>)</span>
+          `).join('')}
+        </div>
+      </div>
+    ` : '';
+
     return `
       <div class="exchange-card">
         <div>
+          ${isPlayerSponsored ? `<div class="bounty-sponsor-tag">Sponsored by: <strong>${escapeHtml(sponsorName)}</strong></div>` : ''}
           <div class="card-top">
             <span class="card-badge ${badgeClass}">${b.category || 'Guild'}</span>
             <div class="card-reward">+${(b.rewardBones || 0).toLocaleString()} ${currName}</div>
           </div>
-          <div class="card-title">${b.title}</div>
-          <div class="card-desc">${b.description || ''}</div>
+          <div class="card-title">${escapeHtml(b.title)}</div>
+          <div class="card-desc">${escapeHtml(b.description || '')}</div>
+          ${bonusesHtml}
         </div>
         <div class="card-footer">
           <span class="stock-indicator">ID: <code>${b.id}</code></span>
@@ -988,63 +999,86 @@ function escapeAttr(str) {
   return String(str || '').replace(/'/g, "\\'").replace(/"/g, '&quot;');
 }
 
-// Global officer quick actions from leaderboard
-window.quickAwardMember = async function(userId, memberName) {
-  const amountStr = prompt(`Award Bones to ${memberName}:\nEnter amount to award (e.g. 25):`);
-  if (!amountStr) return;
-  const amount = parseInt(amountStr, 10);
-  if (isNaN(amount) || amount < 1) {
-    showToast('Invalid award amount entered.');
-    return;
-  }
-  const reason = prompt(`Reason for awarding ${amount} Bones to ${memberName}:`, 'Guild event contribution');
-  if (reason === null) return;
+// WoW Stone Modal Adjust Controller
+window.openBonesAdjustModal = function(userId, memberName, initialMode = 'award') {
+  const wallet = state.bseState?.wallets?.[userId] || {};
+  state.activeBonesAdjust = {
+    userId,
+    memberName,
+    mode: initialMode,
+    spendable: wallet.spendableBones || 0,
+    score: wallet.boneScore || 0
+  };
 
-  try {
-    const res = await fetch('/api/exchange/award', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ targetId: userId, amount, reason: reason.trim() })
-    });
-    if (res.ok) {
-      showToast(`Awarded +${amount} Bones to ${memberName}.`);
-      await refreshBseState();
-    } else {
-      const data = await res.json();
-      showToast(`Failed to award Bones: ${data.error || 'Server error'}`);
-    }
-  } catch (err) {
-    showToast(`Error: ${err.message}`);
+  const modal = document.getElementById('modalBonesAdjust');
+  if (!modal) return;
+
+  // Header profile card
+  const avatarEl = document.getElementById('bonesAdjustAvatar');
+  if (avatarEl) {
+    avatarEl.src = wallet.avatarHash
+      ? `https://cdn.discordapp.com/avatars/${userId}/${wallet.avatarHash}.png?size=64`
+      : 'assets/favicon.svg';
   }
+  const nameEl = document.getElementById('bonesAdjustName');
+  if (nameEl) nameEl.textContent = memberName;
+
+  const chars = wallet.characters || [];
+  const primChar = chars.find(c => c.isPrimary) || (wallet.primaryCharacter ? chars.find(c => c.name === wallet.primaryCharacter) : chars[0]);
+  const mainPart = primChar ? `Main: ${primChar.name} (${primChar.class})` : 'No character linked';
+  const metaEl = document.getElementById('bonesAdjustMeta');
+  if (metaEl) metaEl.textContent = `@${wallet.username || 'member'} • ${mainPart}`;
+
+  const balEl = document.getElementById('bonesAdjustCurrentBalance');
+  if (balEl) balEl.textContent = `${(wallet.spendableBones || 0).toLocaleString()} Bones`;
+
+  // Defaults
+  const amountInput = document.getElementById('bonesAdjustAmountInput');
+  if (amountInput) amountInput.value = '25';
+  const reasonInput = document.getElementById('bonesAdjustReasonInput');
+  if (reasonInput) reasonInput.value = initialMode === 'award' ? 'Guild event contribution' : 'Ledger correction';
+
+  setBonesAdjustMode(initialMode);
+  modal.classList.add('active');
 };
 
-window.quickDeductMember = async function(userId, memberName, currentBones) {
-  const amountStr = prompt(`Deduct Bones from ${memberName} (Current balance: ${currentBones} Bones):\nEnter amount to deduct:`);
-  if (!amountStr) return;
-  const amount = parseInt(amountStr, 10);
-  if (isNaN(amount) || amount < 1) {
-    showToast('Invalid deduction amount entered.');
-    return;
-  }
-  const reason = prompt(`Reason for deducting ${amount} Bones from ${memberName}:`, 'Penalty or correction');
-  if (reason === null) return;
+window.setBonesAdjustMode = function(mode) {
+  if (!state.activeBonesAdjust) return;
+  state.activeBonesAdjust.mode = mode;
+  const isAward = mode === 'award';
 
-  try {
-    const res = await fetch('/api/exchange/deduct', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ targetId: userId, amount, reason: reason.trim() })
-    });
-    if (res.ok) {
-      showToast(`Deducted -${amount} Bones from ${memberName}.`);
-      await refreshBseState();
-    } else {
-      const data = await res.json();
-      showToast(`Failed to deduct Bones: ${data.error || 'Server error'}`);
-    }
-  } catch (err) {
-    showToast(`Error: ${err.message}`);
-  }
+  const btnAward = document.getElementById('btnModeAward');
+  const btnDeduct = document.getElementById('btnModeDeduct');
+  if (btnAward) btnAward.className = `bones-mode-btn ${isAward ? 'active award' : ''}`;
+  if (btnDeduct) btnDeduct.className = `bones-mode-btn ${!isAward ? 'active deduct' : ''}`;
+
+  const titleEl = document.getElementById('bonesAdjustTitle');
+  if (titleEl) titleEl.textContent = isAward ? 'Award Member Bones' : 'Deduct Member Bones';
+
+  const labelAmount = document.getElementById('labelAdjustAmount');
+  if (labelAmount) labelAmount.textContent = isAward ? 'Bones Amount to Award' : 'Bones Amount to Deduct';
+
+  updateBonesAdjustConfirmBtn();
+};
+
+window.updateBonesAdjustConfirmBtn = function() {
+  const btn = document.getElementById('btnConfirmBonesAdjustExecute');
+  if (!btn || !state.activeBonesAdjust) return;
+  const isAward = state.activeBonesAdjust.mode === 'award';
+  const amount = parseInt(document.getElementById('bonesAdjustAmountInput')?.value, 10) || 0;
+  btn.className = isAward ? 'btn-success' : 'btn-danger';
+  btn.textContent = isAward
+    ? `Confirm Award (+${amount} Bones)`
+    : `Confirm Deduct (-${amount} Bones)`;
+};
+
+// Forward legacy callers to the stone modal
+window.quickAwardMember = function(userId, memberName) {
+  openBonesAdjustModal(userId, memberName, 'award');
+};
+
+window.quickDeductMember = function(userId, memberName) {
+  openBonesAdjustModal(userId, memberName, 'deduct');
 };
 
 window.quickDeleteMember = async function(userId, memberName, spendableBones, boneScore) {
@@ -1115,6 +1149,51 @@ window.quickAdjustLifetime = async function(userId, memberName, currentScore = 0
   }
 };
 
+window.quickAdjustBountyStats = async function(userId, memberName, curCompleted = 0, curPosted = 0) {
+  const compStr = prompt(`Override Bounties Completed for ${memberName}:\n(Current: ${curCompleted})`, curCompleted);
+  if (compStr === null) return;
+  const newCompleted = parseInt(compStr.trim(), 10);
+  if (isNaN(newCompleted) || newCompleted < 0) {
+    showToast('Invalid completed count entered.');
+    return;
+  }
+
+  const postStr = prompt(`Override Posted Bounties Completed for ${memberName}:\n(Current: ${curPosted})`, curPosted);
+  if (postStr === null) return;
+  const newPosted = parseInt(postStr.trim(), 10);
+  if (isNaN(newPosted) || newPosted < 0) {
+    showToast('Invalid posted count entered.');
+    return;
+  }
+
+  const reason = prompt(`Reason for overriding bounty stats for ${memberName}:`, 'Officer stats calibration');
+
+  try {
+    const res = await fetch('/api/exchange/member/adjust', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        targetId: userId,
+        bountiesCompleted: newCompleted,
+        postedBountiesCompleted: newPosted,
+        reason: (reason || '').trim() || 'Officer bounty stats calibration'
+      })
+    });
+    if (res.ok) {
+      showToast(`Updated ${memberName}'s bounty stats (Completed: ${newCompleted}, Posted: ${newPosted}).`);
+      await refreshBseState();
+      if (state.inspectedMemberId === userId) {
+        inspectMemberProfile(userId);
+      }
+    } else {
+      const data = await res.json();
+      showToast(`Failed: ${data.error || 'Server error'}`);
+    }
+  } catch (err) {
+    showToast(`Error: ${err.message}`);
+  }
+};
+
 window.quickToggleHideMember = async function(userId, memberName, isCurrentlyHidden) {
   const confirmMsg = isCurrentlyHidden
     ? `Unhide ${memberName}? They will be restored to the public leaderboard (if they have > 0 bones).`
@@ -1153,7 +1232,6 @@ function renderOfficerQueues() {
   // 1. Pending Claims
   const claims = Object.values(state.bseState.claims || {}).filter(c => c.status === 'pending');
   subtabClaimCount.textContent = claims.length;
-  updateOfficerBadge();
 
   if (!claims.length) {
     pendingClaimsList.innerHTML = `<p style="color: var(--text-dim); font-size: 0.85rem; padding: 1.5rem; text-align: center;">No pending claims awaiting review. All caught up!</p>`;
@@ -1164,13 +1242,33 @@ function renderOfficerQueues() {
         ? `<span class="char-pill" style="font-size:0.75rem;">Character: <strong>${c.characterName}</strong></span>`
         : `<span style="color:var(--text-dim); font-size:0.75rem;">No character linked</span>`;
 
+      // Check if bounty has bonus objectives
+      const bounty = (state.bseState.bounties || []).find(b => b.id === c.bountyId);
+      let bonusesOfficerHtml = '';
+      if (bounty && bounty.bonuses && bounty.bonuses.length) {
+        bonusesOfficerHtml = `
+          <div style="margin: 0.5rem 0; padding: 0.6rem; background: rgba(0,0,0,0.3); border-radius: var(--radius-sm); border: 1px solid var(--border-gold);">
+            <div style="font-size: 0.75rem; color: var(--gold-300); font-weight: 700; margin-bottom: 0.35rem; text-transform: uppercase;">Verify Optional Bonus Objectives:</div>
+            ${bounty.bonuses.map(bn => {
+              const wasClaimed = (c.achievedBonusIds || []).includes(bn.id);
+              return `
+                <label style="display: flex; align-items: center; gap: 0.4rem; font-size: 0.8rem; color: var(--text-main); margin-bottom: 0.25rem; cursor: pointer;">
+                  <input type="checkbox" id="officer_claim_bonus_${c.id}_${bn.id}" ${wasClaimed ? 'checked' : ''}>
+                  <span>⭐ ${escapeHtml(bn.description)} (+${bn.bonusBones} Bones)</span>
+                </label>
+              `;
+            }).join('')}
+          </div>
+        `;
+      }
+
       return `
         <div class="officer-review-card">
           <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.5rem; flex-wrap: wrap; gap: 0.5rem;">
             <div>
-              <strong style="color: var(--gold-100); font-size: 1.05rem;">${c.bountyTitle}</strong>
+              <strong style="color: var(--gold-100); font-size: 1.05rem;">${escapeHtml(c.bountyTitle)}</strong>
               <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.2rem;">
-                Submitted by: <strong>${c.serverNickname || c.discordUsername}</strong> (@${c.discordUsername || ''}) &bull; ${charPart}
+                Submitted by: <strong>${escapeHtml(c.serverNickname || c.discordUsername)}</strong> (@${c.discordUsername || ''}) &bull; ${charPart}
               </div>
             </div>
             <div style="text-align: right;">
@@ -1182,10 +1280,12 @@ function renderOfficerQueues() {
           <div style="display: flex; gap: 1rem; align-items: center; margin: 0.75rem 0; background: var(--bg-inner); padding: 0.75rem; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle); flex-wrap: wrap;">
             ${isImg ? `<img src="${c.proofUrl}" class="proof-thumbnail" alt="Proof" onclick="zoomImage('${c.proofUrl}')">` : ''}
             <div style="flex: 1; min-width: 200px;">
-              ${c.proofUrl ? `<div style="font-size: 0.85rem; margin-bottom: 0.25rem;"><a href="${c.proofUrl}" target="_blank" rel="noopener" style="color: var(--blue); font-weight: 600;">Open Proof Link</a></div>` : '<div style="color: var(--text-dim); font-size: 0.8rem;">No link provided</div>'}
-              ${c.notes ? `<div style="font-size: 0.85rem; color: var(--text-main); font-style: italic;">"${c.notes}"</div>` : '<div style="color: var(--text-dim); font-size: 0.8rem;">No notes provided</div>'}
+              ${c.proofUrl ? `<div style="font-size: 0.85rem; margin-bottom: 0.25rem;"><a href="${c.proofUrl}" target="_blank" rel="noopener" style="color: var(--blue); font-weight: 600;">Open Proof Link</a></div>` : '<div style="color: var(--text-dim); font-size: 0.8rem;">No proof link provided (optional)</div>'}
+              ${c.notes ? `<div style="font-size: 0.85rem; color: var(--text-main); font-style: italic;">"${escapeHtml(c.notes)}"</div>` : '<div style="color: var(--text-dim); font-size: 0.8rem;">No notes provided</div>'}
             </div>
           </div>
+
+          ${bonusesOfficerHtml}
 
           <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
             <button class="btn-success" onclick="approveClaim('${c.id}')" style="flex: 1; min-width: 140px;">Approve (+${c.rewardBones} ${currName})</button>
@@ -1200,23 +1300,22 @@ function renderOfficerQueues() {
   // 2. Pending Deliveries
   const deliveries = Object.values(state.bseState.deliveries || {}).filter(d => d.status === 'pending');
   subtabDeliveryCount.textContent = deliveries.length;
-  updateOfficerBadge();
 
   if (!deliveries.length) {
     pendingDeliveriesList.innerHTML = `<p style="color: var(--text-dim); font-size: 0.85rem; padding: 1.5rem; text-align: center;">No shop orders pending delivery. All fulfilled!</p>`;
   } else {
     pendingDeliveriesList.innerHTML = deliveries.map(d => {
       const charPart = d.characterName
-        ? `<strong style="color: var(--gold-300);">${d.characterName}</strong>`
+        ? `<strong style="color: var(--gold-300);">${escapeHtml(d.characterName)}</strong>`
         : `<em style="color: var(--danger);">Unspecified character — check with member</em>`;
 
       return `
         <div class="officer-review-card">
           <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.5rem; flex-wrap: wrap; gap: 0.5rem;">
             <div>
-              <strong style="color: var(--gold-100); font-size: 1.05rem;">${d.itemTitle}</strong>
+              <strong style="color: var(--gold-100); font-size: 1.05rem;">${escapeHtml(d.itemTitle)}</strong>
               <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.2rem;">
-                Buyer: <strong>${d.serverNickname || d.discordUsername}</strong> &bull; Order: <code>${d.id}</code>
+                Buyer: <strong>${escapeHtml(d.serverNickname || d.discordUsername)}</strong> &bull; Order: <code>${d.id}</code>
               </div>
             </div>
             <div style="text-align: right;">
@@ -1237,12 +1336,61 @@ function renderOfficerQueues() {
       `;
     }).join('');
   }
+
+  // 3. Member Bounty Requests Queue (Bounty Manager)
+  const memberRequests = (state.bseState.bounties || []).filter(b => b.status === 'pending_review');
+  const cntRequestsEl = document.getElementById('cntMemberBountyRequests');
+  if (cntRequestsEl) cntRequestsEl.textContent = memberRequests.length;
+  const requestsListEl = document.getElementById('memberBountyRequestsList');
+  if (requestsListEl) {
+    if (!memberRequests.length) {
+      requestsListEl.innerHTML = `<p style="color: var(--text-dim); font-size: 0.85rem; padding: 1.5rem; text-align: center;">No member bounty requests pending review. All clear!</p>`;
+    } else {
+      requestsListEl.innerHTML = memberRequests.map(b => {
+        const sponsorName = b.creatorNickname || b.creatorUsername || 'Guild Member';
+        const bonusesText = (b.bonuses && b.bonuses.length)
+          ? b.bonuses.map(bn => `⭐ ${escapeHtml(bn.description)} (+${bn.bonusBones} Bones)`).join(', ')
+          : '';
+
+        return `
+          <div class="officer-review-card">
+            <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.5rem; flex-wrap: wrap; gap: 0.5rem;">
+              <div>
+                <strong style="color: var(--gold-100); font-size: 1.05rem;">${escapeHtml(b.title)}</strong>
+                <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.2rem;">
+                  Requested by: <strong>${escapeHtml(sponsorName)}</strong> &bull; Category: <span class="card-badge ${(b.category || 'Guild').toLowerCase()}">${b.category || 'Guild'}</span>
+                </div>
+              </div>
+              <div style="text-align: right;">
+                <span style="color: var(--gold-300); font-weight: 800; font-size: 1.1rem;">+${b.rewardBones} ${currName} (Escrowed)</span>
+                <div style="font-size: 0.7rem; color: var(--text-dim);">Bounty ID: <code>${b.id}</code></div>
+              </div>
+            </div>
+
+            <div style="background: var(--bg-inner); padding: 0.75rem; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle); margin: 0.5rem 0; font-size: 0.85rem;">
+              <div style="color: var(--text-main);">${escapeHtml(b.description || 'No description')}</div>
+              ${bonusesText ? `<div style="margin-top: 0.4rem; font-size: 0.75rem; color: var(--gold-200);">Bonus Objective: ${bonusesText}</div>` : ''}
+            </div>
+
+            <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+              <button class="btn-success" onclick="approveMemberBountyRequest('${b.id}')" style="flex: 2; min-width: 140px;">Approve &amp; Post Bounty</button>
+              <button class="btn-danger" onclick="rejectMemberBountyRequest('${b.id}')" style="flex: 1; min-width: 100px;">Reject &amp; Refund Escrow</button>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+  }
+
+  updateOfficerBadge();
 }
 
 function updateOfficerBadge() {
   const pendingClaims = Object.values(state.bseState?.claims || {}).filter(c => c.status === 'pending').length;
   const pendingDeliveries = Object.values(state.bseState?.deliveries || {}).filter(d => d.status === 'pending').length;
-  const total = pendingClaims + pendingDeliveries;
+  const pendingBounties = (state.bseState?.bounties || []).filter(b => b.status === 'pending_review').length;
+  const total = pendingClaims + pendingDeliveries + pendingBounties;
+
   if (total > 0) {
     officerActionBadge.textContent = total;
     officerActionBadge.style.display = 'inline-block';
@@ -1718,21 +1866,164 @@ function setupModals() {
     });
   });
 
+  // Bones Adjust Stone Modal Handlers
+  document.getElementById('btnModeAward')?.addEventListener('click', () => setBonesAdjustMode('award'));
+  document.getElementById('btnModeDeduct')?.addEventListener('click', () => setBonesAdjustMode('deduct'));
+
+  document.querySelectorAll('#bonesQuickChips .quick-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      document.querySelectorAll('#bonesQuickChips .quick-chip').forEach(c => c.classList.remove('active'));
+      chip.classList.add('active');
+      const amt = chip.getAttribute('data-amt');
+      const input = document.getElementById('bonesAdjustAmountInput');
+      if (input && amt) {
+        input.value = amt;
+        updateBonesAdjustConfirmBtn();
+      }
+    });
+  });
+
+  document.getElementById('bonesAdjustAmountInput')?.addEventListener('input', () => {
+    updateBonesAdjustConfirmBtn();
+  });
+
+  document.querySelectorAll('#bonesReasonChips .reason-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      const reason = chip.getAttribute('data-reason');
+      const input = document.getElementById('bonesAdjustReasonInput');
+      if (input && reason) input.value = reason;
+    });
+  });
+
+  document.getElementById('btnConfirmBonesAdjustExecute')?.addEventListener('click', async () => {
+    if (!state.activeBonesAdjust) return;
+    const { userId, memberName, mode } = state.activeBonesAdjust;
+    const amount = parseInt(document.getElementById('bonesAdjustAmountInput').value, 10);
+    const reason = (document.getElementById('bonesAdjustReasonInput').value || '').trim();
+
+    if (isNaN(amount) || amount < 1) {
+      showToast('Please enter a valid Bones amount (minimum 1).');
+      return;
+    }
+
+    const endpoint = mode === 'award' ? '/api/exchange/award' : '/api/exchange/deduct';
+    const defaultReason = mode === 'award' ? 'Guild contribution' : 'Ledger correction';
+
+    try {
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ targetId: userId, amount, reason: reason || defaultReason })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        showToast(`${mode === 'award' ? 'Awarded +' : 'Deducted -'}${amount} Bones for ${memberName}.`);
+        document.getElementById('modalBonesAdjust')?.classList.remove('active');
+        await refreshBseState();
+        if (state.inspectedMemberId === userId) {
+          inspectMemberProfile(userId);
+        }
+      } else {
+        showToast(`Failed: ${data.error || 'Server error'}`);
+      }
+    } catch (err) {
+      showToast(`Error: ${err.message}`);
+    }
+  });
+
+  // Member Request Bounty Modal Handlers (Player Escrow)
+  document.getElementById('btnOpenRequestBountyModal')?.addEventListener('click', () => {
+    if (!state.user || !state.user.authenticated) {
+      showToast('Please sign in with Discord to request a bounty.');
+      return;
+    }
+    const balEl = document.getElementById('reqBountyUserBalance');
+    if (balEl) balEl.textContent = (state.user.spendableBones || 0).toLocaleString();
+    document.getElementById('reqBountyTitle').value = '';
+    document.getElementById('reqBountyReward').value = '25';
+    document.getElementById('reqBountyDesc').value = '';
+    if (document.getElementById('reqBountyBonusDesc')) document.getElementById('reqBountyBonusDesc').value = '';
+    if (document.getElementById('reqBountyBonusAmount')) document.getElementById('reqBountyBonusAmount').value = '';
+    document.getElementById('modalRequestBounty')?.classList.add('active');
+  });
+
+  document.getElementById('btnSubmitRequestBountyExecute')?.addEventListener('click', async () => {
+    const title = document.getElementById('reqBountyTitle').value.trim();
+    const rewardBones = parseInt(document.getElementById('reqBountyReward').value, 10);
+    const category = document.getElementById('reqBountyCategory').value;
+    const description = document.getElementById('reqBountyDesc').value.trim();
+    const bonusDesc = document.getElementById('reqBountyBonusDesc')?.value.trim() || '';
+    const bonusAmount = parseInt(document.getElementById('reqBountyBonusAmount')?.value, 10) || 0;
+
+    if (!title) {
+      showToast('Please enter a bounty title.');
+      return;
+    }
+    if (isNaN(rewardBones) || rewardBones < 5) {
+      showToast('Minimum reward is 5 Bones.');
+      return;
+    }
+    const userSpendable = state.user?.spendableBones || 0;
+    if (rewardBones > userSpendable) {
+      showToast(`Insufficient Bones. You have ${userSpendable} Spendable Bones.`);
+      return;
+    }
+    if (!description) {
+      showToast('Please provide bounty instructions and deliverables.');
+      return;
+    }
+
+    const bonuses = [];
+    if (bonusDesc && bonusAmount > 0) {
+      bonuses.push({
+        id: `bonus_${Date.now()}`,
+        description: bonusDesc,
+        bonusBones: bonusAmount
+      });
+    }
+
+    try {
+      const res = await fetch('/api/exchange/bounty/request', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title,
+          rewardBones,
+          category,
+          description,
+          bonuses
+        })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        showToast(`Bounty request submitted! ${rewardBones} Bones placed in escrow awaiting officer review.`);
+        document.getElementById('modalRequestBounty')?.classList.remove('active');
+        await refreshBseState();
+      } else {
+        showToast(`Failed: ${data.error || 'Server error'}`);
+      }
+    } catch (err) {
+      showToast(`Error: ${err.message}`);
+    }
+  });
+
   document.getElementById('btnSubmitGeneralClaim').addEventListener('click', () => {
     openClaimModal();
   });
 
-  // Submit Claim Execute
+  // Submit Claim Execute (Proof URL is optional)
   document.getElementById('btnSubmitClaimExecute').addEventListener('click', async () => {
     const bountyId = document.getElementById('claimBountySelect').value;
     const characterName = document.getElementById('claimCharacterSelect').value;
     const proofUrl = document.getElementById('claimProofUrl').value.trim();
     const notes = document.getElementById('claimNotes').value.trim();
 
-    if (!proofUrl) {
-      showToast('Please provide a proof URL (image or logs)');
-      return;
-    }
+    // Collect checked bonus checkboxes
+    const achievedBonusIds = [];
+    document.querySelectorAll('.chk-claim-bonus:checked').forEach(chk => {
+      const bId = chk.getAttribute('data-bonus-id');
+      if (bId) achievedBonusIds.push(bId);
+    });
 
     try {
       const res = await fetch('/api/exchange/claim', {
@@ -1743,6 +2034,7 @@ function setupModals() {
           characterName,
           proofUrl,
           notes,
+          achievedBonusIds,
           discordId: state.user?.id,
           discordUsername: state.user?.username
         })
@@ -1789,6 +2081,29 @@ function setupModals() {
   });
 }
 
+function renderClaimBonusesForBounty(bountyId) {
+  const container = document.getElementById('claimBonusesContainer');
+  if (!container) return;
+  const bounty = (state.bseState?.bounties || []).find(b => b.id === bountyId);
+  if (bounty && bounty.bonuses && bounty.bonuses.length) {
+    container.style.display = 'block';
+    container.innerHTML = `
+      <label style="font-size: 0.8rem; color: var(--gold-300); font-weight: 700; margin-bottom: 0.35rem; display: block; text-transform: uppercase;">Optional Bonus Objectives Achieved:</label>
+      <div style="background: var(--bg-inner); padding: 0.6rem; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
+        ${bounty.bonuses.map(bn => `
+          <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.82rem; color: var(--text-main); margin-bottom: 0.3rem; cursor: pointer;">
+            <input type="checkbox" class="chk-claim-bonus" data-bonus-id="${escapeHtml(bn.id)}">
+            <span>⭐ ${escapeHtml(bn.description)} (<strong>+${bn.bonusBones} Bones</strong>)</span>
+          </label>
+        `).join('')}
+      </div>
+    `;
+  } else {
+    container.style.display = 'none';
+    container.innerHTML = '';
+  }
+}
+
 window.openClaimModal = function(bountyId) {
   const select = document.getElementById('claimBountySelect');
   const bounties = (state.bseState?.bounties || []).filter(b => b.status === 'active');
@@ -1799,6 +2114,10 @@ window.openClaimModal = function(bountyId) {
       ${b.title} (+${b.rewardBones} ${currName})
     </option>
   `).join('');
+
+  select.onchange = () => {
+    renderClaimBonusesForBounty(select.value);
+  };
 
   // Completing Character Select
   const charSelect = document.getElementById('claimCharacterSelect');
@@ -1814,6 +2133,9 @@ window.openClaimModal = function(bountyId) {
   } else {
     charSelect.innerHTML = `<option value="">Unlinked (Add characters in your wallet)</option>`;
   }
+
+  const activeBountyId = bountyId || select.value;
+  renderClaimBonusesForBounty(activeBountyId);
 
   document.getElementById('claimProofUrl').value = '';
   document.getElementById('claimNotes').value = '';
@@ -1886,19 +2208,24 @@ function openRankPromoteModal(nextRank) {
 
   document.getElementById('btnConfirmRankPromoteExecute').disabled = !canAfford;
   document.getElementById('btnConfirmRankPromoteExecute').onclick = async () => {
-    const res = await fetch('/api/exchange/award', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        targetId: state.user.id,
-        amount: -nextRank.costBones,
-        reason: `Rank Promotion to ${nextRank.title}`
-      })
-    });
-    if (res.ok) {
-      showToast(`Promoted to ${nextRank.title}!`);
-      document.getElementById('modalRankPromote').classList.remove('active');
-      await refreshBseState();
+    try {
+      const res = await fetch('/api/exchange/promote', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          targetRankTier: nextRank.tier
+        })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        showToast(`Promoted to ${nextRank.title}!`);
+        document.getElementById('modalRankPromote').classList.remove('active');
+        await refreshBseState();
+      } else {
+        showToast(`Promotion failed: ${data.error || 'Server error'}`);
+      }
+    } catch (err) {
+      showToast(`Error: ${err.message}`);
     }
   };
 
@@ -2034,22 +2361,35 @@ function setupOfficerTools() {
     const rewardBones = document.getElementById('newBountyReward').value;
     const category = document.getElementById('newBountyCategory').value;
     const description = document.getElementById('newBountyDesc').value.trim();
+    const bonusDesc = document.getElementById('newBountyBonusDesc')?.value.trim() || '';
+    const bonusAmount = parseInt(document.getElementById('newBountyBonusAmount')?.value, 10) || 0;
 
     if (!title || !rewardBones) {
       showToast('Please enter bounty title and reward.');
       return;
     }
 
+    const bonuses = [];
+    if (bonusDesc && bonusAmount > 0) {
+      bonuses.push({
+        id: `bonus_${Date.now()}`,
+        description: bonusDesc,
+        bonusBones: bonusAmount
+      });
+    }
+
     const res = await fetch('/api/exchange/bounty/create', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title, rewardBones, category, description })
+      body: JSON.stringify({ title, rewardBones, category, description, bonuses })
     });
     if (res.ok) {
       showToast('Bounty created.');
       document.getElementById('newBountyTitle').value = '';
       document.getElementById('newBountyReward').value = '';
       document.getElementById('newBountyDesc').value = '';
+      if (document.getElementById('newBountyBonusDesc')) document.getElementById('newBountyBonusDesc').value = '';
+      if (document.getElementById('newBountyBonusAmount')) document.getElementById('newBountyBonusAmount').value = '';
       await refreshBseState();
     }
   });
@@ -2419,14 +2759,73 @@ function setupRaidMultiAward() {
 
 // Global officer queue handlers
 window.approveClaim = async function(claimId) {
+  // Collect any bonus checkboxes for this claim
+  const c = Object.values(state.bseState?.claims || {}).find(item => item.id === claimId);
+  const bounty = (state.bseState?.bounties || []).find(b => b.id === c?.bountyId);
+  const achievedBonusIds = [];
+  if (bounty?.bonuses) {
+    bounty.bonuses.forEach(bn => {
+      const chk = document.getElementById(`officer_claim_bonus_${claimId}_${bn.id}`);
+      if (chk && chk.checked) achievedBonusIds.push(bn.id);
+    });
+  }
+
   const res = await fetch('/api/exchange/claim/approve', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ claimId })
+    body: JSON.stringify({ claimId, achievedBonusIds })
   });
   if (res.ok) {
     showToast('Bounty claim approved.');
     await refreshBseState();
+  } else {
+    const err = await res.json();
+    showToast(`Approval failed: ${err.error || 'Server error'}`);
+  }
+};
+
+window.approveMemberBountyRequest = async function(bountyId) {
+  const bonusPrompt = prompt('Optional: Add extra Guild Treasury bonus Bones to this bounty (funded by guild treasury, 0 or blank for none):', '0');
+  if (bonusPrompt === null) return;
+  const officerBonusBones = parseInt(bonusPrompt.trim(), 10) || 0;
+
+  try {
+    const res = await fetch('/api/exchange/bounty/approve-request', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ bountyId, officerBonusBones })
+    });
+    const data = await res.json();
+    if (res.ok) {
+      showToast('Member bounty request approved and posted to the Bounty Board!');
+      await refreshBseState();
+    } else {
+      showToast(`Failed: ${data.error || 'Server error'}`);
+    }
+  } catch (err) {
+    showToast(`Error: ${err.message}`);
+  }
+};
+
+window.rejectMemberBountyRequest = async function(bountyId) {
+  const reason = prompt('Reason for denying this member bounty request (will 100% refund escrowed Bones to member):', 'Does not meet guild guidelines');
+  if (reason === null) return;
+
+  try {
+    const res = await fetch('/api/exchange/bounty/reject-request', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ bountyId, rejectReason: reason.trim() })
+    });
+    const data = await res.json();
+    if (res.ok) {
+      showToast('Bounty request rejected. Escrowed Bones refunded in full to member.');
+      await refreshBseState();
+    } else {
+      showToast(`Failed: ${data.error || 'Server error'}`);
+    }
+  } catch (err) {
+    showToast(`Error: ${err.message}`);
   }
 };
 

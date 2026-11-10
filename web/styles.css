@@ -1851,3 +1851,139 @@ textarea.form-control {
   border-color: var(--border-gold);
 }
 
+/* ==========================================================================
+   WoW Stone Modal & Quick Amount / Reason Chips
+   ========================================================================== */
+.wow-stone-modal {
+  border: 2px solid var(--border-gold);
+  box-shadow: inset 0 0 20px rgba(0, 0, 0, 0.9), 0 8px 32px rgba(0, 0, 0, 0.9);
+  background: radial-gradient(circle at 50% 0%, #1c202e 0%, #10121a 70%);
+}
+
+.bones-adjust-member-card {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  background: var(--bg-inner);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 0.75rem 1rem;
+  margin-bottom: 1rem;
+}
+
+.bones-adjust-avatar {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 2px solid var(--border-gold);
+  object-fit: cover;
+}
+
+.bones-adjust-mode-strip {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.bones-mode-btn {
+  flex: 1;
+  padding: 0.6rem;
+  font-family: var(--font-serif);
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  border: 1px solid var(--border-subtle);
+  background: #141722;
+  color: var(--text-muted);
+  transition: all 0.15s ease;
+}
+
+.bones-mode-btn.award.active {
+  background: linear-gradient(180deg, #1e4620, #0f2811);
+  border-color: #22c55e;
+  color: #86efac;
+  box-shadow: 0 0 10px rgba(34, 197, 94, 0.25);
+}
+
+.bones-mode-btn.deduct.active {
+  background: linear-gradient(180deg, #5c1d1d, #320d0d);
+  border-color: #ef4444;
+  color: #fca5a5;
+  box-shadow: 0 0 10px rgba(239, 68, 68, 0.25);
+}
+
+.quick-chips-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.quick-chip {
+  background: #171b26;
+  border: 1px solid var(--border-subtle);
+  color: var(--text-main);
+  padding: 0.35rem 0.65rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.quick-chip:hover {
+  border-color: var(--border-gold);
+  background: #23293a;
+  color: var(--gold-100);
+}
+
+.quick-chip.active {
+  background: #352b17;
+  border-color: var(--gold-300);
+  color: var(--gold-300);
+  box-shadow: 0 0 6px var(--border-glow);
+}
+
+.quick-chip.reason-chip {
+  font-size: 0.75rem;
+  padding: 0.25rem 0.55rem;
+}
+
+/* Bonus Objectives in Bounties */
+.bounty-bonuses-box {
+  margin-top: 0.6rem;
+  padding: 0.5rem 0.65rem;
+  background: rgba(14, 16, 23, 0.7);
+  border: 1px solid rgba(255, 209, 0, 0.2);
+  border-radius: var(--radius-sm);
+}
+
+.bounty-bonus-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  background: rgba(229, 169, 59, 0.12);
+  border: 1px solid rgba(229, 169, 59, 0.35);
+  color: var(--gold-100);
+  padding: 0.2rem 0.5rem;
+  border-radius: 3px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  margin-top: 0.3rem;
+  margin-right: 0.35rem;
+}
+
+.bounty-sponsor-tag {
+  display: inline-block;
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--blue);
+  background: rgba(56, 189, 248, 0.1);
+  border: 1px solid rgba(56, 189, 248, 0.3);
+  padding: 0.1rem 0.4rem;
+  border-radius: 3px;
+  margin-bottom: 0.35rem;
+}
+

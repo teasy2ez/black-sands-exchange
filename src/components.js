@@ -86,18 +86,17 @@ async function handleBountyApprove(interaction, claimId, env, firestore) {
   };
 
   wallet.spendableBones = (wallet.spendableBones || 0) + reward;
-  wallet.boneScore = (wallet.boneScore || 0) + reward; // Verified bounty adds to Bone Score
+  wallet.boneScore = (wallet.boneScore || 0) + reward; // Verified bounty adds to Career Bone Score
+  wallet.bountiesCompleted = (wallet.bountiesCompleted || 0) + 1; // Track member bounties completed
   wallet.updatedAt = new Date().toISOString();
   state.wallets[claim.discordId] = wallet;
 
-  // Check if member leveled up their rank automatically
-  const newRank = resolveRank(wallet.boneScore, state.ranks);
-  if (newRank.roleId && env.DISCORD_GUILD_ID && env.DISCORD_BOT_TOKEN) {
-    try {
-      await addGuildMemberRole(env.DISCORD_GUILD_ID, claim.discordId, newRank.roleId, env.DISCORD_BOT_TOKEN);
-    } catch (err) {
-      console.error('Role sync error:', err);
-    }
+  // If bounty was requested/sponsored by a member, increment their postedBountiesCompleted
+  const relatedBounty = (state.bounties || []).find(b => b.id === claim.bountyId);
+  if (relatedBounty?.creatorId && state.wallets[relatedBounty.creatorId]) {
+    const creatorWallet = state.wallets[relatedBounty.creatorId];
+    creatorWallet.postedBountiesCompleted = (creatorWallet.postedBountiesCompleted || 0) + 1;
+    creatorWallet.updatedAt = new Date().toISOString();
   }
 
   await recordAuditLogAndSync(state, env, firestore, {
