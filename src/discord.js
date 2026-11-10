@@ -209,7 +209,7 @@ export function buildWalletEmbed(userData, rankInfo) {
 }
 
 /**
- * Build Leaderboard embed (Top 10)
+ * Build Leaderboard embed (Top 25)
  */
 export function buildLeaderboardEmbed(topMembers = []) {
   let description = '';
@@ -224,15 +224,15 @@ export function buildLeaderboardEmbed(topMembers = []) {
       const spendable = (m.spendableBones || 0).toLocaleString();
       const score = (m.boneScore || 0).toLocaleString();
       const rank = m.rankTitle || 'Initiate';
-      return `${medal} **${name}**${charPart} ${handle} — **${spendable}** Spendable Bones (${score} Score) • *${rank}*`;
+      return `${medal} **${name}**${charPart} ${handle} — **${spendable}** Bones (${score} Bone Score) • *${rank}*`;
     }).join('\n');
   }
 
   return {
-    title: '🏆 Black Sands Exchange — Top Roster Standings',
+    title: '🏆 Black Sands Exchange — Top 25 Standings',
     description,
     color: Colors.GOLD,
-    footer: { text: 'Live standings updated in real time • bse.teasy2ez.win' },
+    footer: { text: 'Top 25 Standings • Live updates • bse.teasy2ez.win' },
     timestamp: new Date().toISOString()
   };
 }
@@ -429,12 +429,12 @@ export async function pushStandingsToDiscord(env, firestore, state) {
       if (diffSpendable !== 0) return diffSpendable;
       return (b.boneScore || 0) - (a.boneScore || 0);
     });
-    const top10 = activeMembers.slice(0, 10).map(m => ({
+    const top25 = activeMembers.slice(0, 25).map(m => ({
       ...m,
       rankTitle: resolveRank(m.boneScore, state.ranks, m.rankTier).title
     }));
 
-    const lbEmbed = buildLeaderboardEmbed(top10);
+    const lbEmbed = buildLeaderboardEmbed(top25);
     const bountiesEmbed = buildBountiesEmbed(state.bounties || []);
     const shopEmbed = buildShopEmbed(state.shop || []);
     const config = state.config || {};

@@ -182,7 +182,7 @@ const commands = [
   },
   {
     name: 'sync-standings',
-    description: 'Force refresh all pinned dashboard embeds in #exchange-standings (Officers Only)',
+    description: 'Force refresh all pinned dashboard embeds in #the-exchange (Officers Only)',
     default_member_permissions: MANAGE_GUILD_PERMISSION
   }
 ];

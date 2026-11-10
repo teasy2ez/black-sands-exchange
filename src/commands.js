@@ -10,7 +10,8 @@ import {
   sendChannelMessage,
   editChannelMessage,
   addGuildMemberRole,
-  recordAuditLogAndSync
+  recordAuditLogAndSync,
+  pushStandingsToDiscord
 } from './discord.js';
 
 /**
@@ -142,12 +143,12 @@ async function handleLeaderboardCommand(interaction, env, firestore) {
     if (diffSpendable !== 0) return diffSpendable;
     return (b.boneScore || 0) - (a.boneScore || 0);
   });
-  const top10 = activeMembers.slice(0, 10).map(m => ({
+  const top25 = activeMembers.slice(0, 25).map(m => ({
     ...m,
     rankTitle: resolveRank(m.boneScore, state.ranks, m.rankTier).title
   }));
 
-  const embed = buildLeaderboardEmbed(top10);
+  const embed = buildLeaderboardEmbed(top25);
   return {
     type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
     data: { embeds: [embed] }
@@ -496,7 +497,7 @@ async function handleDeductCommand(interaction, opts, env, firestore) {
 }
 
 /**
- * /sync-standings (Officer only) - Edit pinned embeds in #exchange-standings in place
+ * /sync-standings (Officer only) - Edit pinned embeds in #the-exchange in place
  */
 async function handleSyncStandingsCommand(interaction, env, firestore) {
   if (!isOfficer(interaction, env)) {
@@ -515,46 +516,15 @@ async function handleSyncStandingsCommand(interaction, env, firestore) {
 
   const state = await firestore.getBseState();
   const channelId = env.DISCORD_STANDINGS_CHANNEL_ID;
-  const token = env.DISCORD_BOT_TOKEN;
 
-  // Build Leaderboard top 10
-  const members = Object.values(state.wallets || {});
-  members.sort((a, b) => (b.boneScore || b.spendableBones || 0) - (a.boneScore || a.spendableBones || 0));
-  const top10 = members.slice(0, 10).map(m => ({
-    ...m,
-    rankTitle: resolveRank(m.boneScore, state.ranks).title
-  }));
-  const lbEmbed = buildLeaderboardEmbed(top10);
-  const bountiesEmbed = buildBountiesEmbed(state.bounties || []);
-  const shopEmbed = buildShopEmbed(state.shop || []);
-
-  const config = state.config || {};
-
-  // Edit in-place or send new pinned message
   try {
-    if (config.standingsMessageId) {
-      await editChannelMessage(channelId, config.standingsMessageId, { embeds: [lbEmbed] }, token);
-    } else {
-      const msg = await sendChannelMessage(channelId, { embeds: [lbEmbed] }, token);
-      config.standingsMessageId = msg.id;
+    const ok = await pushStandingsToDiscord(env, firestore, state);
+    if (ok === false) {
+      return {
+        type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+        data: { content: '❌ Failed to push standings to Discord. Check channel permissions.', flags: 64 }
+      };
     }
-
-    if (config.bountiesMessageId) {
-      await editChannelMessage(channelId, config.bountiesMessageId, { embeds: [bountiesEmbed] }, token);
-    } else {
-      const msg = await sendChannelMessage(channelId, { embeds: [bountiesEmbed] }, token);
-      config.bountiesMessageId = msg.id;
-    }
-
-    if (config.shopMessageId) {
-      await editChannelMessage(channelId, config.shopMessageId, { embeds: [shopEmbed] }, token);
-    } else {
-      const msg = await sendChannelMessage(channelId, { embeds: [shopEmbed] }, token);
-      config.shopMessageId = msg.id;
-    }
-
-    state.config = config;
-    await firestore.saveBseState(state);
 
     return {
       type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,

@@ -20,6 +20,21 @@ const state = {
   officerLeaderboardFilter: 'active'
 };
 
+// Helper: Safely generate Discord CDN avatar URLs with power-of-2 sizes and fallback
+function getDiscordAvatarUrl(discordId, avatarHash, size = 128) {
+  const validSize = [16, 32, 64, 128, 256, 512].includes(size) ? size : 128;
+  if (avatarHash) {
+    return `https://cdn.discordapp.com/avatars/${discordId}/${avatarHash}.png?size=${validSize}`;
+  }
+  if (discordId) {
+    try {
+      const idx = Number((BigInt(discordId) >> 22n) % 6n);
+      return `https://cdn.discordapp.com/embed/avatars/${Math.max(0, idx)}.png`;
+    } catch (_) {}
+  }
+  return 'assets/favicon.svg';
+}
+
 // DOM Elements
 const authContainer = document.getElementById('authContainer');
 const discordLoginBtn = document.getElementById('discordLoginBtn');
@@ -180,15 +195,15 @@ function renderAuthenticatedUser(user) {
   discordLoginBtn.style.display = 'none';
   userProfileBadge.style.display = 'flex';
 
-  const avatarUrl = user.avatar
-    ? `https://cdn.discordapp.com/avatars/${user.id}/${user.avatar}.png?size=64`
-    : 'assets/favicon.svg';
+  const avatarUrl = getDiscordAvatarUrl(user.id, user.avatar, 64);
 
   headerAvatar.src = avatarUrl;
+  headerAvatar.onerror = () => { headerAvatar.src = 'assets/favicon.svg'; };
   headerDisplayName.textContent = user.serverNickname || user.globalName || user.username;
   headerRoleBadge.textContent = user.isOfficer ? 'Guild Officer' : 'Guild Member';
 
   walletAvatar.src = avatarUrl;
+  walletAvatar.onerror = () => { walletAvatar.src = 'assets/favicon.svg'; };
   walletName.textContent = user.serverNickname || user.globalName || user.username;
   walletHandle.textContent = `@${user.username}`;
   walletSpendable.textContent = (user.spendableBones || 0).toLocaleString();
@@ -519,9 +534,7 @@ function renderLeaderboard() {
 
     const name = w.serverNickname || w.globalName || w.username || 'Guild Member';
     const handle = w.username ? `@${w.username}` : '';
-    const avatarUrl = w.avatarHash
-      ? `https://cdn.discordapp.com/avatars/${w.discordId}/${w.avatarHash}.png?size=32`
-      : 'assets/favicon.svg';
+    const avatarUrl = getDiscordAvatarUrl(w.discordId, w.avatarHash, 64);
 
     const rankTitle = resolveRankTitle(w.boneScore);
 
@@ -562,7 +575,7 @@ function renderLeaderboard() {
         <td class="table-rank-cell">${rankDisplay}</td>
         <td>
           <div class="member-cell">
-            <img src="${avatarUrl}" class="table-avatar" alt="${name}">
+            <img src="${avatarUrl}" class="table-avatar" alt="${escapeAttr(name)}" onerror="this.onerror=null;this.src='assets/favicon.svg';">
             <div>
               <div style="font-weight: 700; color: var(--gold-100); display: flex; align-items: center; flex-wrap: wrap;">
                 ${name} ${statusBadge}
@@ -590,9 +603,7 @@ function renderLeaderboard() {
       const rankNum = (!isHidden && !isZero) ? `#${mobCounter++}` : '—';
 
       const name = w.serverNickname || w.globalName || w.username || 'Guild Member';
-      const avatarUrl = w.avatarHash
-        ? `https://cdn.discordapp.com/avatars/${w.discordId}/${w.avatarHash}.png?size=48`
-        : 'assets/favicon.svg';
+      const avatarUrl = getDiscordAvatarUrl(w.discordId, w.avatarHash, 64);
 
       const chars = w.characters || [];
       const primChar = chars.find(c => c.isPrimary) || (w.primaryCharacter ? chars.find(c => c.name === w.primaryCharacter) : chars[0]);
@@ -619,7 +630,7 @@ function renderLeaderboard() {
         <div class="${cardClass}" onclick="inspectMemberProfile('${w.discordId}')">
           <div style="display: flex; align-items: center; gap: 0.75rem;">
             <div class="mobile-roster-rank">${rankNum}</div>
-            <img src="${avatarUrl}" class="mobile-roster-avatar" alt="${name}">
+            <img src="${avatarUrl}" class="mobile-roster-avatar" alt="${escapeAttr(name)}" onerror="this.onerror=null;this.src='assets/favicon.svg';">
             <div class="mobile-roster-info">
               <div class="mobile-roster-name" style="display: flex; align-items: center; flex-wrap: wrap;">
                 ${name} ${statusBadge}
@@ -652,9 +663,7 @@ window.inspectMemberProfile = function(discordId) {
 
   const name = w.serverNickname || w.globalName || w.username || 'Guild Member';
   const handle = w.username ? `@${w.username}` : '';
-  const avatarUrl = w.avatarHash
-    ? `https://cdn.discordapp.com/avatars/${w.discordId}/${w.avatarHash}.png?size=72`
-    : 'assets/favicon.svg';
+  const avatarUrl = getDiscordAvatarUrl(w.discordId, w.avatarHash, 128);
   const rankTitle = resolveRankTitle(w.rankTier || 0);
   const chars = w.characters || [];
 
@@ -700,7 +709,7 @@ window.inspectMemberProfile = function(discordId) {
   const modalBody = document.getElementById('memberProfileModalBody');
   modalBody.innerHTML = `
     <div class="member-profile-header">
-      <img src="${avatarUrl}" class="member-profile-avatar" alt="${name}">
+      <img src="${avatarUrl}" class="member-profile-avatar" alt="${escapeAttr(name)}" onerror="this.onerror=null;this.src='assets/favicon.svg';">
       <div>
         <h3 style="color: var(--gold-100); font-size: 1.3rem; margin-bottom: 0.15rem;">${name}</h3>
         <div style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.5rem;">${handle} &bull; <span class="card-badge economy">${rankTitle}</span></div>
@@ -1016,9 +1025,8 @@ window.openBonesAdjustModal = function(userId, memberName, initialMode = 'award'
   // Header profile card
   const avatarEl = document.getElementById('bonesAdjustAvatar');
   if (avatarEl) {
-    avatarEl.src = wallet.avatarHash
-      ? `https://cdn.discordapp.com/avatars/${userId}/${wallet.avatarHash}.png?size=64`
-      : 'assets/favicon.svg';
+    avatarEl.src = getDiscordAvatarUrl(userId, wallet.avatarHash, 128);
+    avatarEl.onerror = () => { avatarEl.src = 'assets/favicon.svg'; };
   }
   const nameEl = document.getElementById('bonesAdjustName');
   if (nameEl) nameEl.textContent = memberName;

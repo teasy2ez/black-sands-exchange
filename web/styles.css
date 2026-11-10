@@ -875,6 +875,9 @@ body {
   height: 32px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border-gold);
+  object-fit: cover;
+  background: var(--bg-primary);
+  display: block;
 }
 
 .member-cell {
@@ -938,6 +941,9 @@ body {
   border-radius: var(--radius-sm);
   border: 1px solid var(--border-gold);
   flex-shrink: 0;
+  object-fit: cover;
+  background: var(--bg-primary);
+  display: block;
 }
 
 .mobile-roster-info {
@@ -1410,6 +1416,9 @@ textarea.form-control {
   border-radius: var(--radius-sm);
   border: 2px solid var(--border-gold);
   flex-shrink: 0;
+  object-fit: cover;
+  background: var(--bg-primary);
+  display: block;
 }
 
 .guild-note-card {

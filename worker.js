@@ -1569,58 +1569,12 @@ async function handleSyncStandingsApi(request, env, firestore) {
   }
 
   const state = await firestore.getBseState();
-  const channelId = env.DISCORD_STANDINGS_CHANNEL_ID;
-  const token = env.DISCORD_BOT_TOKEN;
-
-  const members = Object.values(state.wallets || {}).filter(m => {
-    if (m.officerHidden) return false;
-    const total = (m.boneScore || 0) + (m.spendableBones || 0);
-    return total > 0;
-  });
-  members.sort((a, b) => {
-    const diffSpendable = (b.spendableBones || 0) - (a.spendableBones || 0);
-    if (diffSpendable !== 0) return diffSpendable;
-    return (b.boneScore || 0) - (a.boneScore || 0);
-  });
-  const top10 = members.slice(0, 10).map(m => ({
-    ...m,
-    rankTitle: resolveRank(m.boneScore, state.ranks, m.rankTier).title
-  }));
-
-  const lbEmbed = buildLeaderboardEmbed(top10);
-  const bountiesEmbed = buildBountiesEmbed(state.bounties || []);
-  const shopEmbed = buildShopEmbed(state.shop || []);
-  const config = state.config || {};
-
-  try {
-    if (config.standingsMessageId) {
-      await editChannelMessage(channelId, config.standingsMessageId, { embeds: [lbEmbed] }, token);
-    } else {
-      const msg = await sendChannelMessage(channelId, { embeds: [lbEmbed] }, token);
-      config.standingsMessageId = msg.id;
-    }
-
-    if (config.bountiesMessageId) {
-      await editChannelMessage(channelId, config.bountiesMessageId, { embeds: [bountiesEmbed] }, token);
-    } else {
-      const msg = await sendChannelMessage(channelId, { embeds: [bountiesEmbed] }, token);
-      config.bountiesMessageId = msg.id;
-    }
-
-    if (config.shopMessageId) {
-      await editChannelMessage(channelId, config.shopMessageId, { embeds: [shopEmbed] }, token);
-    } else {
-      const msg = await sendChannelMessage(channelId, { embeds: [shopEmbed] }, token);
-      config.shopMessageId = msg.id;
-    }
-
-    state.config = config;
-    await firestore.saveBseState(state);
-
-    return jsonResponse({ success: true, message: 'Standings embeds refreshed in-place' });
-  } catch (err) {
-    return jsonResponse({ error: err.message }, 500);
+  const ok = await pushStandingsToDiscord(env, firestore, state);
+  if (ok === false) {
+    return jsonResponse({ error: 'Failed to push standings to Discord channel' }, 500);
   }
+
+  return jsonResponse({ success: true, message: 'Standings embeds refreshed in-place in #the-exchange' });
 }
 
 /**
