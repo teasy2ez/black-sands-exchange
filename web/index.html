@@ -308,6 +308,9 @@
         <button class="officer-subtab" data-subtab="audit">
           Live Audit Trail
         </button>
+        <button class="officer-subtab" data-subtab="discord-channels">
+          Discord Channels
+        </button>
       </div>
 
       <!-- Officer Subtab 1: Pending Claims Queue -->
@@ -431,6 +434,45 @@
                 <input type="number" class="form-control" id="newBountyBonusAmount" min="0" placeholder="+ Extra Bones (e.g. 15)">
               </div>
             </div>
+            <!-- Discord Broadcast & Scheduled Guild Event Section -->
+            <div class="wow-inner-box" style="padding: 0.85rem; margin-bottom: 1rem; border-color: rgba(198, 155, 109, 0.4);">
+              <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; font-weight: 700; color: var(--gold-300); margin-bottom: 0;">
+                <input type="checkbox" id="bountyAnnounceToggle" style="accent-color: var(--gold-500); width: 16px; height: 16px;">
+                <span>Broadcast Announcement &amp; Create Discord Guild Event</span>
+              </label>
+
+              <div id="bountyAnnounceFields" style="display: none; margin-top: 0.75rem; border-top: 1px dashed rgba(198, 155, 109, 0.25); padding-top: 0.75rem;">
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0.75rem; margin-bottom: 0.75rem;">
+                  <div class="form-group" style="margin-bottom: 0;">
+                    <label style="font-size: 0.8rem;">Announcement Channel</label>
+                    <select class="form-control" id="bountyAnnounceChannel">
+                      <option value="">Default (Configured Announcements Channel)</option>
+                    </select>
+                  </div>
+                  <div class="form-group" style="margin-bottom: 0;">
+                    <label style="font-size: 0.8rem;">Mention / Ping</label>
+                    <select class="form-control" id="bountyAnnounceMention">
+                      <option value="everyone">@everyone (Alerts All Members)</option>
+                      <option value="here">@here (Online Members Only)</option>
+                      <option value="none">None (Silent Post)</option>
+                    </select>
+                  </div>
+                  <div class="form-group" style="margin-bottom: 0;">
+                    <label style="font-size: 0.8rem;">Event Start Time</label>
+                    <input type="datetime-local" class="form-control" id="bountyEventStart">
+                  </div>
+                  <div class="form-group" style="margin-bottom: 0;">
+                    <label style="font-size: 0.8rem;">Event End Time</label>
+                    <input type="datetime-local" class="form-control" id="bountyEventEnd">
+                  </div>
+                </div>
+                <div class="form-group" style="margin-bottom: 0;">
+                  <label style="font-size: 0.8rem;">In-Game Location (for Discord Event)</label>
+                  <input type="text" class="form-control" id="bountyEventLocation" placeholder="e.g. Azeroth / Black Sands Exchange" value="Azeroth / Black Sands Exchange">
+                </div>
+              </div>
+            </div>
+
             <button class="btn-primary" id="btnCreateBounty" style="max-width: 200px;">Create Bounty</button>
           </div>
 
@@ -587,6 +629,69 @@
             </thead>
             <tbody id="auditTrailTbody"></tbody>
           </table>
+        </div>
+      </div>
+
+      <!-- Officer Subtab 8: Discord Channels Routing & Embed Controls -->
+      <div class="officer-subview" id="subview-discord-channels">
+        <div class="section-header">
+          <div>
+            <h4 style="color: var(--gold-100);">Discord Channel Routing &amp; Embed Controls</h4>
+            <p style="font-size: 0.8rem; color: var(--text-muted);">Assign dedicated text channels for the Leaderboard, Bounty Board, Shop, and Announcements. Pinned embeds will update in real-time.</p>
+          </div>
+          <button class="btn-primary" id="btnRefreshDiscordChannelsList" title="Fetch latest text channels from Discord guild">
+            Refresh Channels
+          </button>
+        </div>
+
+        <div class="officer-dashboard-grid">
+          <div class="officer-box">
+            <h4>Channel Routing Configuration</h4>
+            <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 1rem;">Select target Discord text channels from your server:</p>
+
+            <div class="form-group">
+              <label>🏆 Standings / Leaderboard Channel</label>
+              <select class="form-control" id="channelSelectLeaderboard">
+                <option value="">Loading channels...</option>
+              </select>
+              <small style="color: var(--text-muted); font-size: 0.75rem;">Embed displaying the Top 25 Standings sorted by Spendable Bones</small>
+            </div>
+
+            <div class="form-group">
+              <label>📜 Bounty Board Channel</label>
+              <select class="form-control" id="channelSelectBounties">
+                <option value="">Loading channels...</option>
+              </select>
+              <small style="color: var(--text-muted); font-size: 0.75rem;">Embed displaying active bounties, rewards, and bonuses</small>
+            </div>
+
+            <div class="form-group">
+              <label>🛒 Exchange Shop Channel</label>
+              <select class="form-control" id="channelSelectShop">
+                <option value="">Loading channels...</option>
+              </select>
+              <small style="color: var(--text-muted); font-size: 0.75rem;">Embed displaying redeemable guild perks and store items</small>
+            </div>
+
+            <div class="form-group">
+              <label>📢 Announcements Channel (for @everyone Bounty Pings)</label>
+              <select class="form-control" id="channelSelectAnnouncements">
+                <option value="">None / Unassigned</option>
+              </select>
+              <small style="color: var(--text-muted); font-size: 0.75rem;">Channel notified when bounties are broadcasted with @everyone ping and Discord Event</small>
+            </div>
+
+            <div style="display: flex; gap: 0.5rem; margin-top: 1.25rem;">
+              <button class="btn-primary" id="btnSaveDiscordChannels" style="flex: 1;">Save &amp; Relocate Pinned Embeds</button>
+            </div>
+          </div>
+
+          <div class="officer-box">
+            <h4>Live Embed Status &amp; Diagnostics</h4>
+            <div id="discordEmbedStatusList" style="display: flex; flex-direction: column; gap: 0.75rem; font-size: 0.85rem; margin-top: 0.5rem;">
+              <!-- Dynamically populated by app.js -->
+            </div>
+          </div>
         </div>
       </div>
 

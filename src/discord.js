@@ -117,6 +117,78 @@ export async function editChannelMessage(channelId, messageId, payload, botToken
 }
 
 /**
+ * Delete a message from a Discord channel
+ */
+export async function deleteChannelMessage(channelId, messageId, botToken) {
+  return discordFetch(`/channels/${channelId}/messages/${messageId}`, {
+    method: 'DELETE'
+  }, botToken);
+}
+
+/**
+ * Fetch all guild channels
+ */
+export async function getGuildChannels(guildId, botToken) {
+  return discordFetch(`/guilds/${guildId}/channels`, {
+    method: 'GET'
+  }, botToken);
+}
+
+/**
+ * Create a Discord Guild Scheduled Event
+ */
+export async function createDiscordScheduledEvent(guildId, eventData, botToken) {
+  return discordFetch(`/guilds/${guildId}/scheduled-events`, {
+    method: 'POST',
+    body: JSON.stringify({
+      privacy_level: 2, // GUILD_ONLY
+      ...eventData
+    })
+  }, botToken);
+}
+
+/**
+ * Update a Discord Guild Scheduled Event
+ */
+export async function updateDiscordScheduledEvent(guildId, eventId, updateData, botToken) {
+  return discordFetch(`/guilds/${guildId}/scheduled-events/${eventId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(updateData)
+  }, botToken);
+}
+
+/**
+ * Delete a Discord Guild Scheduled Event
+ */
+export async function deleteDiscordScheduledEvent(guildId, eventId, botToken) {
+  return discordFetch(`/guilds/${guildId}/scheduled-events/${eventId}`, {
+    method: 'DELETE'
+  }, botToken);
+}
+
+/**
+ * List Discord Guild Scheduled Events
+ */
+export async function getDiscordScheduledEvents(guildId, botToken) {
+  return discordFetch(`/guilds/${guildId}/scheduled-events`, {
+    method: 'GET'
+  }, botToken);
+}
+
+/**
+ * Send an announcement message with allowed mentions (e.g. @everyone)
+ */
+export async function sendAnnouncementMessage(channelId, { content, embeds, components, allowedMentions }, botToken) {
+  return sendChannelMessage(channelId, {
+    content: content || '',
+    embeds: embeds || [],
+    components: components || [],
+    allowed_mentions: allowedMentions || { parse: ['everyone', 'roles', 'users'] }
+  }, botToken);
+}
+
+
+/**
  * Fetch a guild member
  */
 export async function getGuildMember(guildId, userId, botToken) {
@@ -411,14 +483,33 @@ export function recordTransaction(state, entry) {
 }
 
 /**
- * Automatically update in-place leaderboard, bounties, and shop embeds in Discord
+ * Resolve configured channel IDs with environment fallbacks
  */
-export async function pushStandingsToDiscord(env, firestore, state) {
-  if (!env.DISCORD_STANDINGS_CHANNEL_ID || !env.DISCORD_BOT_TOKEN) return false;
-  try {
-    const channelId = env.DISCORD_STANDINGS_CHANNEL_ID;
-    const token = env.DISCORD_BOT_TOKEN;
+export function getChannelRouting(env, state) {
+  const config = state.config || {};
+  const channels = config.channels || {};
+  const defaultStandings = env.DISCORD_STANDINGS_CHANNEL_ID;
 
+  return {
+    leaderboardChannelId: channels.leaderboardChannelId || defaultStandings,
+    bountiesChannelId: channels.bountiesChannelId || channels.leaderboardChannelId || defaultStandings,
+    shopChannelId: channels.shopChannelId || channels.leaderboardChannelId || defaultStandings,
+    announcementsChannelId: channels.announcementsChannelId || null,
+    feedChannelId: channels.feedChannelId || env.DISCORD_FEED_CHANNEL_ID,
+    officerChannelId: channels.officerChannelId || env.DISCORD_OFFICER_CHANNEL_ID
+  };
+}
+
+/**
+ * Sync the Top 25 Standings / Leaderboard embed in its designated channel
+ */
+export async function syncLeaderboardEmbed(env, firestore, state) {
+  const token = env.DISCORD_BOT_TOKEN;
+  const routing = getChannelRouting(env, state);
+  const channelId = routing.leaderboardChannelId;
+  if (!channelId || !token) return false;
+
+  try {
     const activeMembers = Object.values(state.wallets || {}).filter(m => {
       if (m.officerHidden) return false;
       const total = (m.boneScore || 0) + (m.spendableBones || 0);
@@ -435,38 +526,138 @@ export async function pushStandingsToDiscord(env, firestore, state) {
     }));
 
     const lbEmbed = buildLeaderboardEmbed(top25);
-    const bountiesEmbed = buildBountiesEmbed(state.bounties || []);
-    const shopEmbed = buildShopEmbed(state.shop || []);
     const config = state.config || {};
+    config.messages = config.messages || {};
+    const messageId = config.messages.leaderboardMessageId || config.standingsMessageId;
 
-    if (config.standingsMessageId) {
-      await editChannelMessage(channelId, config.standingsMessageId, { embeds: [lbEmbed] }, token);
-    } else {
+    let updated = false;
+    if (messageId) {
+      try {
+        await editChannelMessage(channelId, messageId, { embeds: [lbEmbed] }, token);
+        config.messages.leaderboardMessageId = messageId;
+        config.standingsMessageId = messageId;
+        updated = true;
+      } catch (err) {
+        console.warn('Could not edit existing leaderboard embed, posting fresh:', err.message);
+      }
+    }
+
+    if (!updated) {
       const msg = await sendChannelMessage(channelId, { embeds: [lbEmbed] }, token);
+      config.messages.leaderboardMessageId = msg.id;
       config.standingsMessageId = msg.id;
     }
 
-    if (config.bountiesMessageId) {
-      await editChannelMessage(channelId, config.bountiesMessageId, { embeds: [bountiesEmbed] }, token);
-    } else {
+    state.config = config;
+    if (firestore) {
+      await firestore.saveBseState(state);
+    }
+    return true;
+  } catch (err) {
+    console.error('Error syncing leaderboard embed to Discord:', err);
+    return false;
+  }
+}
+
+/**
+ * Sync the Active Bounties embed in its designated channel
+ */
+export async function syncBountiesEmbed(env, firestore, state) {
+  const token = env.DISCORD_BOT_TOKEN;
+  const routing = getChannelRouting(env, state);
+  const channelId = routing.bountiesChannelId;
+  if (!channelId || !token) return false;
+
+  try {
+    const bountiesEmbed = buildBountiesEmbed(state.bounties || []);
+    const config = state.config || {};
+    config.messages = config.messages || {};
+    const messageId = config.messages.bountiesMessageId || config.bountiesMessageId;
+
+    let updated = false;
+    if (messageId) {
+      try {
+        await editChannelMessage(channelId, messageId, { embeds: [bountiesEmbed] }, token);
+        config.messages.bountiesMessageId = messageId;
+        config.bountiesMessageId = messageId;
+        updated = true;
+      } catch (err) {
+        console.warn('Could not edit existing bounties embed, posting fresh:', err.message);
+      }
+    }
+
+    if (!updated) {
       const msg = await sendChannelMessage(channelId, { embeds: [bountiesEmbed] }, token);
+      config.messages.bountiesMessageId = msg.id;
       config.bountiesMessageId = msg.id;
     }
 
-    if (config.shopMessageId) {
-      await editChannelMessage(channelId, config.shopMessageId, { embeds: [shopEmbed] }, token);
-    } else {
+    state.config = config;
+    if (firestore) {
+      await firestore.saveBseState(state);
+    }
+    return true;
+  } catch (err) {
+    console.error('Error syncing bounties embed to Discord:', err);
+    return false;
+  }
+}
+
+/**
+ * Sync the Exchange Shop embed in its designated channel
+ */
+export async function syncShopEmbed(env, firestore, state) {
+  const token = env.DISCORD_BOT_TOKEN;
+  const routing = getChannelRouting(env, state);
+  const channelId = routing.shopChannelId;
+  if (!channelId || !token) return false;
+
+  try {
+    const shopEmbed = buildShopEmbed(state.shop || []);
+    const config = state.config || {};
+    config.messages = config.messages || {};
+    const messageId = config.messages.shopMessageId || config.shopMessageId;
+
+    let updated = false;
+    if (messageId) {
+      try {
+        await editChannelMessage(channelId, messageId, { embeds: [shopEmbed] }, token);
+        config.messages.shopMessageId = messageId;
+        config.shopMessageId = messageId;
+        updated = true;
+      } catch (err) {
+        console.warn('Could not edit existing shop embed, posting fresh:', err.message);
+      }
+    }
+
+    if (!updated) {
       const msg = await sendChannelMessage(channelId, { embeds: [shopEmbed] }, token);
+      config.messages.shopMessageId = msg.id;
       config.shopMessageId = msg.id;
     }
 
     state.config = config;
-    await firestore.saveBseState(state);
+    if (firestore) {
+      await firestore.saveBseState(state);
+    }
     return true;
   } catch (err) {
-    console.error('Error auto-syncing standings to Discord:', err);
+    console.error('Error syncing shop embed to Discord:', err);
     return false;
   }
+}
+
+/**
+ * Update all 3 embeds (Leaderboard, Bounties, Shop) across designated channels
+ */
+export async function pushStandingsToDiscord(env, firestore, state) {
+  const ok1 = await syncLeaderboardEmbed(env, null, state);
+  const ok2 = await syncBountiesEmbed(env, null, state);
+  const ok3 = await syncShopEmbed(env, null, state);
+  if (firestore) {
+    await firestore.saveBseState(state);
+  }
+  return ok1 || ok2 || ok3;
 }
 
 /**
@@ -483,10 +674,11 @@ export async function recordAuditLogAndSync(state, env, firestore, entry) {
   }
 
   try {
-    await pushStandingsToDiscord(env, firestore, state);
+    await syncLeaderboardEmbed(env, firestore, state);
   } catch (err) {
-    console.error('Failed auto-syncing standings to Discord:', err);
+    console.error('Failed auto-syncing leaderboard to Discord:', err);
   }
+
 
   // Optional feed notification
   if (entry.notifyFeed !== false && env.DISCORD_FEED_CHANNEL_ID && env.DISCORD_BOT_TOKEN) {

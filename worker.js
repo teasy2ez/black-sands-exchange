@@ -15,7 +15,16 @@ import {
   Colors,
   recordTransaction,
   pushStandingsToDiscord,
-  recordAuditLogAndSync
+  recordAuditLogAndSync,
+  getGuildChannels,
+  createDiscordScheduledEvent,
+  updateDiscordScheduledEvent,
+  deleteDiscordScheduledEvent,
+  sendAnnouncementMessage,
+  syncLeaderboardEmbed,
+  syncBountiesEmbed,
+  syncShopEmbed,
+  getChannelRouting
 } from './src/discord.js';
 import { FirestoreClient } from './src/firestore.js';
 import { handleApplicationCommand, resolveRank } from './src/commands.js';
@@ -1227,16 +1236,100 @@ async function handleExchangeApi(url, request, env, firestore) {
     });
   }
 
+  // GET Discord Guild Channels (Text channels for routing)
+  if (path === 'discord/channels' && request.method === 'GET') {
+    if (!env.DISCORD_BOT_TOKEN || !env.DISCORD_GUILD_ID) {
+      return jsonResponse({ error: 'Missing Discord Bot Token or Guild ID' }, 400);
+    }
+    try {
+      const channels = await getGuildChannels(env.DISCORD_GUILD_ID, env.DISCORD_BOT_TOKEN);
+      if (!Array.isArray(channels)) {
+        return jsonResponse({ error: 'Failed to fetch Discord channels' }, 500);
+      }
+      const textChannels = channels
+        .filter(c => c.type === 0)
+        .sort((a, b) => (a.position || 0) - (b.position || 0))
+        .map(c => ({ id: c.id, name: c.name, parentId: c.parent_id }));
+      return jsonResponse({ channels: textChannels });
+    } catch (err) {
+      return jsonResponse({ error: err.message }, 500);
+    }
+  }
+
+  // POST Update Discord Channel Routing
+  if (path === 'discord/channels/update' && request.method === 'POST') {
+    const { leaderboardChannelId, bountiesChannelId, shopChannelId, announcementsChannelId } = body;
+    const state = await firestore.getBseState();
+    state.config = state.config || {};
+    state.config.channels = state.config.channels || {};
+    state.config.messages = state.config.messages || {};
+
+    const oldChannels = { ...state.config.channels };
+
+    if (leaderboardChannelId !== undefined) {
+      if (oldChannels.leaderboardChannelId && oldChannels.leaderboardChannelId !== leaderboardChannelId) {
+        delete state.config.messages.leaderboardMessageId;
+        delete state.config.standingsMessageId;
+      }
+      state.config.channels.leaderboardChannelId = leaderboardChannelId;
+    }
+
+    if (bountiesChannelId !== undefined) {
+      if (oldChannels.bountiesChannelId && oldChannels.bountiesChannelId !== bountiesChannelId) {
+        delete state.config.messages.bountiesMessageId;
+        delete state.config.bountiesMessageId;
+      }
+      state.config.channels.bountiesChannelId = bountiesChannelId;
+    }
+
+    if (shopChannelId !== undefined) {
+      if (oldChannels.shopChannelId && oldChannels.shopChannelId !== shopChannelId) {
+        delete state.config.messages.shopMessageId;
+        delete state.config.shopMessageId;
+      }
+      state.config.channels.shopChannelId = shopChannelId;
+    }
+
+    if (announcementsChannelId !== undefined) {
+      state.config.channels.announcementsChannelId = announcementsChannelId || null;
+    }
+
+    await firestore.saveBseState(state);
+
+    // Re-push embeds to the assigned channels
+    const ok = await pushStandingsToDiscord(env, firestore, state);
+
+    return jsonResponse({
+      success: true,
+      channels: state.config.channels,
+      messages: state.config.messages,
+      syncSuccess: ok !== false
+    });
+  }
+
   // POST Push Standings to Discord
   if (path === 'push-discord-standings' && request.method === 'POST') {
     const state = await firestore.getBseState();
     const ok = await pushStandingsToDiscord(env, firestore, state);
-    return jsonResponse({ success: ok !== false, message: 'Standings pushed to Discord' });
+    return jsonResponse({ success: ok !== false, message: 'Standings pushed to Discord channels' });
   }
 
-  // POST Create Bounty
+  // POST Create Bounty (with optional Discord Announcement & Guild Scheduled Event)
   if (path === 'bounty/create' && request.method === 'POST') {
-    const { title, rewardBones, description, category, bonuses } = body;
+    const {
+      title,
+      rewardBones,
+      description,
+      category,
+      bonuses,
+      announce,
+      announceChannelId,
+      mentionType,
+      eventStartTime,
+      eventEndTime,
+      eventLocation
+    } = body;
+
     const state = await firestore.getBseState();
     const parsedBonuses = Array.isArray(bonuses) ? bonuses.map((b, idx) => ({
       id: b.id || `bonus_${Date.now()}_${idx}`,
@@ -1254,9 +1347,124 @@ async function handleExchangeApi(url, request, env, firestore) {
       bonuses: parsedBonuses,
       createdAt: new Date().toISOString()
     };
+
+    // If requested, create Discord Guild Scheduled Event & Broadcast Announcement
+    if (announce && env.DISCORD_BOT_TOKEN) {
+      const now = Date.now();
+      let startIso = new Date(now + 60000).toISOString();
+      if (eventStartTime) {
+        const parsedStart = new Date(eventStartTime).getTime();
+        if (!isNaN(parsedStart) && parsedStart > now) {
+          startIso = new Date(parsedStart).toISOString();
+        }
+      }
+
+      let endIso = new Date(new Date(startIso).getTime() + 7 * 86400000).toISOString();
+      if (eventEndTime) {
+        const parsedEnd = new Date(eventEndTime).getTime();
+        if (!isNaN(parsedEnd) && parsedEnd > new Date(startIso).getTime()) {
+          endIso = new Date(parsedEnd).toISOString();
+        }
+      }
+
+      // 1. Create Discord Scheduled Event
+      if (env.DISCORD_GUILD_ID) {
+        try {
+          const bonusDesc = parsedBonuses.length > 0
+            ? '\n\nBonus Objectives:\n' + parsedBonuses.map(b => `• ${b.description} (+${b.bonusBones} Bones)`).join('\n')
+            : '';
+          const eventDesc = `Reward: ${bounty.rewardBones} Bones\nCategory: ${bounty.category}\n\n${bounty.description || 'No description'}${bonusDesc}\n\nClaim and submit proof on the Exchange Portal: https://bse.teasy2ez.win`.slice(0, 1000);
+
+          const event = await createDiscordScheduledEvent(env.DISCORD_GUILD_ID, {
+            name: `[Bounty] ${bounty.title}`.slice(0, 100),
+            description: eventDesc,
+            scheduled_start_time: startIso,
+            scheduled_end_time: endIso,
+            entity_type: 3,
+            entity_metadata: { location: (eventLocation || 'Azeroth / Black Sands Exchange').slice(0, 100) }
+          }, env.DISCORD_BOT_TOKEN);
+
+          if (event?.id) {
+            bounty.discordEventId = event.id;
+            bounty.discordEventUrl = `https://discord.com/events/${env.DISCORD_GUILD_ID}/${event.id}`;
+          }
+        } catch (err) {
+          console.error('Failed to create Discord scheduled event for bounty:', err);
+        }
+      }
+
+      // 2. Broadcast Announcement Message to Channel
+      const routing = getChannelRouting(env, state);
+      const targetChannel = announceChannelId || routing.announcementsChannelId || routing.leaderboardChannelId;
+      if (targetChannel) {
+        try {
+          let pingPrefix = '';
+          let allowedMentions = { parse: [] };
+          if (mentionType === 'everyone') {
+            pingPrefix = '@everyone ';
+            allowedMentions = { parse: ['everyone'] };
+          } else if (mentionType === 'here') {
+            pingPrefix = '@here ';
+            allowedMentions = { parse: ['everyone'] };
+          }
+
+          const fields = [
+            { name: '🦴 Reward', value: `**${bounty.rewardBones} Bones**`, inline: true },
+            { name: '📁 Category', value: bounty.category, inline: true }
+          ];
+          if (bounty.discordEventUrl) {
+            fields.push({ name: '📅 Discord Event', value: `[View Guild Event](${bounty.discordEventUrl})`, inline: true });
+          }
+          if (parsedBonuses.length > 0) {
+            fields.push({
+              name: '⭐ Optional Bonuses',
+              value: parsedBonuses.map(b => `• **${b.description}** (+${b.bonusBones} Bones)`).join('\n'),
+              inline: false
+            });
+          }
+
+          const announceMsg = await sendAnnouncementMessage(targetChannel, {
+            content: `${pingPrefix}🚨 **NEW GUILD BOUNTY POSTED!**`,
+            embeds: [{
+              title: `📜 Bounty: ${bounty.title}`,
+              description: bounty.description || 'A new guild bounty has been posted by the Officers. Complete the objectives and claim your Bones!',
+              color: Colors.GOLD,
+              fields,
+              footer: { text: 'Black Sands Exchange • Log in to claim & submit proof' },
+              timestamp: new Date().toISOString()
+            }],
+            components: [{
+              type: 1,
+              components: [{
+                type: 2,
+                style: 5,
+                label: 'Open Exchange Portal',
+                url: 'https://bse.teasy2ez.win'
+              }]
+            }],
+            allowedMentions
+          }, env.DISCORD_BOT_TOKEN);
+
+          if (announceMsg?.id) {
+            bounty.announcementMessageId = announceMsg.id;
+            bounty.announcementChannelId = targetChannel;
+          }
+        } catch (err) {
+          console.error('Failed to broadcast bounty announcement:', err);
+        }
+      }
+    }
+
     state.bounties = state.bounties || [];
     state.bounties.push(bounty);
     await firestore.saveBseState(state);
+
+    // Auto-sync bounty board in Discord
+    try {
+      await syncBountiesEmbed(env, firestore, state);
+    } catch (err) {
+      console.error('Auto-sync bounties embed error:', err);
+    }
 
     return jsonResponse({ success: true, bounty });
   }
@@ -1283,6 +1491,14 @@ async function handleExchangeApi(url, request, env, firestore) {
     bounty.updatedAt = new Date().toISOString();
 
     await firestore.saveBseState(state);
+
+    // Auto-sync bounty board
+    try {
+      await syncBountiesEmbed(env, firestore, state);
+    } catch (err) {
+      console.error('Auto-sync bounties embed error:', err);
+    }
+
     return jsonResponse({ success: true, bounty });
   }
 
@@ -1290,8 +1506,27 @@ async function handleExchangeApi(url, request, env, firestore) {
   if (path === 'bounty/delete' && request.method === 'POST') {
     const { bountyId } = body;
     const state = await firestore.getBseState();
+    const bounty = (state.bounties || []).find(b => b.id === bountyId);
+
+    // Clean up Discord Scheduled Event if present
+    if (bounty?.discordEventId && env.DISCORD_GUILD_ID && env.DISCORD_BOT_TOKEN) {
+      try {
+        await deleteDiscordScheduledEvent(env.DISCORD_GUILD_ID, bounty.discordEventId, env.DISCORD_BOT_TOKEN);
+      } catch (err) {
+        console.warn('Could not delete Discord scheduled event for bounty:', err.message);
+      }
+    }
+
     state.bounties = (state.bounties || []).filter(b => b.id !== bountyId);
     await firestore.saveBseState(state);
+
+    // Auto-sync bounty board
+    try {
+      await syncBountiesEmbed(env, firestore, state);
+    } catch (err) {
+      console.error('Auto-sync bounties embed error:', err);
+    }
+
     return jsonResponse({ success: true });
   }
 
@@ -1315,6 +1550,12 @@ async function handleExchangeApi(url, request, env, firestore) {
     state.shop.push(item);
     await firestore.saveBseState(state);
 
+    try {
+      await syncShopEmbed(env, firestore, state);
+    } catch (err) {
+      console.error('Auto-sync shop embed error:', err);
+    }
+
     return jsonResponse({ success: true, item });
   }
 
@@ -1336,6 +1577,13 @@ async function handleExchangeApi(url, request, env, firestore) {
     item.updatedAt = new Date().toISOString();
 
     await firestore.saveBseState(state);
+
+    try {
+      await syncShopEmbed(env, firestore, state);
+    } catch (err) {
+      console.error('Auto-sync shop embed error:', err);
+    }
+
     return jsonResponse({ success: true, item });
   }
 
@@ -1574,7 +1822,7 @@ async function handleSyncStandingsApi(request, env, firestore) {
     return jsonResponse({ error: 'Failed to push standings to Discord channel' }, 500);
   }
 
-  return jsonResponse({ success: true, message: 'Standings embeds refreshed in-place in #the-exchange' });
+  return jsonResponse({ success: true, message: 'Standings embeds refreshed in designated Discord channels' });
 }
 
 /**

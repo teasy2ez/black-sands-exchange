@@ -157,6 +157,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupOfficerLeaderboardFilters();
   setupRaidMultiAward();
   setupDataEditor();
+  setupDiscordChannelsManager();
 
   // Concurrently fetch auth session and central BSE state
   await Promise.allSettled([checkAuthSession(), refreshBseState()]);
@@ -2363,6 +2364,23 @@ function setupOfficerTools() {
     }
   });
 
+  // Toggle Announcement & Discord Event Options
+  const bountyAnnounceToggle = document.getElementById('bountyAnnounceToggle');
+  const bountyAnnounceFields = document.getElementById('bountyAnnounceFields');
+  if (bountyAnnounceToggle && bountyAnnounceFields) {
+    bountyAnnounceToggle.addEventListener('change', () => {
+      bountyAnnounceFields.style.display = bountyAnnounceToggle.checked ? 'block' : 'none';
+      if (bountyAnnounceToggle.checked && !document.getElementById('bountyEventStart').value) {
+        const d = new Date(Date.now() + 5 * 60000);
+        const pad = n => String(n).padStart(2, '0');
+        document.getElementById('bountyEventStart').value = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+
+        const dEnd = new Date(Date.now() + 7 * 86400000);
+        document.getElementById('bountyEventEnd').value = `${dEnd.getFullYear()}-${pad(dEnd.getMonth() + 1)}-${pad(dEnd.getDate())}T${pad(dEnd.getHours())}:${pad(dEnd.getMinutes())}`;
+      }
+    });
+  }
+
   // Create Bounty
   document.getElementById('btnCreateBounty').addEventListener('click', async () => {
     const title = document.getElementById('newBountyTitle').value.trim();
@@ -2371,6 +2389,13 @@ function setupOfficerTools() {
     const description = document.getElementById('newBountyDesc').value.trim();
     const bonusDesc = document.getElementById('newBountyBonusDesc')?.value.trim() || '';
     const bonusAmount = parseInt(document.getElementById('newBountyBonusAmount')?.value, 10) || 0;
+
+    const announce = Boolean(document.getElementById('bountyAnnounceToggle')?.checked);
+    const announceChannelId = document.getElementById('bountyAnnounceChannel')?.value || null;
+    const mentionType = document.getElementById('bountyAnnounceMention')?.value || 'everyone';
+    const eventStartTime = document.getElementById('bountyEventStart')?.value || null;
+    const eventEndTime = document.getElementById('bountyEventEnd')?.value || null;
+    const eventLocation = document.getElementById('bountyEventLocation')?.value?.trim() || null;
 
     if (!title || !rewardBones) {
       showToast('Please enter bounty title and reward.');
@@ -2389,16 +2414,35 @@ function setupOfficerTools() {
     const res = await fetch('/api/exchange/bounty/create', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title, rewardBones, category, description, bonuses })
+      body: JSON.stringify({
+        title,
+        rewardBones,
+        category,
+        description,
+        bonuses,
+        announce,
+        announceChannelId,
+        mentionType,
+        eventStartTime,
+        eventEndTime,
+        eventLocation
+      })
     });
     if (res.ok) {
-      showToast('Bounty created.');
+      showToast(announce ? 'Bounty created, Discord event scheduled & announced!' : 'Bounty created successfully.');
       document.getElementById('newBountyTitle').value = '';
       document.getElementById('newBountyReward').value = '';
       document.getElementById('newBountyDesc').value = '';
       if (document.getElementById('newBountyBonusDesc')) document.getElementById('newBountyBonusDesc').value = '';
       if (document.getElementById('newBountyBonusAmount')) document.getElementById('newBountyBonusAmount').value = '';
+      if (document.getElementById('bountyAnnounceToggle')) {
+        document.getElementById('bountyAnnounceToggle').checked = false;
+        document.getElementById('bountyAnnounceFields').style.display = 'none';
+      }
       await refreshBseState();
+    } else {
+      const err = await res.json().catch(() => ({}));
+      showToast(`Failed to create bounty: ${err.error || 'Server error'}`);
     }
   });
 
@@ -2996,8 +3040,172 @@ function setupOfficerSubtabs() {
       subtab.classList.add('active');
       document.getElementById(`subview-${target}`)?.classList.add('active');
       state.activeOfficerSubtab = target;
+
+      if (target === 'discord-channels') {
+        renderDiscordChannelControls();
+      }
     });
   });
+}
+
+/**
+ * Discord Channel Routing & Live Embeds Manager
+ */
+let cachedGuildChannels = [];
+
+async function fetchGuildChannels(force = false) {
+  if (cachedGuildChannels.length > 0 && !force) {
+    return cachedGuildChannels;
+  }
+  try {
+    const res = await fetch('/api/exchange/discord/channels');
+    if (res.ok) {
+      const data = await res.json();
+      cachedGuildChannels = data.channels || [];
+      return cachedGuildChannels;
+    }
+  } catch (err) {
+    console.error('Failed to fetch Discord channels:', err);
+  }
+  return [];
+}
+
+function populateChannelSelect(selectEl, channels, selectedValue, defaultLabel = 'Default') {
+  if (!selectEl) return;
+  const currentVal = selectedValue || selectEl.value;
+  selectEl.innerHTML = '';
+
+  if (defaultLabel) {
+    const defaultOpt = document.createElement('option');
+    defaultOpt.value = '';
+    defaultOpt.textContent = defaultLabel;
+    selectEl.appendChild(defaultOpt);
+  }
+
+  channels.forEach(ch => {
+    const opt = document.createElement('option');
+    opt.value = ch.id;
+    opt.textContent = `#${ch.name}`;
+    if (ch.id === currentVal) {
+      opt.selected = true;
+    }
+    selectEl.appendChild(opt);
+  });
+}
+
+async function renderDiscordChannelControls(forceFetch = false) {
+  const channels = await fetchGuildChannels(forceFetch);
+  const cfg = state.bse?.config || {};
+  const currentChannels = cfg.channels || {};
+  const messages = cfg.messages || {};
+
+  const selLb = document.getElementById('channelSelectLeaderboard');
+  const selBounties = document.getElementById('channelSelectBounties');
+  const selShop = document.getElementById('channelSelectShop');
+  const selAnnounce = document.getElementById('channelSelectAnnouncements');
+  const selBountyFormAnnounce = document.getElementById('bountyAnnounceChannel');
+
+  populateChannelSelect(selLb, channels, currentChannels.leaderboardChannelId || '1569275856415625257', null);
+  populateChannelSelect(selBounties, channels, currentChannels.bountiesChannelId || currentChannels.leaderboardChannelId || '1569275856415625257', 'Same as Leaderboard Channel');
+  populateChannelSelect(selShop, channels, currentChannels.shopChannelId || currentChannels.leaderboardChannelId || '1569275856415625257', 'Same as Leaderboard Channel');
+  populateChannelSelect(selAnnounce, channels, currentChannels.announcementsChannelId, 'None / Unassigned');
+
+  if (selBountyFormAnnounce) {
+    populateChannelSelect(selBountyFormAnnounce, channels, currentChannels.announcementsChannelId, 'Default Announcements Channel');
+  }
+
+  // Render Diagnostics & Status
+  const statusList = document.getElementById('discordEmbedStatusList');
+  if (statusList) {
+    const getChName = (id) => {
+      if (!id) return '<span style="color:var(--text-dim);">Unconfigured</span>';
+      const found = channels.find(c => c.id === id);
+      return found ? `<strong>#${found.name}</strong> (\`${id}\`)` : `\`${id}\``;
+    };
+
+    const lbCh = currentChannels.leaderboardChannelId || '1569275856415625257';
+    const bountiesCh = currentChannels.bountiesChannelId || lbCh;
+    const shopCh = currentChannels.shopChannelId || lbCh;
+    const announceCh = currentChannels.announcementsChannelId;
+
+    statusList.innerHTML = `
+      <div class="wow-inner-box" style="padding: 0.65rem;">
+        <div style="color: var(--gold-300); font-weight: 700;">🏆 Leaderboard Standings Embed</div>
+        <div>Channel: ${getChName(lbCh)}</div>
+        <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.2rem;">Message ID: <code>${messages.leaderboardMessageId || cfg.standingsMessageId || 'Pending deployment'}</code></div>
+      </div>
+      <div class="wow-inner-box" style="padding: 0.65rem;">
+        <div style="color: var(--gold-300); font-weight: 700;">📜 Bounty Board Embed</div>
+        <div>Channel: ${getChName(bountiesCh)}</div>
+        <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.2rem;">Message ID: <code>${messages.bountiesMessageId || cfg.bountiesMessageId || 'Pending deployment'}</code></div>
+      </div>
+      <div class="wow-inner-box" style="padding: 0.65rem;">
+        <div style="color: var(--gold-300); font-weight: 700;">🛒 Exchange Shop Embed</div>
+        <div>Channel: ${getChName(shopCh)}</div>
+        <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.2rem;">Message ID: <code>${messages.shopMessageId || cfg.shopMessageId || 'Pending deployment'}</code></div>
+      </div>
+      <div class="wow-inner-box" style="padding: 0.65rem;">
+        <div style="color: var(--gold-300); font-weight: 700;">📢 Announcements Channel</div>
+        <div>Channel: ${getChName(announceCh)}</div>
+        <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.2rem;">${announceCh ? 'Active: Bounties with announcement toggle will broadcast here with @everyone ping' : 'Not set: Bounties will broadcast to Leaderboard channel'}</div>
+      </div>
+    `;
+  }
+}
+
+function setupDiscordChannelsManager() {
+  const btnRefresh = document.getElementById('btnRefreshDiscordChannelsList');
+  if (btnRefresh) {
+    btnRefresh.addEventListener('click', async () => {
+      btnRefresh.disabled = true;
+      btnRefresh.textContent = 'Fetching...';
+      await renderDiscordChannelControls(true);
+      btnRefresh.disabled = false;
+      btnRefresh.textContent = 'Refresh Channels';
+      showToast('Discord channels refreshed.');
+    });
+  }
+
+  const btnSave = document.getElementById('btnSaveDiscordChannels');
+  if (btnSave) {
+    btnSave.addEventListener('click', async () => {
+      const leaderboardChannelId = document.getElementById('channelSelectLeaderboard')?.value;
+      const bountiesChannelId = document.getElementById('channelSelectBounties')?.value || leaderboardChannelId;
+      const shopChannelId = document.getElementById('channelSelectShop')?.value || leaderboardChannelId;
+      const announcementsChannelId = document.getElementById('channelSelectAnnouncements')?.value || null;
+
+      btnSave.disabled = true;
+      btnSave.textContent = 'Saving & Deploying Embeds...';
+
+      try {
+        const res = await fetch('/api/exchange/discord/channels/update', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            leaderboardChannelId,
+            bountiesChannelId,
+            shopChannelId,
+            announcementsChannelId
+          })
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          showToast('Channel routing saved & embeds updated in designated channels!');
+          await refreshBseState();
+          await renderDiscordChannelControls();
+        } else {
+          const err = await res.json();
+          showToast(`Failed: ${err.error || 'Server error'}`);
+        }
+      } catch (err) {
+        showToast(`Network error: ${err.message}`);
+      } finally {
+        btnSave.disabled = false;
+        btnSave.textContent = 'Save & Relocate Pinned Embeds';
+      }
+    });
+  }
 }
 
 /**

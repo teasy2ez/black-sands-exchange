@@ -11,7 +11,9 @@ import {
   editChannelMessage,
   addGuildMemberRole,
   recordAuditLogAndSync,
-  pushStandingsToDiscord
+  pushStandingsToDiscord,
+  syncBountiesEmbed,
+  getChannelRouting
 } from './discord.js';
 
 /**
@@ -515,7 +517,7 @@ async function handleSyncStandingsCommand(interaction, env, firestore) {
   }
 
   const state = await firestore.getBseState();
-  const channelId = env.DISCORD_STANDINGS_CHANNEL_ID;
+  const routing = getChannelRouting(env, state);
 
   try {
     const ok = await pushStandingsToDiscord(env, firestore, state);
@@ -526,9 +528,15 @@ async function handleSyncStandingsCommand(interaction, env, firestore) {
       };
     }
 
+    const channelList = [
+      `🏆 Leaderboard: <#${routing.leaderboardChannelId}>`,
+      routing.bountiesChannelId !== routing.leaderboardChannelId ? `📜 Bounties: <#${routing.bountiesChannelId}>` : null,
+      routing.shopChannelId !== routing.leaderboardChannelId ? `🛒 Shop: <#${routing.shopChannelId}>` : null
+    ].filter(Boolean).join(' • ');
+
     return {
       type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
-      data: { content: `✨ **Standings Synced!** Pinned dashboard embeds in <#${channelId}> updated in-place.`, flags: 64 }
+      data: { content: `✨ **Standings Synced!** Pinned dashboard embeds updated in-place:\n${channelList}`, flags: 64 }
     };
   } catch (err) {
     console.error('Failed to sync standings messages:', err);
@@ -580,6 +588,12 @@ async function handleBountySubcommands(interaction, subOptions, env, firestore) 
     state.bounties.push(newBounty);
     await firestore.saveBseState(state);
 
+    try {
+      await syncBountiesEmbed(env, firestore, state);
+    } catch (err) {
+      console.error('Auto-sync bounties error:', err);
+    }
+
     return {
       type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
       data: {
@@ -593,6 +607,12 @@ async function handleBountySubcommands(interaction, subOptions, env, firestore) 
     const targetId = subOpts.bounty_id;
     state.bounties = (state.bounties || []).filter(b => b.id.toLowerCase() !== targetId.toLowerCase());
     await firestore.saveBseState(state);
+
+    try {
+      await syncBountiesEmbed(env, firestore, state);
+    } catch (err) {
+      console.error('Auto-sync bounties error:', err);
+    }
 
     return {
       type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
