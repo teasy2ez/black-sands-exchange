@@ -1473,6 +1473,27 @@ async function handleExchangeApi(url, request, env, firestore) {
     }
     bounty.updatedAt = new Date().toISOString();
 
+    // If linked to a Discord Scheduled Event, update it in Discord as well
+    if (bounty.discordEventId && env.DISCORD_GUILD_ID && env.DISCORD_BOT_TOKEN) {
+      try {
+        const bonusDesc = Array.isArray(bounty.bonuses) && bounty.bonuses.length > 0
+          ? '\n\nBonus Objectives:\n' + bounty.bonuses.map(b => `• ${b.description} (+${b.bonusBones} Bones)`).join('\n')
+          : '';
+        const eventDesc = `Reward: ${bounty.rewardBones} Bones\nCategory: ${bounty.category}\n\n${bounty.description || 'No description'}${bonusDesc}\n\nClaim and submit proof on the Exchange Portal: https://bse.teasy2ez.win`.slice(0, 1000);
+
+        const eventUpdateData = {
+          name: `[Bounty] ${bounty.title}`.slice(0, 100),
+          description: eventDesc
+        };
+        if (bounty.status === 'completed') {
+          eventUpdateData.status = 3; // COMPLETED
+        }
+        await updateDiscordScheduledEvent(env.DISCORD_GUILD_ID, bounty.discordEventId, eventUpdateData, env.DISCORD_BOT_TOKEN);
+      } catch (err) {
+        console.warn('Could not update Discord scheduled event:', err.message);
+      }
+    }
+
     await firestore.saveBseState(state);
 
     // Auto-sync bounty board

@@ -1653,23 +1653,39 @@ function setupDataEditor() {
  */
 function renderOfficerBountiesList() {
   const bounties = state.bseState?.bounties || [];
-  officerBountiesList.innerHTML = bounties.map(b => `
+  if (!officerBountiesList) return;
+  if (!bounties.length) {
+    officerBountiesList.innerHTML = `<div style="font-size: 0.85rem; color: var(--text-muted); padding: 1rem; text-align: center;">No bounties created yet.</div>`;
+    return;
+  }
+  officerBountiesList.innerHTML = bounties.map(b => {
+    const bonusCount = Array.isArray(b.bonuses) ? b.bonuses.length : 0;
+    const bonusLabel = bonusCount > 0 ? ` &bull; <span style="color:var(--gold-200);">${bonusCount} Bonus${bonusCount > 1 ? 'es' : ''}</span>` : '';
+    const eventBadge = b.discordEventId ? ` &bull; <a href="${b.discordEventUrl || '#'}" target="_blank" style="color:var(--gold-300); text-decoration: underline;">Discord Event</a>` : '';
+
+    return `
     <div class="officer-review-card" style="display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap;">
-      <div>
-        <strong style="color: var(--gold-100);">${b.title}</strong>
-        <div style="font-size: 0.75rem; color: var(--text-muted);">
-          ID: <code>${b.id}</code> &bull; Category: ${b.category || 'General'} &bull; Status: <strong style="color:${b.status === 'active' ? 'var(--success)' : 'var(--danger)'};">${b.status || 'active'}</strong>
+      <div style="flex: 1; min-width: 220px;">
+        <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+          <strong style="color: var(--gold-100); font-size: 0.95rem;">${escapeHtml(b.title)}</strong>
+          <span style="font-size: 0.7rem; padding: 0.1rem 0.4rem; border-radius: 3px; background: rgba(198, 155, 109, 0.15); border: 1px solid rgba(198, 155, 109, 0.3); color: var(--gold-300);">${escapeHtml(b.category || 'General')}</span>
         </div>
+        <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.25rem;">
+          ID: <code>${b.id}</code> &bull; Status: <strong style="color:${b.status === 'active' ? 'var(--success)' : (b.status === 'paused' ? 'var(--amber)' : 'var(--danger)')};">${b.status || 'active'}</strong>${bonusLabel}${eventBadge}
+        </div>
+        ${b.description ? `<div style="font-size: 0.8rem; color: var(--text-dim); margin-top: 0.35rem; line-height: 1.3;">${escapeHtml(b.description)}</div>` : ''}
       </div>
-      <div style="display: flex; align-items: center; gap: 0.75rem;">
-        <span style="color: var(--gold-300); font-weight: 700;">+${b.rewardBones}</span>
-        <button class="btn-secondary" onclick="toggleBountyStatus('${b.id}', '${b.status === 'active' ? 'paused' : 'active'}')">
+      <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+        <span style="color: var(--gold-300); font-weight: 700; font-size: 1rem; margin-right: 0.5rem;">+${b.rewardBones} Bones</span>
+        <button class="btn-primary" style="padding: 0.35rem 0.75rem; font-size: 0.75rem;" onclick="openEditBountyModal('${b.id}')">Edit</button>
+        <button class="btn-secondary" style="padding: 0.35rem 0.65rem; font-size: 0.75rem;" onclick="toggleBountyStatus('${b.id}', '${b.status === 'active' ? 'paused' : 'active'}')">
           ${b.status === 'active' ? 'Pause' : 'Activate'}
         </button>
-        <button class="btn-danger" onclick="deleteBounty('${b.id}')">Delete</button>
+        <button class="btn-danger" style="padding: 0.35rem 0.65rem; font-size: 0.75rem;" onclick="deleteBounty('${b.id}')">Delete</button>
       </div>
     </div>
-  `).join('');
+    `;
+  }).join('');
 }
 
 /**
@@ -1872,6 +1888,12 @@ function setupModals() {
     btn.addEventListener('click', () => {
       const modalId = btn.getAttribute('data-close-modal');
       document.getElementById(modalId)?.classList.remove('active');
+    });
+  });
+
+  document.querySelectorAll('.modal-overlay').forEach(modal => {
+    modal.addEventListener('click', (e) => {
+      if (e.target === modal) modal.classList.remove('active');
     });
   });
 
@@ -2086,6 +2108,71 @@ function setupModals() {
       }
     } catch (err) {
       showToast(err.message);
+    }
+  });
+
+  // Edit Bounty Modal Handlers
+  document.getElementById('btnAddEditBonus')?.addEventListener('click', addEditBonusRow);
+
+  document.getElementById('btnSaveEditedBounty')?.addEventListener('click', async () => {
+    const bountyId = document.getElementById('editBountyId').value;
+    const title = document.getElementById('editBountyTitle').value.trim();
+    const rewardBones = parseInt(document.getElementById('editBountyReward').value, 10);
+    const category = document.getElementById('editBountyCategory').value;
+    const status = document.getElementById('editBountyStatus').value;
+    const description = document.getElementById('editBountyDesc').value.trim();
+
+    if (!title || !rewardBones) {
+      showToast('Please enter title and reward amount.');
+      return;
+    }
+
+    const bonusRows = document.querySelectorAll('#editBountyBonusesList .edit-bonus-row');
+    const bonuses = [];
+    bonusRows.forEach((row, idx) => {
+      const desc = row.querySelector('.edit-bonus-desc')?.value.trim() || '';
+      const amt = parseInt(row.querySelector('.edit-bonus-amount')?.value, 10) || 0;
+      if (desc && amt > 0) {
+        bonuses.push({
+          id: `bonus_${Date.now()}_${idx}`,
+          description: desc,
+          bonusBones: amt
+        });
+      }
+    });
+
+    const btnSave = document.getElementById('btnSaveEditedBounty');
+    btnSave.disabled = true;
+    btnSave.textContent = 'Saving...';
+
+    try {
+      const res = await fetch('/api/exchange/bounty/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          bountyId,
+          title,
+          rewardBones,
+          category,
+          status,
+          description,
+          bonuses
+        })
+      });
+
+      if (res.ok) {
+        showToast('Bounty updated successfully!');
+        document.getElementById('modalEditBounty')?.classList.remove('active');
+        await refreshBseState();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        showToast(`Failed: ${err.error || 'Server error'}`);
+      }
+    } catch (err) {
+      showToast(`Error: ${err.message}`);
+    } finally {
+      btnSave.disabled = false;
+      btnSave.textContent = 'Save Bounty Changes';
     }
   });
 }
@@ -2963,6 +3050,59 @@ window.deleteBounty = async function(bountyId) {
   showToast('Bounty deleted.');
   await refreshBseState();
 };
+
+window.openEditBountyModal = function(bountyId) {
+  const bounty = (state.bseState?.bounties || []).find(b => b.id === bountyId);
+  if (!bounty) { showToast('Bounty not found.'); return; }
+  document.getElementById('editBountyId').value = bounty.id;
+  document.getElementById('editBountyTitle').value = bounty.title || '';
+  document.getElementById('editBountyReward').value = bounty.rewardBones || 10;
+  document.getElementById('editBountyCategory').value = bounty.category || 'General';
+  document.getElementById('editBountyStatus').value = bounty.status || 'active';
+  document.getElementById('editBountyDesc').value = bounty.description || '';
+  const eventNotice = document.getElementById('editBountyDiscordEventNotice');
+  if (eventNotice) eventNotice.style.display = bounty.discordEventId ? 'block' : 'none';
+  renderEditBountyBonuses(bounty.bonuses || []);
+  document.getElementById('modalEditBounty')?.classList.add('active');
+};
+
+function renderEditBountyBonuses(bonuses = []) {
+  const container = document.getElementById('editBountyBonusesList');
+  if (!container) return;
+  container.innerHTML = '';
+  if (!bonuses.length) {
+    container.innerHTML = `<div id="noEditBonusesMsg" style="font-size: 0.75rem; color: var(--text-dim);">No bonus objectives. Click "+ Add Bonus" to add one.</div>`;
+    return;
+  }
+  bonuses.forEach(bonus => {
+    const row = document.createElement('div');
+    row.className = 'edit-bonus-row';
+    row.style.cssText = 'display: grid; grid-template-columns: 2fr 1fr auto; gap: 0.5rem; align-items: center;';
+    row.innerHTML = `
+      <input type="text" class="form-control edit-bonus-desc" placeholder="Bonus objective description" value="${escapeHtml(bonus.description || '')}">
+      <input type="number" class="form-control edit-bonus-amount" min="1" placeholder="+ Bones" value="${bonus.bonusBones || 5}">
+      <button type="button" class="btn-danger" style="padding: 0.3rem 0.5rem; font-size: 0.75rem;" onclick="this.closest('.edit-bonus-row').remove()">✕</button>
+    `;
+    container.appendChild(row);
+  });
+}
+window.renderEditBountyBonuses = renderEditBountyBonuses;
+
+function addEditBonusRow() {
+  const container = document.getElementById('editBountyBonusesList');
+  if (!container) return;
+  document.getElementById('noEditBonusesMsg')?.remove();
+  const row = document.createElement('div');
+  row.className = 'edit-bonus-row';
+  row.style.cssText = 'display: grid; grid-template-columns: 2fr 1fr auto; gap: 0.5rem; align-items: center;';
+  row.innerHTML = `
+    <input type="text" class="form-control edit-bonus-desc" placeholder="Bonus objective description">
+    <input type="number" class="form-control edit-bonus-amount" min="1" placeholder="+ Bones" value="10">
+    <button type="button" class="btn-danger" style="padding: 0.3rem 0.5rem; font-size: 0.75rem;" onclick="this.closest('.edit-bonus-row').remove()">✕</button>
+  `;
+  container.appendChild(row);
+}
+window.addEditBonusRow = addEditBonusRow;
 
 window.adjustShopStock = async function(itemId, delta) {
   const item = (state.bseState?.shop || []).find(i => i.id === itemId);
