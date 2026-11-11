@@ -332,22 +332,6 @@ async function handleBuyCommand(interaction, opts, env, firestore) {
     }
   }
 
-  // Post receipt to #exchange-feed
-  if (env.DISCORD_FEED_CHANNEL_ID && env.DISCORD_BOT_TOKEN) {
-    try {
-      await sendChannelMessage(env.DISCORD_FEED_CHANNEL_ID, {
-        embeds: [{
-          title: '🛒 Shop Purchase Receipt',
-          description: `**${wallet.serverNickname}** (@${caller.username}) purchased **${item.title}** for **${item.costBones}** Bones!`,
-          color: Colors.GOLD,
-          timestamp: new Date().toISOString()
-        }]
-      }, env.DISCORD_BOT_TOKEN);
-    } catch (err) {
-      console.error('Failed to post to #exchange-feed:', err);
-    }
-  }
-
   return {
     type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
     data: {
@@ -394,29 +378,8 @@ async function handleAwardCommand(interaction, opts, env, firestore) {
     amount,
     spendableBones: wallet.spendableBones,
     boneScore: wallet.boneScore,
-    reason,
-    notifyFeed: false
+    reason
   });
-
-  // Post to #exchange-feed
-  if (env.DISCORD_FEED_CHANNEL_ID && env.DISCORD_BOT_TOKEN) {
-    try {
-      await sendChannelMessage(env.DISCORD_FEED_CHANNEL_ID, {
-        embeds: [{
-          title: '🪙 Bones Awarded!',
-          description: `<@${targetId}> was awarded **+${amount} Bones** by **${officerName}**!\n> *${reason}*`,
-          color: Colors.GREEN,
-          fields: [
-            { name: '💰 Spendable Balance', value: `${wallet.spendableBones} Bones`, inline: true },
-            { name: '🏆 Bone Score', value: `${wallet.boneScore} Pts`, inline: true }
-          ],
-          timestamp: new Date().toISOString()
-        }]
-      }, env.DISCORD_BOT_TOKEN);
-    } catch (err) {
-      console.error('Failed to post to #exchange-feed:', err);
-    }
-  }
 
   return {
     type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
@@ -466,28 +429,8 @@ async function handleDeductCommand(interaction, opts, env, firestore) {
     amount: -amount,
     spendableBones: wallet.spendableBones,
     boneScore: wallet.boneScore,
-    reason,
-    notifyFeed: false
+    reason
   });
-
-  // Post to #exchange-feed
-  if (env.DISCORD_FEED_CHANNEL_ID && env.DISCORD_BOT_TOKEN) {
-    try {
-      await sendChannelMessage(env.DISCORD_FEED_CHANNEL_ID, {
-        embeds: [{
-          title: '⚖️ Bones Deducted',
-          description: `<@${targetId}> had **-${amount} Bones** deducted by **${officerName}**.\n> *${reason}*`,
-          color: Colors.RED,
-          fields: [
-            { name: '💰 Spendable Balance', value: `${wallet.spendableBones} Bones`, inline: true }
-          ],
-          timestamp: new Date().toISOString()
-        }]
-      }, env.DISCORD_BOT_TOKEN);
-    } catch (err) {
-      console.error('Failed to post to #exchange-feed:', err);
-    }
-  }
 
   return {
     type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,

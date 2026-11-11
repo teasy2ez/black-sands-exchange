@@ -495,7 +495,6 @@ export function getChannelRouting(env, state) {
     bountiesChannelId: channels.bountiesChannelId || channels.leaderboardChannelId || defaultStandings,
     shopChannelId: channels.shopChannelId || channels.leaderboardChannelId || defaultStandings,
     announcementsChannelId: channels.announcementsChannelId || null,
-    feedChannelId: channels.feedChannelId || env.DISCORD_FEED_CHANNEL_ID,
     officerChannelId: channels.officerChannelId || env.DISCORD_OFFICER_CHANNEL_ID
   };
 }
@@ -677,63 +676,6 @@ export async function recordAuditLogAndSync(state, env, firestore, entry) {
     await syncLeaderboardEmbed(env, firestore, state);
   } catch (err) {
     console.error('Failed auto-syncing leaderboard to Discord:', err);
-  }
-
-
-  // Optional feed notification
-  if (entry.notifyFeed !== false && env.DISCORD_FEED_CHANNEL_ID && env.DISCORD_BOT_TOKEN) {
-    try {
-      if (entry.action === 'AWARD') {
-        await sendChannelMessage(env.DISCORD_FEED_CHANNEL_ID, {
-          embeds: [{
-            title: 'Bones Awarded',
-            description: `**${entry.targetName}** was awarded **+${entry.amount} Bones** by **${entry.officerName}**!\n> *${entry.reason}*`,
-            color: Colors.GREEN,
-            fields: [
-              { name: 'Spendable Balance', value: `${entry.spendableBones ?? '—'} Bones`, inline: true },
-              { name: 'Bone Score', value: `${entry.boneScore ?? '—'} Pts`, inline: true }
-            ],
-            timestamp: new Date().toISOString()
-          }]
-        }, env.DISCORD_BOT_TOKEN);
-      } else if (entry.action === 'DEDUCT') {
-        await sendChannelMessage(env.DISCORD_FEED_CHANNEL_ID, {
-          embeds: [{
-            title: 'Bones Deducted',
-            description: `**${entry.targetName}** had **${entry.amount} Bones** deducted by **${entry.officerName}**.\n> *${entry.reason}*`,
-            color: Colors.RED,
-            fields: [
-              { name: 'Remaining Balance', value: `${entry.spendableBones ?? '—'} Bones`, inline: true }
-            ],
-            timestamp: new Date().toISOString()
-          }]
-        }, env.DISCORD_BOT_TOKEN);
-      } else if (entry.action === 'LEDGER_CORRECTION') {
-        await sendChannelMessage(env.DISCORD_FEED_CHANNEL_ID, {
-          embeds: [{
-            title: 'Ledger Balance Corrected',
-            description: `Officer **${entry.officerName}** adjusted ledger for **${entry.targetName}**.\n> *${entry.reason}*`,
-            color: Colors.AMBER,
-            fields: [
-              { name: 'New Spendable', value: `${entry.spendableBones ?? '—'} Bones`, inline: true },
-              { name: 'New Career Score', value: `${entry.boneScore ?? '—'} Pts`, inline: true }
-            ],
-            timestamp: new Date().toISOString()
-          }]
-        }, env.DISCORD_BOT_TOKEN);
-      } else if (entry.action === 'MEMBER_DELETE') {
-        await sendChannelMessage(env.DISCORD_FEED_CHANNEL_ID, {
-          embeds: [{
-            title: 'Member Purged from Roster',
-            description: `Officer **${entry.officerName}** removed **${entry.targetName}** from the guild roster.\n> *${entry.reason}*`,
-            color: Colors.DARK_RED,
-            timestamp: new Date().toISOString()
-          }]
-        }, env.DISCORD_BOT_TOKEN);
-      }
-    } catch (err) {
-      console.error('Feed broadcast error:', err);
-    }
   }
 
   return logItem;

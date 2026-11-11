@@ -704,23 +704,6 @@ async function handleExchangeApi(url, request, env, firestore) {
       }
     }
 
-    // Notify #exchange-feed
-    if (env.DISCORD_FEED_CHANNEL_ID && env.DISCORD_BOT_TOKEN) {
-      try {
-        const charSuffix = resolvedChar ? ` for **${resolvedChar}**` : '';
-        await sendChannelMessage(env.DISCORD_FEED_CHANNEL_ID, {
-          embeds: [{
-            title: 'Shop Purchase Receipt',
-            description: `**${delivery.serverNickname}** purchased **${item.title}**${charSuffix} for **${item.costBones}** Bones!`,
-            color: Colors.GOLD,
-            timestamp: new Date().toISOString()
-          }]
-        }, env.DISCORD_BOT_TOKEN);
-      } catch (err) {
-        console.error('Feed broadcast error:', err);
-      }
-    }
-
     return jsonResponse({ success: true, remainingBones: wallet.spendableBones, delivery });
   }
 

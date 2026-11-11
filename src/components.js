@@ -108,29 +108,8 @@ async function handleBountyApprove(interaction, claimId, env, firestore) {
     amount: reward,
     spendableBones: wallet.spendableBones,
     boneScore: wallet.boneScore,
-    reason: `Approved Bounty: ${claim.bountyTitle} (${claimId})`,
-    notifyFeed: false
+    reason: `Approved Bounty: ${claim.bountyTitle} (${claimId})`
   });
-
-  // Post to #exchange-feed
-  if (env.DISCORD_FEED_CHANNEL_ID && env.DISCORD_BOT_TOKEN) {
-    try {
-      await sendChannelMessage(env.DISCORD_FEED_CHANNEL_ID, {
-        embeds: [{
-          title: '⚔️ Bounty Claim Approved!',
-          description: `<@${claim.discordId}> completed **${claim.bountyTitle}** and earned **+${reward} Bones**!\n> Verified by **${officerName}**`,
-          color: Colors.GREEN,
-          fields: [
-            { name: '💰 Spendable Balance', value: `${wallet.spendableBones} Bones`, inline: true },
-            { name: '🏆 Bone Score', value: `${wallet.boneScore} Pts`, inline: true }
-          ],
-          timestamp: new Date().toISOString()
-        }]
-      }, env.DISCORD_BOT_TOKEN);
-    } catch (err) {
-      console.error('Failed to post to #exchange-feed:', err);
-    }
-  }
 
   // Update existing Discord message in-place
   const originalEmbed = interaction.message?.embeds?.[0] || {};

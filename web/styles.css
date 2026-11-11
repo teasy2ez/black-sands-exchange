@@ -1271,9 +1271,10 @@ textarea.form-control {
    ========================================================================== */
 .officer-subtabs {
   display: flex;
-  gap: 0.35rem;
+  flex-wrap: wrap;
+  gap: 0.25rem;
   border-bottom: 1px solid var(--border-gold);
-  margin-bottom: 1.5rem;
+  margin-bottom: 1.25rem;
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
   scrollbar-width: none;
@@ -1289,15 +1290,17 @@ textarea.form-control {
   border: 1px solid var(--border-subtle);
   border-bottom: none;
   color: var(--text-muted);
-  padding: 0.5rem 1rem;
+  padding: 0.35rem 0.65rem;
   font-family: var(--font-serif);
-  font-size: 0.8rem;
+  font-size: 0.72rem;
   font-weight: 700;
+  letter-spacing: 0.02em;
   text-transform: uppercase;
   cursor: pointer;
   border-radius: var(--radius-sm) var(--radius-sm) 0 0;
   transition: all 0.15s ease;
   white-space: nowrap;
+  line-height: 1.2;
 }
 
 .officer-subtab:hover {
@@ -1317,10 +1320,11 @@ textarea.form-control {
 .counter-bubble {
   background: #b91c1c;
   color: #fff;
-  font-size: 0.65rem;
-  padding: 0.1rem 0.35rem;
+  font-size: 0.6rem;
+  padding: 0.05rem 0.28rem;
   border-radius: 999px;
-  margin-left: 0.35rem;
+  margin-left: 0.25rem;
+  font-weight: 700;
 }
 
 .officer-subview {

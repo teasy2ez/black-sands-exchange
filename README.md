@@ -16,9 +16,8 @@ A cloud-native community & guild economy platform featuring **Bones currency**, 
 - **Serverless 2-Way Discord Bot (`worker.js` via `/api/discord/interactions`)**:
   - 100% Serverless on Cloudflare Workers with cryptographic **Ed25519 signature verification** (`tweetnacl`).
   - **Zero hosting cost, zero PC maintenance** (no local PowerShell or daemon script needed).
-  - **3-Channel Discord Topology**:
-    - `#exchange-standings`: Read-only channel with auto-updating live dashboard embeds (Leaderboard, Bounties, Shop Catalog) edited **in-place**.
-    - `#exchange-feed`: Public live notification feed for awards, deductions, completed bounties, and shop purchases.
+  - **Discord Channel Architecture**:
+    - `#the-exchange`: Read-only channel with auto-updating live dashboard embeds (Leaderboard, Bounties, Shop Catalog) edited **in-place** (or split across dedicated channels via Officer Hall).
     - `#officer-exchange`: Private officer-only channel for bounty claim alerts with **[Approve (Award X Bones)]** / **[Deny]** buttons and shop delivery tickets with **[Mark Delivered]** buttons.
 
 ---
@@ -56,7 +55,6 @@ npx wrangler secret put DISCORD_PUBLIC_KEY
 npx wrangler secret put DISCORD_BOT_TOKEN
 npx wrangler secret put DISCORD_GUILD_ID
 npx wrangler secret put DISCORD_STANDINGS_CHANNEL_ID
-npx wrangler secret put DISCORD_FEED_CHANNEL_ID
 npx wrangler secret put DISCORD_OFFICER_CHANNEL_ID
 npx wrangler secret put DISCORD_OFFICER_ROLE_ID
 npx wrangler secret put GCP_SERVICE_ACCOUNT_KEY
