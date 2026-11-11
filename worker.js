@@ -1635,6 +1635,43 @@ async function handleExchangeApi(url, request, env, firestore) {
     });
   }
 
+  // POST Update Leaderboard Default Add/Subtract Bones Settings
+  if (path === 'settings/leaderboard-defaults' && request.method === 'POST') {
+    const { defaultAwardBones, defaultDeductBones, defaultAwardReason, defaultDeductReason } = body;
+    const state = await firestore.getBseState();
+    state.config = state.config || {};
+    state.config.leaderboardDefaults = state.config.leaderboardDefaults || {};
+
+    if (defaultAwardBones !== undefined) {
+      state.config.leaderboardDefaults.defaultAwardBones = Math.max(1, parseInt(defaultAwardBones, 10) || 25);
+    }
+    if (defaultDeductBones !== undefined) {
+      state.config.leaderboardDefaults.defaultDeductBones = Math.max(1, parseInt(defaultDeductBones, 10) || 10);
+    }
+    if (defaultAwardReason !== undefined) {
+      state.config.leaderboardDefaults.defaultAwardReason = String(defaultAwardReason || '').trim() || 'Guild event contribution';
+    }
+    if (defaultDeductReason !== undefined) {
+      state.config.leaderboardDefaults.defaultDeductReason = String(defaultDeductReason || '').trim() || 'Ledger correction';
+    }
+
+    state.updatedAt = new Date().toISOString();
+    await firestore.saveBseState(state);
+
+    await firestore.logAuditEvent({
+      action: 'OFFICER_SETTINGS_UPDATE',
+      officerId,
+      officerName,
+      reason: `Updated leaderboard default bones: +${state.config.leaderboardDefaults.defaultAwardBones} / -${state.config.leaderboardDefaults.defaultDeductBones}`,
+      timestamp: new Date().toISOString()
+    });
+
+    return jsonResponse({
+      success: true,
+      leaderboardDefaults: state.config.leaderboardDefaults
+    });
+  }
+
   // POST Update FAQ Items
   if (path === 'settings/faq' && request.method === 'POST') {
     const { items } = body;

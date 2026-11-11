@@ -440,6 +440,15 @@ function renderLeaderboard() {
   if (cntHidden) cntHidden.textContent = hiddenCount;
   if (cntAll) cntAll.textContent = totalCount;
 
+  const lbDefaults = state.bseState?.config?.leaderboardDefaults || {};
+  const defaultAward = lbDefaults.defaultAwardBones || 25;
+  const defaultDeduct = lbDefaults.defaultDeductBones || 10;
+
+  const lblDefaultValues = document.getElementById('lblLeaderboardDefaultValues');
+  if (lblDefaultValues) {
+    lblDefaultValues.textContent = `+${defaultAward} / -${defaultDeduct}`;
+  }
+
   if (officerLeaderboardFilters) {
     officerLeaderboardFilters.style.display = isOfficer ? 'flex' : 'none';
   }
@@ -503,6 +512,7 @@ function renderLeaderboard() {
 
   if (thLeaderboardActions) {
     thLeaderboardActions.style.display = isOfficer ? 'table-cell' : 'none';
+    thLeaderboardActions.textContent = `Actions (+${defaultAward} / -${defaultDeduct})`;
   }
 
   const colSpanCount = isOfficer ? 8 : 7;
@@ -559,8 +569,8 @@ function renderLeaderboard() {
     const officerActionsCell = isOfficer ? `
       <td style="text-align: center;" onclick="event.stopPropagation()">
         <div class="officer-inline-actions">
-          <button class="btn-officer-award" title="Award Bones" onclick="event.stopPropagation(); openBonesAdjustModal('${w.discordId}', '${escapeAttr(name)}', 'award')">+ Bones</button>
-          <button class="btn-officer-deduct" title="Deduct Bones" onclick="event.stopPropagation(); openBonesAdjustModal('${w.discordId}', '${escapeAttr(name)}', 'deduct')">- Bones</button>
+          <button class="btn-officer-award" title="Award ${defaultAward} Bones" onclick="event.stopPropagation(); openBonesAdjustModal('${w.discordId}', '${escapeAttr(name)}', 'award')">+${defaultAward}</button>
+          <button class="btn-officer-deduct" title="Deduct ${defaultDeduct} Bones" onclick="event.stopPropagation(); openBonesAdjustModal('${w.discordId}', '${escapeAttr(name)}', 'deduct')">-${defaultDeduct}</button>
         </div>
       </td>
     ` : '';
@@ -616,8 +626,8 @@ function renderLeaderboard() {
 
       const mobileOfficerStrip = isOfficer ? `
         <div class="mobile-card-officer-strip" onclick="event.stopPropagation()">
-          <button class="btn-officer-award" onclick="event.stopPropagation(); openBonesAdjustModal('${w.discordId}', '${escapeAttr(name)}', 'award')">+ Bones</button>
-          <button class="btn-officer-deduct" onclick="event.stopPropagation(); openBonesAdjustModal('${w.discordId}', '${escapeAttr(name)}', 'deduct')">- Bones</button>
+          <button class="btn-officer-award" onclick="event.stopPropagation(); openBonesAdjustModal('${w.discordId}', '${escapeAttr(name)}', 'award')">+${defaultAward}</button>
+          <button class="btn-officer-deduct" onclick="event.stopPropagation(); openBonesAdjustModal('${w.discordId}', '${escapeAttr(name)}', 'deduct')">-${defaultDeduct}</button>
         </div>
       ` : '';
 
@@ -1041,11 +1051,29 @@ window.openBonesAdjustModal = function(userId, memberName, initialMode = 'award'
   const balEl = document.getElementById('bonesAdjustCurrentBalance');
   if (balEl) balEl.textContent = `${(wallet.spendableBones || 0).toLocaleString()} Bones`;
 
-  // Defaults
+  // Defaults from Leaderboard Defaults Config
+  const lbDefaults = state.bseState?.config?.leaderboardDefaults || {};
+  const defaultAward = lbDefaults.defaultAwardBones || 25;
+  const defaultDeduct = lbDefaults.defaultDeductBones || 10;
+  const defaultAwardReason = lbDefaults.defaultAwardReason || 'Guild event contribution';
+  const defaultDeductReason = lbDefaults.defaultDeductReason || 'Ledger correction';
+
+  const defaultAmt = initialMode === 'award' ? defaultAward : defaultDeduct;
+  const defaultRsn = initialMode === 'award' ? defaultAwardReason : defaultDeductReason;
+
   const amountInput = document.getElementById('bonesAdjustAmountInput');
-  if (amountInput) amountInput.value = '25';
+  if (amountInput) amountInput.value = String(defaultAmt);
   const reasonInput = document.getElementById('bonesAdjustReasonInput');
-  if (reasonInput) reasonInput.value = initialMode === 'award' ? 'Guild event contribution' : 'Ledger correction';
+  if (reasonInput) reasonInput.value = defaultRsn;
+
+  // Highlight matching quick chip if present
+  document.querySelectorAll('#bonesQuickChips .quick-chip').forEach(c => {
+    if (parseInt(c.getAttribute('data-amt'), 10) === defaultAmt) {
+      c.classList.add('active');
+    } else {
+      c.classList.remove('active');
+    }
+  });
 
   setBonesAdjustMode(initialMode);
   modal.classList.add('active');
@@ -1053,8 +1081,38 @@ window.openBonesAdjustModal = function(userId, memberName, initialMode = 'award'
 
 window.setBonesAdjustMode = function(mode) {
   if (!state.activeBonesAdjust) return;
+  const prevMode = state.activeBonesAdjust.mode;
   state.activeBonesAdjust.mode = mode;
   const isAward = mode === 'award';
+
+  const lbDefaults = state.bseState?.config?.leaderboardDefaults || {};
+  const defaultAward = lbDefaults.defaultAwardBones || 25;
+  const defaultDeduct = lbDefaults.defaultDeductBones || 10;
+  const defaultAwardReason = lbDefaults.defaultAwardReason || 'Guild event contribution';
+  const defaultDeductReason = lbDefaults.defaultDeductReason || 'Ledger correction';
+
+  const amountInput = document.getElementById('bonesAdjustAmountInput');
+  const reasonInput = document.getElementById('bonesAdjustReasonInput');
+  if (amountInput && prevMode && prevMode !== mode) {
+    const prevDefault = prevMode === 'award' ? defaultAward : defaultDeduct;
+    if (parseInt(amountInput.value, 10) === prevDefault || !amountInput.value) {
+      const newAmt = isAward ? defaultAward : defaultDeduct;
+      amountInput.value = String(newAmt);
+      document.querySelectorAll('#bonesQuickChips .quick-chip').forEach(c => {
+        if (parseInt(c.getAttribute('data-amt'), 10) === newAmt) {
+          c.classList.add('active');
+        } else {
+          c.classList.remove('active');
+        }
+      });
+    }
+  }
+  if (reasonInput && prevMode && prevMode !== mode) {
+    const prevReason = prevMode === 'award' ? defaultAwardReason : defaultDeductReason;
+    if (reasonInput.value === prevReason || !reasonInput.value) {
+      reasonInput.value = isAward ? defaultAwardReason : defaultDeductReason;
+    }
+  }
 
   const btnAward = document.getElementById('btnModeAward');
   const btnDeduct = document.getElementById('btnModeDeduct');
@@ -1452,6 +1510,16 @@ function populateOfficerSettingsForms() {
   state.draftFaq = [...(modules.faq?.items || [])];
   renderFaqBuilder();
 
+  // Leaderboard Defaults Editor
+  const lbDefaults = state.bseState?.config?.leaderboardDefaults || {};
+  const editAward = document.getElementById('editorDefaultAwardBones');
+  if (editAward) editAward.value = lbDefaults.defaultAwardBones || 25;
+  const editDeduct = document.getElementById('editorDefaultDeductBones');
+  if (editDeduct) editDeduct.value = lbDefaults.defaultDeductBones || 10;
+  const editAwardRsn = document.getElementById('editorDefaultAwardReason');
+  if (editAwardRsn) editAwardRsn.value = lbDefaults.defaultAwardReason || 'Guild event contribution';
+  const editDeductRsn = document.getElementById('editorDefaultDeductReason');
+  if (editDeductRsn) editDeductRsn.value = lbDefaults.defaultDeductReason || 'Ledger correction';
 }
 
 /**
@@ -1643,6 +1711,18 @@ function setupDataEditor() {
       } catch (err) {
         showToast(`Error: ${err.message}`);
       }
+    });
+  }
+
+  // 4. Save Leaderboard Default Bones Settings
+  const btnSaveLbSettings = document.getElementById('btnSaveLeaderboardBonesSettingsEditor');
+  if (btnSaveLbSettings) {
+    btnSaveLbSettings.addEventListener('click', async () => {
+      const award = document.getElementById('editorDefaultAwardBones')?.value;
+      const deduct = document.getElementById('editorDefaultDeductBones')?.value;
+      const awardRsn = document.getElementById('editorDefaultAwardReason')?.value;
+      const deductRsn = document.getElementById('editorDefaultDeductReason')?.value;
+      await saveLeaderboardBonesSettings(award, deduct, awardRsn, deductRsn);
     });
   }
 
@@ -2174,6 +2254,19 @@ function setupModals() {
       btnSave.disabled = false;
       btnSave.textContent = 'Save Bounty Changes';
     }
+  });
+
+  // Leaderboard Default Bones Settings Handlers
+  document.getElementById('btnOpenLeaderboardBonesSettings')?.addEventListener('click', () => {
+    openLeaderboardBonesSettingsModal();
+  });
+
+  document.getElementById('btnSaveLeaderboardBonesSettingsModal')?.addEventListener('click', async () => {
+    const award = document.getElementById('modalSettingDefaultAwardBones')?.value;
+    const deduct = document.getElementById('modalSettingDefaultDeductBones')?.value;
+    const awardRsn = document.getElementById('modalSettingDefaultAwardReason')?.value;
+    const deductRsn = document.getElementById('modalSettingDefaultDeductReason')?.value;
+    await saveLeaderboardBonesSettings(award, deduct, awardRsn, deductRsn);
   });
 }
 
@@ -3103,6 +3196,55 @@ function addEditBonusRow() {
   container.appendChild(row);
 }
 window.addEditBonusRow = addEditBonusRow;
+
+window.openLeaderboardBonesSettingsModal = function() {
+  const lbDefaults = state.bseState?.config?.leaderboardDefaults || {};
+  const awardInput = document.getElementById('modalSettingDefaultAwardBones');
+  if (awardInput) awardInput.value = lbDefaults.defaultAwardBones || 25;
+  const deductInput = document.getElementById('modalSettingDefaultDeductBones');
+  if (deductInput) deductInput.value = lbDefaults.defaultDeductBones || 10;
+  const awardRsn = document.getElementById('modalSettingDefaultAwardReason');
+  if (awardRsn) awardRsn.value = lbDefaults.defaultAwardReason || 'Guild event contribution';
+  const deductRsn = document.getElementById('modalSettingDefaultDeductReason');
+  if (deductRsn) deductRsn.value = lbDefaults.defaultDeductReason || 'Ledger correction';
+
+  document.getElementById('modalLeaderboardBonesSettings')?.classList.add('active');
+};
+
+window.saveLeaderboardBonesSettings = async function(awardBones, deductBones, awardReason, deductReason) {
+  const award = parseInt(awardBones, 10);
+  const deduct = parseInt(deductBones, 10);
+  if (isNaN(award) || award < 1 || isNaN(deduct) || deduct < 1) {
+    showToast('Please enter valid positive numbers for default Bones.');
+    return false;
+  }
+
+  try {
+    const res = await fetch('/api/exchange/settings/leaderboard-defaults', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        defaultAwardBones: award,
+        defaultDeductBones: deduct,
+        defaultAwardReason: (awardReason || '').trim() || 'Guild event contribution',
+        defaultDeductReason: (deductReason || '').trim() || 'Ledger correction'
+      })
+    });
+    const data = await res.json();
+    if (res.ok) {
+      showToast(`Default Bones updated: +${award} / -${deduct}`);
+      document.getElementById('modalLeaderboardBonesSettings')?.classList.remove('active');
+      await refreshBseState();
+      return true;
+    } else {
+      showToast(`Failed: ${data.error || 'Server error'}`);
+      return false;
+    }
+  } catch (err) {
+    showToast(`Error: ${err.message}`);
+    return false;
+  }
+};
 
 window.adjustShopStock = async function(itemId, delta) {
   const item = (state.bseState?.shop || []).find(i => i.id === itemId);
