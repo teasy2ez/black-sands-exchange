@@ -15,6 +15,7 @@ import {
   syncBountiesEmbed,
   getChannelRouting
 } from './discord.js';
+import { applyWeeklyBoneAward } from './weeklyCap.js';
 
 /**
  * Check if the member calling the command is an authorized Officer
@@ -372,25 +373,40 @@ async function handleAwardCommand(interaction, opts, env, firestore) {
     boneScore: 0
   };
 
-  wallet.spendableBones = (wallet.spendableBones || 0) + amount;
-  wallet.boneScore = (wallet.boneScore || 0) + amount; // Verified award increments Bone Score
+  const awardResult = applyWeeklyBoneAward(wallet, amount, state);
+  if (awardResult.hitCap) {
+    return {
+      type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+      data: {
+        content: `⛔ <@${targetId}> has already reached the weekly Bone cap (**${awardResult.weeklyEarned}/${awardResult.cap}** earned this week).`,
+        flags: 64
+      }
+    };
+  }
+
   wallet.updatedAt = new Date().toISOString();
+  state.wallets[targetId] = wallet;
+
+  const capNote = awardResult.capped
+    ? ` (Capped from +${amount} to +${awardResult.granted}; weekly cap ${awardResult.weeklyEarned}/${awardResult.cap})`
+    : '';
+
   await recordAuditLogAndSync(state, env, firestore, {
     action: 'AWARD',
     officerId: officer.id,
     officerName,
     targetId,
     targetName: wallet.serverNickname || wallet.globalName || wallet.username || targetId,
-    amount,
+    amount: awardResult.granted,
     spendableBones: wallet.spendableBones,
     boneScore: wallet.boneScore,
-    reason
+    reason: `${reason}${capNote}`
   });
 
   return {
     type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
     data: {
-      content: `✅ Successfully awarded **+${amount} Bones** to <@${targetId}> for: *${reason}* (Total Score: **${wallet.boneScore}**)`,
+      content: `✅ Successfully awarded **+${awardResult.granted} Bones** to <@${targetId}> for: *${reason}*${capNote} (Weekly: **${awardResult.weeklyEarned}/${awardResult.cap}** | Total Score: **${wallet.boneScore}**)`,
       flags: 64
     }
   };

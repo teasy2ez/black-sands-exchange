@@ -290,6 +290,31 @@ async function refreshBseState() {
       walletScore.textContent = state.user.boneScore.toLocaleString();
       walletPrimaryCharName.textContent = state.user.primaryCharacter || 'None (Click to link)';
       updatePrestigeBanner(state.user.boneScore, state.user.spendableBones);
+
+      const weeklyCapEl = document.getElementById('walletWeeklyEarned');
+      const weeklyCapBox = document.getElementById('walletWeeklyCapBox');
+      if (weeklyCapEl && weeklyCapBox) {
+        const capCfg = bse.config?.weeklyCap || {};
+        const enabled = capCfg.enabled !== false;
+        const capAmount = parseInt(capCfg.cap, 10) || 50;
+        const resetDay = Number.isInteger(parseInt(capCfg.resetDay, 10)) ? parseInt(capCfg.resetDay, 10) : 2;
+        const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+        const now = new Date();
+        const utcStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0, 0));
+        const diff = (utcStart.getUTCDay() - resetDay + 7) % 7;
+        utcStart.setUTCDate(utcStart.getUTCDate() - diff);
+        const currentWindowIso = utcStart.toISOString();
+        const weeklyEarned = w.weeklyWindowStart === currentWindowIso ? (w.weeklyBonesEarned || 0) : 0;
+
+        if (!enabled) {
+          weeklyCapEl.textContent = `${weeklyEarned.toLocaleString()} / ∞`;
+          weeklyCapBox.title = 'Weekly Bone cap is currently disabled';
+        } else {
+          weeklyCapEl.textContent = `${weeklyEarned.toLocaleString()} / ${capAmount.toLocaleString()}`;
+          weeklyCapEl.style.color = weeklyEarned >= capAmount ? '#f87171' : 'var(--gold-200)';
+          weeklyCapBox.title = `Resets every ${dayNames[resetDay] || 'Tuesday'} at 00:00 UTC (Spendable Bones can exceed ${capAmount} when saved across weeks)`;
+        }
+      }
     }
 
     renderLeaderboard();
@@ -1540,6 +1565,15 @@ function populateOfficerSettingsForms() {
   if (editAwardRsn) editAwardRsn.value = lbDefaults.defaultAwardReason || 'Guild event contribution';
   const editDeductRsn = document.getElementById('editorDefaultDeductReason');
   if (editDeductRsn) editDeductRsn.value = lbDefaults.defaultDeductReason || 'Ledger correction';
+
+  // Weekly Bone Cap Settings Editor
+  const weeklyCapCfg = state.bseState?.config?.weeklyCap || {};
+  const editCapEnabled = document.getElementById('editorWeeklyCapEnabled');
+  if (editCapEnabled) editCapEnabled.checked = weeklyCapCfg.enabled !== false;
+  const editCapAmount = document.getElementById('editorWeeklyCapAmount');
+  if (editCapAmount) editCapAmount.value = parseInt(weeklyCapCfg.cap, 10) || 50;
+  const editResetDay = document.getElementById('editorWeeklyResetDay');
+  if (editResetDay) editResetDay.value = String(Number.isInteger(parseInt(weeklyCapCfg.resetDay, 10)) ? parseInt(weeklyCapCfg.resetDay, 10) : 2);
 }
 
 /**
@@ -1743,6 +1777,38 @@ function setupDataEditor() {
       const awardRsn = document.getElementById('editorDefaultAwardReason')?.value;
       const deductRsn = document.getElementById('editorDefaultDeductReason')?.value;
       await saveLeaderboardBonesSettings(award, deduct, awardRsn, deductRsn);
+    });
+  }
+
+  // 5. Save Weekly Bone Cap & Reset Day Settings
+  const btnSaveWeeklyCap = document.getElementById('btnSaveWeeklyCapSettings');
+  if (btnSaveWeeklyCap) {
+    btnSaveWeeklyCap.addEventListener('click', async () => {
+      const enabled = Boolean(document.getElementById('editorWeeklyCapEnabled')?.checked);
+      const cap = parseInt(document.getElementById('editorWeeklyCapAmount')?.value, 10);
+      const resetDay = parseInt(document.getElementById('editorWeeklyResetDay')?.value, 10);
+      if (enabled && (isNaN(cap) || cap < 1)) {
+        return showToast('Weekly Bone cap must be at least 1.');
+      }
+      try {
+        const res = await fetch('/api/exchange/settings/weekly-cap', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enabled, cap: isNaN(cap) ? 50 : cap, resetDay })
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+          showToast(data.weeklyCap.enabled
+            ? `Weekly cap saved: ${data.weeklyCap.cap} Bones/week (resets ${dayNames[data.weeklyCap.resetDay]}).`
+            : 'Weekly Bone cap disabled.');
+          await refreshBseState();
+        } else {
+          showToast(`Failed: ${data.error || 'Server error'}`);
+        }
+      } catch (err) {
+        showToast(`Error: ${err.message}`);
+      }
     });
   }
 
@@ -2996,7 +3062,10 @@ function setupRaidMultiAward() {
 
         if (res.ok) {
           const data = await res.json();
-          showToast(`Successfully awarded +${amount} Bones to ${data.awardedCount} members!`);
+          const capMsg = (data.cappedCount || data.skippedAtCapCount)
+            ? ` (${data.cappedCount || 0} capped, ${data.skippedAtCapCount || 0} skipped at weekly limit)`
+            : '';
+          showToast(`Successfully awarded +${amount} Bones to ${data.awardedCount} members${capMsg}!`);
           modalRaidAward.classList.remove('active');
           await refreshBseState();
         } else {

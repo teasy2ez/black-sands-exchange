@@ -6,6 +6,7 @@ import {
   recordAuditLogAndSync
 } from './discord.js';
 import { isOfficer, resolveRank } from './commands.js';
+import { applyWeeklyBoneAward } from './weeklyCap.js';
 
 /**
  * Handle Discord Message Component Interactions (Button clicks)
@@ -85,8 +86,8 @@ async function handleBountyApprove(interaction, claimId, env, firestore) {
     boneScore: 0
   };
 
-  wallet.spendableBones = (wallet.spendableBones || 0) + reward;
-  wallet.boneScore = (wallet.boneScore || 0) + reward; // Verified bounty adds to Career Bone Score
+  const awardResult = applyWeeklyBoneAward(wallet, reward, state);
+  claim.rewardBones = awardResult.granted;
   wallet.bountiesCompleted = (wallet.bountiesCompleted || 0) + 1; // Track member bounties completed
   wallet.updatedAt = new Date().toISOString();
   state.wallets[claim.discordId] = wallet;
@@ -99,16 +100,20 @@ async function handleBountyApprove(interaction, claimId, env, firestore) {
     creatorWallet.updatedAt = new Date().toISOString();
   }
 
+  const capNote = awardResult.capped
+    ? ` (Capped from ${reward} to ${awardResult.granted} — weekly cap ${awardResult.weeklyEarned}/${awardResult.cap})`
+    : '';
+
   await recordAuditLogAndSync(state, env, firestore, {
     action: 'BOUNTY_REWARD',
     officerId: officer.id,
     officerName,
     targetId: claim.discordId,
     targetName: claim.serverNickname || claim.discordUsername,
-    amount: reward,
+    amount: awardResult.granted,
     spendableBones: wallet.spendableBones,
     boneScore: wallet.boneScore,
-    reason: `Approved Bounty: ${claim.bountyTitle} (${claimId})`
+    reason: `Approved Bounty: ${claim.bountyTitle} (${claimId})${capNote}`
   });
 
   // Update existing Discord message in-place
@@ -116,7 +121,7 @@ async function handleBountyApprove(interaction, claimId, env, firestore) {
   return {
     type: InteractionResponseType.UPDATE_MESSAGE,
     data: {
-      content: `✅ **APPROVED** by <@${officer.id}> (+${reward} Bones awarded to <@${claim.discordId}>)`,
+      content: `✅ **APPROVED** by <@${officer.id}> (+${awardResult.granted} Bones awarded to <@${claim.discordId}>${capNote})`,
       embeds: [{
         ...originalEmbed,
         color: Colors.GREEN,

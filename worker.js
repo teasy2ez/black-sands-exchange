@@ -29,6 +29,7 @@ import {
 import { FirestoreClient } from './src/firestore.js';
 import { handleApplicationCommand, resolveRank } from './src/commands.js';
 import { handleMessageComponent } from './src/components.js';
+import { WEEK_DAYS, getWeeklyCapConfig, applyWeeklyBoneAward } from './src/weeklyCap.js';
 
 const AUTO_ROSTER_SYNC_INTERVAL_MS = 60 * 1000;
 let lastAutoRosterSyncCheckMs = 0;
@@ -767,7 +768,6 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
     const reward = customReward !== undefined && Number.isInteger(customReward)
       ? Math.max(1, customReward)
       : (claim.rewardBones || 0);
-    claim.rewardBones = reward;
 
     state.wallets = state.wallets || {};
     const wallet = state.wallets[claim.discordId] || {
@@ -778,8 +778,8 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
       boneScore: 0
     };
 
-    wallet.spendableBones = (wallet.spendableBones || 0) + reward;
-    wallet.boneScore = (wallet.boneScore || 0) + reward;
+    const awardResult = applyWeeklyBoneAward(wallet, reward, state);
+    claim.rewardBones = awardResult.granted;
     wallet.bountiesCompleted = (wallet.bountiesCompleted || 0) + 1; // Track member verified bounties completed
     wallet.updatedAt = new Date().toISOString();
     state.wallets[claim.discordId] = wallet;
@@ -792,19 +792,29 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
       creatorWallet.updatedAt = new Date().toISOString();
     }
 
+    const capNote = awardResult.capped
+      ? ` (Capped from ${reward} to ${awardResult.granted} — weekly cap ${awardResult.weeklyEarned}/${awardResult.cap})`
+      : '';
+
     await recordAuditLogAndSync(state, env, firestore, {
       action: 'BOUNTY_REWARD',
       officerId,
       officerName,
       targetId: claim.discordId,
       targetName: claim.serverNickname || claim.discordUsername,
-      amount: reward,
+      amount: awardResult.granted,
       spendableBones: wallet.spendableBones,
       boneScore: wallet.boneScore,
-      reason: `Approved claim ${claimId} (${claim.bountyTitle})${officerNote ? ` - Note: ${officerNote}` : ''}`
+      reason: `Approved claim ${claimId} (${claim.bountyTitle})${officerNote ? ` - Note: ${officerNote}` : ''}${capNote}`
     });
 
-    return jsonResponse({ success: true, claim, wallet });
+    return jsonResponse({
+      success: true,
+      claim,
+      wallet,
+      grantedAmount: awardResult.granted,
+      capped: awardResult.capped
+    });
   }
 
   // POST Deny Claim with reason
@@ -989,12 +999,23 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
       boneScore: 0
     };
 
-    wallet.spendableBones = (wallet.spendableBones || 0) + numAmount;
-    wallet.boneScore = (wallet.boneScore || 0) + numAmount;
+    const targetName = wallet.serverNickname || wallet.globalName || wallet.username || targetId;
+    const awardResult = applyWeeklyBoneAward(wallet, numAmount, state);
+    if (awardResult.hitCap) {
+      return jsonResponse({
+        error: `${targetName} has already reached the weekly Bone cap (${awardResult.weeklyEarned}/${awardResult.cap} earned this week).`,
+        weeklyCapReached: true,
+        weeklyEarned: awardResult.weeklyEarned,
+        weeklyCap: awardResult.cap
+      }, 400);
+    }
+
     wallet.updatedAt = new Date().toISOString();
     state.wallets[targetId] = wallet;
 
-    const targetName = wallet.serverNickname || wallet.globalName || wallet.username || targetId;
+    const capNote = awardResult.capped
+      ? ` (Capped from +${numAmount} to +${awardResult.granted}; weekly cap ${awardResult.weeklyEarned}/${awardResult.cap})`
+      : '';
 
     await recordAuditLogAndSync(state, env, firestore, {
       action: 'AWARD',
@@ -1002,13 +1023,20 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
       officerName,
       targetId,
       targetName,
-      amount: numAmount,
+      amount: awardResult.granted,
       spendableBones: wallet.spendableBones,
       boneScore: wallet.boneScore,
-      reason: reason || 'Guild contribution'
+      reason: `${reason || 'Guild contribution'}${capNote}`
     });
 
-    return jsonResponse({ success: true, wallet });
+    return jsonResponse({
+      success: true,
+      wallet,
+      grantedAmount: awardResult.granted,
+      capped: awardResult.capped,
+      weeklyEarned: awardResult.weeklyEarned,
+      weeklyCap: awardResult.cap
+    });
   }
 
   // POST Deduct Bones
@@ -1703,6 +1731,45 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
     return jsonResponse({
       success: true,
       leaderboardDefaults: state.config.leaderboardDefaults
+    });
+  }
+
+  // POST Update Weekly Bone Cap & Reset Day Settings
+  if (path === 'settings/weekly-cap' && request.method === 'POST') {
+    const { enabled, cap, resetDay } = body;
+    const state = await firestore.getBseState();
+    state.config = state.config || {};
+    const current = getWeeklyCapConfig(state);
+
+    const nextEnabled = enabled !== undefined ? Boolean(enabled) : current.enabled;
+    const parsedCap = cap !== undefined ? parseInt(cap, 10) : current.cap;
+    const nextCap = Number.isFinite(parsedCap) && parsedCap >= 1 ? parsedCap : current.cap;
+    const parsedDay = resetDay !== undefined ? parseInt(resetDay, 10) : current.resetDay;
+    const nextResetDay = Number.isInteger(parsedDay) && parsedDay >= 0 && parsedDay <= 6 ? parsedDay : current.resetDay;
+
+    state.config.weeklyCap = {
+      enabled: nextEnabled,
+      cap: nextCap,
+      resetDay: nextResetDay
+    };
+
+    state.updatedAt = new Date().toISOString();
+    await firestore.saveBseState(state);
+
+    const dayLabel = WEEK_DAYS[nextResetDay] || 'Tuesday';
+    await firestore.logAuditEvent({
+      action: 'OFFICER_SETTINGS_UPDATE',
+      officerId,
+      officerName,
+      reason: nextEnabled
+        ? `Updated weekly Bone cap: ${nextCap} Bones/week, resets every ${dayLabel}`
+        : `Disabled weekly Bone cap (reset day set to ${dayLabel})`,
+      timestamp: new Date().toISOString()
+    });
+
+    return jsonResponse({
+      success: true,
+      weeklyCap: state.config.weeklyCap
     });
   }
 
