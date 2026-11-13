@@ -143,7 +143,13 @@ async function handleLeaderboardCommand(interaction, env, firestore) {
   activeMembers.sort((a, b) => {
     const diffSpendable = (b.spendableBones || 0) - (a.spendableBones || 0);
     if (diffSpendable !== 0) return diffSpendable;
-    return (b.boneScore || 0) - (a.boneScore || 0);
+    const diffScore = (b.boneScore || 0) - (a.boneScore || 0);
+    if (diffScore !== 0) return diffScore;
+    const nameA = (a.serverNickname || a.globalName || a.username || '').toLowerCase();
+    const nameB = (b.serverNickname || b.globalName || b.username || '').toLowerCase();
+    const nameDiff = nameA.localeCompare(nameB);
+    if (nameDiff !== 0) return nameDiff;
+    return String(a.discordId || '').localeCompare(String(b.discordId || ''));
   });
   const top25 = activeMembers.slice(0, 25).map(m => ({
     ...m,

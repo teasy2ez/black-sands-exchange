@@ -453,6 +453,22 @@ function renderLeaderboard() {
     officerLeaderboardFilters.style.display = isOfficer ? 'flex' : 'none';
   }
 
+  const compareByName = (a, b) => {
+    const nameA = (a.serverNickname || a.globalName || a.username || '').toLowerCase();
+    const nameB = (b.serverNickname || b.globalName || b.username || '').toLowerCase();
+    const nameDiff = nameA.localeCompare(nameB);
+    if (nameDiff !== 0) return nameDiff;
+    return String(a.discordId || '').localeCompare(String(b.discordId || ''));
+  };
+
+  const compareByRank = (a, b) => {
+    const scoreDiff = (b.boneScore || b.spendableBones || 0) - (a.boneScore || a.spendableBones || 0);
+    if (scoreDiff !== 0) return scoreDiff;
+    const spendableDiff = (b.spendableBones || 0) - (a.spendableBones || 0);
+    if (spendableDiff !== 0) return spendableDiff;
+    return compareByName(a, b);
+  };
+
   // Determine visible pool based on permissions and filter selection
   let visiblePool = [];
   if (!isOfficer) {
@@ -460,7 +476,7 @@ function renderLeaderboard() {
     // 1. Hide members who have 0 bones (auto-unhidden once earning bones)
     // 2. Hide members who are officer-hidden
     visiblePool = allWallets.filter(w => !w.officerHidden && !isZeroBones(w));
-    visiblePool.sort((a, b) => (b.boneScore || b.spendableBones || 0) - (a.boneScore || a.spendableBones || 0));
+    visiblePool.sort(compareByRank);
   } else {
     // Officers: respect selected filter tab
     const currentFilter = state.officerLeaderboardFilter || 'active';
@@ -468,32 +484,24 @@ function renderLeaderboard() {
 
     if (currentFilter === 'active') {
       pool = allWallets.filter(w => !w.officerHidden && !isZeroBones(w));
-      pool.sort((a, b) => (b.boneScore || b.spendableBones || 0) - (a.boneScore || a.spendableBones || 0));
+      pool.sort(compareByRank);
     } else if (currentFilter === 'zero') {
       pool = allWallets.filter(w => !w.officerHidden && isZeroBones(w));
-      pool.sort((a, b) => {
-        const nameA = (a.serverNickname || a.globalName || a.username || '').toLowerCase();
-        const nameB = (b.serverNickname || b.globalName || b.username || '').toLowerCase();
-        return nameA.localeCompare(nameB);
-      });
+      pool.sort(compareByName);
     } else if (currentFilter === 'hidden') {
       pool = allWallets.filter(w => Boolean(w.officerHidden));
-      pool.sort((a, b) => (b.boneScore || 0) - (a.boneScore || 0));
+      pool.sort(compareByRank);
     } else {
       // 'all'
       // Segregate into: active members (top), zero-bones members (middle), officer-hidden (bottom)
       const activePart = allWallets.filter(w => !w.officerHidden && !isZeroBones(w));
-      activePart.sort((a, b) => (b.boneScore || b.spendableBones || 0) - (a.boneScore || a.spendableBones || 0));
+      activePart.sort(compareByRank);
 
       const zeroPart = allWallets.filter(w => !w.officerHidden && isZeroBones(w));
-      zeroPart.sort((a, b) => {
-        const nameA = (a.serverNickname || a.globalName || a.username || '').toLowerCase();
-        const nameB = (b.serverNickname || b.globalName || b.username || '').toLowerCase();
-        return nameA.localeCompare(nameB);
-      });
+      zeroPart.sort(compareByName);
 
       const hiddenPart = allWallets.filter(w => Boolean(w.officerHidden));
-      hiddenPart.sort((a, b) => (b.boneScore || 0) - (a.boneScore || 0));
+      hiddenPart.sort(compareByRank);
 
       pool = [...activePart, ...zeroPart, ...hiddenPart];
     }
@@ -533,15 +541,29 @@ function renderLeaderboard() {
     return;
   }
 
-  // 1. Render Desktop Table (>= 768px)
-  let activeRankCounter = 1;
-  leaderboardTbody.innerHTML = filtered.map(w => {
+  // Compute tied competition ranks (1, 1, 3...) based on Career Score
+  let activePosition = 0;
+  let currentRank = 0;
+  let prevRankScore = null;
+  const rankedRows = filtered.map(w => {
     const isHidden = Boolean(w.officerHidden);
     const isZero = isZeroBones(w);
-    let rankDisplay = '—';
+    let rankNumber = null;
     if (!isHidden && !isZero) {
-      rankDisplay = `#${activeRankCounter++}`;
+      activePosition++;
+      const rankScore = w.boneScore || w.spendableBones || 0;
+      if (rankScore !== prevRankScore) {
+        currentRank = activePosition;
+        prevRankScore = rankScore;
+      }
+      rankNumber = currentRank;
     }
+    return { w, isHidden, isZero, rankNumber };
+  });
+
+  // 1. Render Desktop Table (>= 768px)
+  leaderboardTbody.innerHTML = rankedRows.map(({ w, isHidden, isZero, rankNumber }) => {
+    const rankDisplay = rankNumber !== null ? `#${rankNumber}` : '—';
 
     const name = w.serverNickname || w.globalName || w.username || 'Guild Member';
     const handle = w.username ? `@${w.username}` : '';
@@ -607,11 +629,9 @@ function renderLeaderboard() {
 
   // 2. Render Mobile Roster Stream (< 768px)
   if (mobileLeaderboardList) {
-    let mobCounter = 1;
-    mobileLeaderboardList.innerHTML = filtered.map(w => {
-      const isHidden = Boolean(w.officerHidden);
-      const isZero = isZeroBones(w);
-      const rankNum = (!isHidden && !isZero) ? `#${mobCounter++}` : '—';
+    mobileLeaderboardList.innerHTML = rankedRows.map(({ w, isHidden, isZero, rankNumber }) => {
+      const rankNum = rankNumber !== null ? `#${rankNumber}` : '—';
+      const rankHighlightClass = rankNumber !== null && rankNumber <= 3 ? ` rank-${rankNumber}` : '';
 
       const name = w.serverNickname || w.globalName || w.username || 'Guild Member';
       const avatarUrl = getDiscordAvatarUrl(w.discordId, w.avatarHash, 64);
@@ -640,7 +660,7 @@ function renderLeaderboard() {
       return `
         <div class="${cardClass}" onclick="inspectMemberProfile('${w.discordId}')">
           <div style="display: flex; align-items: center; gap: 0.75rem;">
-            <div class="mobile-roster-rank">${rankNum}</div>
+            <div class="mobile-roster-rank${rankHighlightClass}">${rankNum}</div>
             <img src="${avatarUrl}" class="mobile-roster-avatar" alt="${escapeAttr(name)}" onerror="this.onerror=null;this.src='assets/favicon.svg';">
             <div class="mobile-roster-info">
               <div class="mobile-roster-name" style="display: flex; align-items: center; flex-wrap: wrap;">
