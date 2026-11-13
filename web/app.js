@@ -296,7 +296,7 @@ async function refreshBseState() {
       if (weeklyCapEl && weeklyCapBox) {
         const capCfg = bse.config?.weeklyCap || {};
         const enabled = capCfg.enabled !== false;
-        const capAmount = parseInt(capCfg.cap, 10) || 50;
+        const baseCap = parseInt(capCfg.cap, 10) || 50;
         const resetDay = Number.isInteger(parseInt(capCfg.resetDay, 10)) ? parseInt(capCfg.resetDay, 10) : 2;
         const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
         const now = new Date();
@@ -304,15 +304,40 @@ async function refreshBseState() {
         const diff = (utcStart.getUTCDay() - resetDay + 7) % 7;
         utcStart.setUTCDate(utcStart.getUTCDate() - diff);
         const currentWindowIso = utcStart.toISOString();
-        const weeklyEarned = w.weeklyWindowStart === currentWindowIso ? (w.weeklyBonesEarned || 0) : 0;
+
+        let weeklyEarned = 0;
+        let effectiveCap = baseCap;
+        if (w.weeklyWindowStart) {
+          const prevRollover = Math.max(0, w.weeklyCapRollover || 0);
+          const prevEarned = Math.max(0, w.weeklyBonesEarned || 0);
+          if (w.weeklyWindowStart === currentWindowIso) {
+            weeklyEarned = prevEarned;
+            effectiveCap = baseCap + prevRollover;
+          } else {
+            const currentMs = Date.parse(currentWindowIso);
+            const prevMs = Date.parse(w.weeklyWindowStart);
+            const weeksElapsed = (Number.isFinite(currentMs) && Number.isFinite(prevMs) && currentMs > prevMs)
+              ? Math.round((currentMs - prevMs) / (7 * 24 * 60 * 60 * 1000))
+              : 0;
+            if (weeksElapsed > 0) {
+              const unusedPrev = Math.max(0, (baseCap + prevRollover) - prevEarned);
+              const newRollover = unusedPrev + (weeksElapsed - 1) * baseCap;
+              weeklyEarned = 0;
+              effectiveCap = baseCap + newRollover;
+            } else {
+              weeklyEarned = prevEarned;
+              effectiveCap = baseCap + prevRollover;
+            }
+          }
+        }
 
         if (!enabled) {
           weeklyCapEl.textContent = `${weeklyEarned.toLocaleString()} / ∞`;
           weeklyCapBox.title = 'Weekly Bone cap is currently disabled';
         } else {
-          weeklyCapEl.textContent = `${weeklyEarned.toLocaleString()} / ${capAmount.toLocaleString()}`;
-          weeklyCapEl.style.color = weeklyEarned >= capAmount ? '#f87171' : 'var(--gold-200)';
-          weeklyCapBox.title = `Resets every ${dayNames[resetDay] || 'Tuesday'} at 00:00 UTC (Spendable Bones can exceed ${capAmount} when saved across weeks)`;
+          weeklyCapEl.textContent = `${weeklyEarned.toLocaleString()} / ${effectiveCap.toLocaleString()}`;
+          weeklyCapEl.style.color = weeklyEarned >= effectiveCap ? '#f87171' : 'var(--gold-200)';
+          weeklyCapBox.title = `Resets every ${dayNames[resetDay] || 'Tuesday'} at 00:00 UTC (Unused cap rolls over; Spendable Bones can exceed ${effectiveCap})`;
         }
       }
     }

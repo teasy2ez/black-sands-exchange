@@ -8,6 +8,8 @@ export const WEEK_DAYS = [
   'Saturday'
 ];
 
+const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+
 /**
  * Resolve weekly cap configuration with defaults (50 Bones/week, Tuesday reset).
  */
@@ -34,29 +36,72 @@ export function getWeeklyWindowStart(resetDay = 2, now = new Date()) {
 }
 
 /**
- * Get the member's effective Bones earned in the current weekly window.
+ * Compute the member's current weekly state (earned, rollover, effective cap) without mutating.
  */
-export function getEffectiveWeeklyEarned(wallet, config, now = new Date()) {
-  if (!wallet) return 0;
-  const windowStart = getWeeklyWindowStart(config?.resetDay ?? 2, now);
-  if (wallet.weeklyWindowStart !== windowStart) return 0;
-  return Math.max(0, wallet.weeklyBonesEarned || 0);
+export function getEffectiveWeeklyState(wallet, config, now = new Date()) {
+  const baseCap = config?.cap ?? 50;
+  const currentWindowStart = getWeeklyWindowStart(config?.resetDay ?? 2, now);
+
+  if (!wallet || !wallet.weeklyWindowStart) {
+    return {
+      windowStart: currentWindowStart,
+      weeklyEarned: 0,
+      rollover: 0,
+      effectiveCap: baseCap
+    };
+  }
+
+  const prevRollover = Math.max(0, wallet.weeklyCapRollover || 0);
+  const prevEarned = Math.max(0, wallet.weeklyBonesEarned || 0);
+
+  if (wallet.weeklyWindowStart === currentWindowStart) {
+    return {
+      windowStart: currentWindowStart,
+      weeklyEarned: prevEarned,
+      rollover: prevRollover,
+      effectiveCap: baseCap + prevRollover
+    };
+  }
+
+  const currentMs = Date.parse(currentWindowStart);
+  const prevMs = Date.parse(wallet.weeklyWindowStart);
+  const weeksElapsed = (Number.isFinite(currentMs) && Number.isFinite(prevMs) && currentMs > prevMs)
+    ? Math.round((currentMs - prevMs) / WEEK_MS)
+    : 0;
+
+  if (weeksElapsed <= 0) {
+    return {
+      windowStart: currentWindowStart,
+      weeklyEarned: prevEarned,
+      rollover: prevRollover,
+      effectiveCap: baseCap + prevRollover
+    };
+  }
+
+  const prevEffectiveCap = baseCap + prevRollover;
+  const unusedFromPrevWeek = Math.max(0, prevEffectiveCap - prevEarned);
+  const newRollover = unusedFromPrevWeek + (weeksElapsed - 1) * baseCap;
+
+  return {
+    windowStart: currentWindowStart,
+    weeklyEarned: 0,
+    rollover: newRollover,
+    effectiveCap: baseCap + newRollover
+  };
 }
 
 /**
- * Apply an earned Bone award to a wallet while enforcing the weekly earning cap.
+ * Apply an earned Bone award to a wallet while enforcing the weekly catch-up cap.
+ * Unused cap from previous weeks rolls over into the current week's cap.
  * Spendable Bones can still exceed the weekly cap across multiple weeks.
  */
 export function applyWeeklyBoneAward(wallet, requestedAmount, state, now = new Date()) {
   const config = getWeeklyCapConfig(state);
-  const windowStart = getWeeklyWindowStart(config.resetDay, now);
+  const weeklyState = getEffectiveWeeklyState(wallet, config, now);
 
-  if (wallet.weeklyWindowStart !== windowStart) {
-    wallet.weeklyWindowStart = windowStart;
-    wallet.weeklyBonesEarned = 0;
-  } else {
-    wallet.weeklyBonesEarned = Math.max(0, wallet.weeklyBonesEarned || 0);
-  }
+  wallet.weeklyWindowStart = weeklyState.windowStart;
+  wallet.weeklyCapRollover = weeklyState.rollover;
+  wallet.weeklyBonesEarned = weeklyState.weeklyEarned;
 
   const requested = Math.max(0, parseInt(requestedAmount, 10) || 0);
 
@@ -71,13 +116,15 @@ export function applyWeeklyBoneAward(wallet, requestedAmount, state, now = new D
       capped: false,
       hitCap: false,
       weeklyEarned: wallet.weeklyBonesEarned,
-      cap: config.cap,
+      cap: weeklyState.effectiveCap,
+      baseCap: config.cap,
+      rollover: weeklyState.rollover,
       resetDay: config.resetDay,
       remainingAfter: null
     };
   }
 
-  const remainingBefore = Math.max(0, config.cap - wallet.weeklyBonesEarned);
+  const remainingBefore = Math.max(0, weeklyState.effectiveCap - wallet.weeklyBonesEarned);
   const granted = Math.min(requested, remainingBefore);
 
   wallet.spendableBones = (wallet.spendableBones || 0) + granted;
@@ -91,8 +138,10 @@ export function applyWeeklyBoneAward(wallet, requestedAmount, state, now = new D
     capped: granted < requested,
     hitCap: remainingBefore === 0,
     weeklyEarned: wallet.weeklyBonesEarned,
-    cap: config.cap,
+    cap: weeklyState.effectiveCap,
+    baseCap: config.cap,
+    rollover: weeklyState.rollover,
     resetDay: config.resetDay,
-    remainingAfter: Math.max(0, config.cap - wallet.weeklyBonesEarned)
+    remainingAfter: Math.max(0, weeklyState.effectiveCap - wallet.weeklyBonesEarned)
   };
 }
