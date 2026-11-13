@@ -2679,15 +2679,19 @@ function setupOfficerTools() {
   // Sync Guild Roster from Discord
   if (btnSyncDiscordRoster) {
     btnSyncDiscordRoster.addEventListener('click', async () => {
-      if (!confirm('Synchronize the guild roster from the Discord server?\nThis will import any newly joined members and refresh nicknames/avatars.')) return;
+      if (!confirm('Synchronize the guild roster from the Discord server?\nThis will import newly joined members, remove members who left, and refresh nicknames/avatars.')) return;
       const orig = btnSyncDiscordRoster.textContent;
       btnSyncDiscordRoster.textContent = 'Syncing...';
       btnSyncDiscordRoster.disabled = true;
       try {
-        const res = await fetch('/api/exchange/sync-discord-roster', { method: 'POST' });
+        const res = await fetch('/api/exchange/sync-discord-roster', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({})
+        });
         const data = await res.json();
         if (data.success) {
-          showToast(`Synced ${data.totalMembers} Discord members (${data.importedCount} new, ${data.updatedCount} refreshed).`);
+          showToast(`Synced ${data.totalMembers} Discord members (${data.importedCount} joined, ${data.removedCount || 0} removed, ${data.updatedCount} refreshed).`);
           await refreshBseState();
         } else {
           showToast(`Sync failed: ${data.error || 'Server error'}`);

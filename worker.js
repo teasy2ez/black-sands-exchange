@@ -30,6 +30,9 @@ import { FirestoreClient } from './src/firestore.js';
 import { handleApplicationCommand, resolveRank } from './src/commands.js';
 import { handleMessageComponent } from './src/components.js';
 
+const AUTO_ROSTER_SYNC_INTERVAL_MS = 60 * 1000;
+let lastAutoRosterSyncCheckMs = 0;
+
 /**
  * Cloudflare Worker Export
  */
@@ -64,7 +67,7 @@ export default {
 
     // 3. Central Web Portal API
     if (url.pathname.startsWith('/api/exchange/')) {
-      return handleExchangeApi(url, request, env, firestore);
+      return handleExchangeApi(url, request, env, firestore, ctx);
     }
 
     if (url.pathname === '/api/discord/sync-standings' && request.method === 'POST') {
@@ -77,6 +80,15 @@ export default {
     }
 
     return new Response('Black Sands Exchange API Running', { status: 200 });
+  },
+
+  async scheduled(event, env, ctx) {
+    const firestore = new FirestoreClient(env);
+    ctx.waitUntil(
+      syncDiscordRoster(env, firestore, { manual: false }).catch(err => {
+        console.error('Scheduled Discord roster sync failed:', err);
+      })
+    );
   }
 };
 
@@ -299,12 +311,31 @@ function handleLogout() {
 /**
  * Handle Central BSE Web API Calls
  */
-async function handleExchangeApi(url, request, env, firestore) {
+async function handleExchangeApi(url, request, env, firestore, ctx) {
   const path = url.pathname.replace('/api/exchange/', '');
 
   // GET State
   if (path === 'state' && request.method === 'GET') {
     const state = await firestore.getBseState();
+    const now = Date.now();
+    const lastStateSyncMs = state.lastRosterSyncAt ? Date.parse(state.lastRosterSyncAt) : 0;
+    const isStale = !lastStateSyncMs || (now - lastStateSyncMs > AUTO_ROSTER_SYNC_INTERVAL_MS);
+
+    if (
+      ctx &&
+      env.DISCORD_GUILD_ID &&
+      env.DISCORD_BOT_TOKEN &&
+      isStale &&
+      (now - lastAutoRosterSyncCheckMs > AUTO_ROSTER_SYNC_INTERVAL_MS)
+    ) {
+      lastAutoRosterSyncCheckMs = now;
+      ctx.waitUntil(
+        syncDiscordRoster(env, firestore, { manual: false, state }).catch(err => {
+          console.error('Auto Discord roster sync failed:', err);
+        })
+      );
+    }
+
     return jsonResponse(state);
   }
 
@@ -330,13 +361,16 @@ async function handleExchangeApi(url, request, env, firestore) {
     return jsonResponse(mapped);
   }
 
-  // Require JSON body for mutations
+  // Parse JSON body for mutations (allow empty body for parameterless POSTs)
   let body = {};
   if (request.method === 'POST') {
-    try {
-      body = await request.json();
-    } catch {
-      return jsonResponse({ error: 'Invalid JSON body' }, 400);
+    const rawBody = await request.text();
+    if (rawBody && rawBody.trim().length > 0) {
+      try {
+        body = JSON.parse(rawBody);
+      } catch {
+        return jsonResponse({ error: 'Invalid JSON body' }, 400);
+      }
     }
   }
 
@@ -1847,6 +1881,184 @@ async function handleExchangeApi(url, request, env, firestore) {
 /**
  * Handle sync-standings triggered from Web Officer Panel
  */
+/**
+ * Fetch all non-bot members from a Discord guild (with pagination)
+ */
+async function fetchAllGuildMembers(guildId, botToken) {
+  const allMembers = [];
+  let after = null;
+
+  while (true) {
+    const qs = after ? `?limit=1000&after=${after}` : '?limit=1000';
+    const res = await fetch(`https://discord.com/api/v10/guilds/${guildId}/members${qs}`, {
+      headers: { Authorization: `Bot ${botToken}` }
+    });
+    if (!res.ok) {
+      throw new Error(`Discord API error: ${res.status}`);
+    }
+    const batch = await res.json();
+    if (!Array.isArray(batch) || batch.length === 0) break;
+
+    allMembers.push(...batch);
+    if (batch.length < 1000) break;
+
+    const lastId = batch[batch.length - 1]?.user?.id;
+    if (!lastId || lastId === after) break;
+    after = lastId;
+  }
+
+  return allMembers.filter(m => !m.user?.bot);
+}
+
+/**
+ * Sync guild roster from Discord: import new members, update profiles/roles, and remove members who left
+ */
+async function syncDiscordRoster(env, firestore, options = {}) {
+  if (!env.DISCORD_GUILD_ID || !env.DISCORD_BOT_TOKEN) {
+    return { success: false, skipped: true, reason: 'Missing Discord Guild ID or Bot Token' };
+  }
+
+  const members = await fetchAllGuildMembers(env.DISCORD_GUILD_ID, env.DISCORD_BOT_TOKEN);
+  if (!members.length) {
+    throw new Error('Discord returned 0 guild members; aborting sync to protect roster');
+  }
+
+  const state = options.state || await firestore.getBseState();
+  state.wallets = state.wallets || {};
+
+  const nowIso = new Date().toISOString();
+  const discordMemberIds = new Set();
+
+  let newlyImported = 0;
+  let updatedCount = 0;
+  let removedCount = 0;
+  const joinedNames = [];
+  const leftNames = [];
+
+  for (const m of members) {
+    const uid = m.user?.id;
+    if (!uid) continue;
+    discordMemberIds.add(uid);
+
+    const nextUsername = m.user.username;
+    const nextGlobalName = m.user.global_name || m.user.username;
+    const nextServerNickname = m.nick || null;
+    const nextAvatarHash = m.user.avatar || null;
+    const nextRoles = Array.isArray(m.roles) ? m.roles : [];
+
+    const existing = state.wallets[uid];
+    if (existing) {
+      const rolesChanged =
+        (existing.roles || []).length !== nextRoles.length ||
+        nextRoles.some((r, idx) => (existing.roles || [])[idx] !== r);
+
+      const profileChanged =
+        existing.username !== nextUsername ||
+        existing.globalName !== nextGlobalName ||
+        (existing.serverNickname || null) !== nextServerNickname ||
+        (existing.avatarHash || null) !== nextAvatarHash ||
+        rolesChanged;
+
+      if (profileChanged) {
+        existing.username = nextUsername;
+        existing.globalName = nextGlobalName;
+        existing.serverNickname = nextServerNickname;
+        existing.avatarHash = nextAvatarHash;
+        existing.roles = nextRoles;
+        existing.updatedAt = nowIso;
+        updatedCount++;
+      }
+    } else {
+      state.wallets[uid] = {
+        discordId: uid,
+        username: nextUsername,
+        globalName: nextGlobalName,
+        serverNickname: nextServerNickname,
+        avatarHash: nextAvatarHash,
+        roles: nextRoles,
+        spendableBones: 0,
+        boneScore: 0,
+        characters: [],
+        primaryCharacter: null,
+        guildNote: '',
+        officerHidden: false,
+        createdAt: nowIso
+      };
+      newlyImported++;
+      joinedNames.push(nextServerNickname || nextGlobalName || nextUsername || uid);
+    }
+  }
+
+  for (const [uid, wallet] of Object.entries(state.wallets)) {
+    if (!discordMemberIds.has(uid)) {
+      const displayName = wallet.serverNickname || wallet.globalName || wallet.username || uid;
+      const spendable = wallet.spendableBones || 0;
+      const score = wallet.boneScore || 0;
+      delete state.wallets[uid];
+      removedCount++;
+      leftNames.push(spendable || score ? `${displayName} (${spendable} Bones, ${score} Pts)` : displayName);
+    }
+  }
+
+  state.lastRosterSyncAt = nowIso;
+  const rosterChanged = newlyImported > 0 || removedCount > 0;
+  const anyDataChanged = rosterChanged || updatedCount > 0;
+
+  if (options.manual) {
+    state.updatedAt = nowIso;
+    await recordAuditLogAndSync(state, env, firestore, {
+      action: 'ROSTER_DISCORD_SYNC',
+      officerId: options.officerId || null,
+      officerName: options.officerName || 'Officer',
+      targetId: 'ALL',
+      targetName: 'Guild Roster',
+      amount: 0,
+      spendableBones: null,
+      boneScore: null,
+      reason: `Synchronized ${members.length} Discord members (${newlyImported} joined, ${removedCount} removed, ${updatedCount} refreshed)`
+    });
+  } else if (rosterChanged) {
+    state.updatedAt = nowIso;
+    const parts = [];
+    if (newlyImported > 0) {
+      const preview = joinedNames.slice(0, 5).join(', ') + (joinedNames.length > 5 ? ', ...' : '');
+      parts.push(`${newlyImported} joined (${preview})`);
+    }
+    if (removedCount > 0) {
+      const preview = leftNames.slice(0, 5).join(', ') + (leftNames.length > 5 ? ', ...' : '');
+      parts.push(`${removedCount} left (${preview})`);
+    }
+    if (updatedCount > 0) {
+      parts.push(`${updatedCount} refreshed`);
+    }
+
+    await recordAuditLogAndSync(state, env, firestore, {
+      action: 'ROSTER_AUTO_SYNC',
+      officerId: null,
+      officerName: 'System',
+      targetId: 'ALL',
+      targetName: 'Guild Roster',
+      amount: 0,
+      spendableBones: null,
+      boneScore: null,
+      reason: `Auto-synced Discord roster: ${parts.join(', ')}`
+    });
+  } else if (anyDataChanged) {
+    state.updatedAt = nowIso;
+    await firestore.saveBseState(state);
+  } else {
+    await firestore.saveBseState(state);
+  }
+
+  return {
+    success: true,
+    totalMembers: members.length,
+    importedCount: newlyImported,
+    removedCount,
+    updatedCount
+  };
+}
+
 async function handleSyncStandingsApi(request, env, firestore) {
   const session = await getSessionFromRequest(request, env);
   if (!session?.isOfficer) {

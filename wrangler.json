@@ -22,5 +22,10 @@
     "DISCORD_STANDINGS_CHANNEL_ID": "1569275856415625257",
     "DISCORD_OFFICER_CHANNEL_ID": "1569274835392270436",
     "DISCORD_OFFICER_ROLE_ID": "892595166031015937"
+  },
+  "triggers": {
+    "crons": [
+      "*/5 * * * *"
+    ]
   }
 }
