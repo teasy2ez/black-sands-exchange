@@ -141,10 +141,10 @@ async function handleLeaderboardCommand(interaction, env, firestore) {
     return total > 0;
   });
   activeMembers.sort((a, b) => {
+    const diffScore = (b.boneScore || b.spendableBones || 0) - (a.boneScore || a.spendableBones || 0);
+    if (diffScore !== 0) return diffScore;
     const diffSpendable = (b.spendableBones || 0) - (a.spendableBones || 0);
     if (diffSpendable !== 0) return diffSpendable;
-    const diffScore = (b.boneScore || 0) - (a.boneScore || 0);
-    if (diffScore !== 0) return diffScore;
     const nameA = (a.serverNickname || a.globalName || a.username || '').toLowerCase();
     const nameB = (b.serverNickname || b.globalName || b.username || '').toLowerCase();
     const nameDiff = nameA.localeCompare(nameB);

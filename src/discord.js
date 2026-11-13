@@ -288,8 +288,15 @@ export function buildLeaderboardEmbed(topMembers = []) {
   if (!topMembers.length) {
     description = '*No member records found yet. Complete bounties to get on the board!*';
   } else {
+    let currentRank = 0;
+    let prevScoreKey = null;
     description = topMembers.map((m, idx) => {
-      const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : `\`#${idx + 1}\``;
+      const scoreKey = m.boneScore || m.spendableBones || 0;
+      if (scoreKey !== prevScoreKey) {
+        currentRank = idx + 1;
+        prevScoreKey = scoreKey;
+      }
+      const medal = currentRank === 1 ? '🥇' : currentRank === 2 ? '🥈' : currentRank === 3 ? '🥉' : `\`#${currentRank}\``;
       const name = m.serverNickname || m.globalName || m.username || 'Unknown';
       const handle = m.username ? `(@${m.username})` : '';
       const charPart = m.primaryCharacter ? ` [${m.primaryCharacter}]` : '';
@@ -515,10 +522,10 @@ export async function syncLeaderboardEmbed(env, firestore, state) {
       return total > 0;
     });
     activeMembers.sort((a, b) => {
+      const diffScore = (b.boneScore || b.spendableBones || 0) - (a.boneScore || a.spendableBones || 0);
+      if (diffScore !== 0) return diffScore;
       const diffSpendable = (b.spendableBones || 0) - (a.spendableBones || 0);
       if (diffSpendable !== 0) return diffSpendable;
-      const diffScore = (b.boneScore || 0) - (a.boneScore || 0);
-      if (diffScore !== 0) return diffScore;
       const nameA = (a.serverNickname || a.globalName || a.username || '').toLowerCase();
       const nameB = (b.serverNickname || b.globalName || b.username || '').toLowerCase();
       const nameDiff = nameA.localeCompare(nameB);
