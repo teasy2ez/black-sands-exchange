@@ -7,6 +7,7 @@ import {
 } from './discord.js';
 import { isOfficer, resolveRank } from './commands.js';
 import { applyWeeklyBoneAward } from './weeklyCap.js';
+import { formatTithingRate, formatTithingNumber } from './tithing.js';
 
 /**
  * Handle Discord Message Component Interactions (Button clicks)
@@ -69,6 +70,11 @@ async function handleBountyApprove(interaction, claimId, env, firestore) {
     };
   }
 
+  const relatedBounty = (state.bounties || []).find(b => b.id === claim.bountyId);
+  const verifiedBonusIds = Array.isArray(claim.achievedBonusIds) ? claim.achievedBonusIds : [];
+  const achievedBonuses = (relatedBounty?.bonuses || []).filter(bn => verifiedBonusIds.includes(bn.id));
+  const bonusSum = achievedBonuses.reduce((acc, bn) => acc + Math.max(0, parseInt(bn.bonusBones, 10) || 0), 0);
+
   // Update claim
   claim.status = 'approved';
   claim.reviewedBy = officerName;
@@ -76,7 +82,10 @@ async function handleBountyApprove(interaction, claimId, env, firestore) {
   claim.reviewedAt = new Date().toISOString();
 
   // Award Bones and increment Bone Score
-  const reward = claim.rewardBones || 0;
+  const baseReward = (claim.rewardBones !== undefined && claim.rewardBones !== null)
+    ? claim.rewardBones
+    : (relatedBounty?.rewardBones || 0);
+  const reward = Math.max(0, baseReward + bonusSum);
   state.wallets = state.wallets || {};
   const wallet = state.wallets[claim.discordId] || {
     discordId: claim.discordId,
@@ -93,13 +102,18 @@ async function handleBountyApprove(interaction, claimId, env, firestore) {
   state.wallets[claim.discordId] = wallet;
 
   // If bounty was requested/sponsored by a member, increment their postedBountiesCompleted
-  const relatedBounty = (state.bounties || []).find(b => b.id === claim.bountyId);
   if (relatedBounty?.creatorId && state.wallets[relatedBounty.creatorId]) {
     const creatorWallet = state.wallets[relatedBounty.creatorId];
     creatorWallet.postedBountiesCompleted = (creatorWallet.postedBountiesCompleted || 0) + 1;
     creatorWallet.updatedAt = new Date().toISOString();
   }
 
+  const tithingNote = Number(claim.goldDonated) > 0
+    ? ` (Gold Donated: ${formatTithingNumber(claim.goldDonated)}g @ ${formatTithingRate(claim.tithingRate || state)})`
+    : '';
+  const bonusNote = bonusSum > 0
+    ? ` + Bonuses (+${bonusSum}: ${achievedBonuses.map(bn => bn.description).join(', ')})`
+    : '';
   const capNote = awardResult.capped
     ? ` (Capped from ${reward} to ${awardResult.granted} — weekly cap ${awardResult.weeklyEarned}/${awardResult.cap})`
     : '';
@@ -113,7 +127,7 @@ async function handleBountyApprove(interaction, claimId, env, firestore) {
     amount: awardResult.granted,
     spendableBones: wallet.spendableBones,
     boneScore: wallet.boneScore,
-    reason: `Approved Bounty: ${claim.bountyTitle} (${claimId})${capNote}`
+    reason: `Approved Bounty: ${claim.bountyTitle} (${claimId})${tithingNote}${bonusNote}${capNote}`
   });
 
   // Update existing Discord message in-place

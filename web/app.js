@@ -17,7 +17,8 @@ const state = {
   // Draft rank and FAQ builders for live officer editing
   draftRanks: [],
   draftFaq: [],
-  officerLeaderboardFilter: 'active'
+  officerLeaderboardFilter: 'active',
+  tithingDraftDirty: false
 };
 
 // Helper: Safely generate Discord CDN avatar URLs with power-of-2 sizes and fallback
@@ -157,6 +158,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupOfficerLeaderboardFilters();
   setupRaidMultiAward();
   setupDataEditor();
+  setupTithingSettingsControls();
+  setupCreateBountyFormControls();
   setupDiscordChannelsManager();
 
   // Concurrently fetch auth session and central BSE state
@@ -855,6 +858,73 @@ function resolveRankTitle(rankTier = 0) {
   return found ? found.title : (ranks[0]?.title || 'Initiate');
 }
 
+function resolveClientTithingConfig(configOrState = null) {
+  const raw = (configOrState && typeof configOrState === 'object')
+    ? ('config' in configOrState ? configOrState.config?.tithing : configOrState)
+    : state.bseState?.config?.tithing;
+
+  const goldAmount = Number(raw?.goldAmount);
+  const bonesAmount = Number(raw?.bonesAmount);
+  const validGold = Number.isFinite(goldAmount) && goldAmount > 0 ? Number(goldAmount.toFixed(6)) : 1;
+  const validBones = Number.isFinite(bonesAmount) && bonesAmount > 0 ? Number(bonesAmount.toFixed(6)) : 1;
+
+  return {
+    goldAmount: validGold,
+    bonesAmount: validBones,
+    ratio: validBones / validGold
+  };
+}
+
+function formatClientTithingNumber(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return '0';
+  return Number(num.toFixed(6)).toLocaleString('en-US', { maximumFractionDigits: 6 });
+}
+
+function formatClientTithingRate(configOrState = null, currencyName = 'Bones') {
+  const cfg = resolveClientTithingConfig(configOrState);
+  const goldStr = formatClientTithingNumber(cfg.goldAmount);
+  const bonesStr = formatClientTithingNumber(cfg.bonesAmount);
+  const unitLabel = String(currencyName || 'Bones').toLowerCase() === 'bones'
+    ? (Math.abs(cfg.bonesAmount - 1) < 1e-9 ? 'Bone' : 'Bones')
+    : currencyName;
+  return `${goldStr} Gold = ${bonesStr} ${unitLabel}`;
+}
+
+function calculateClientTithingBones(goldDonated, configOrState = null) {
+  const cfg = resolveClientTithingConfig(configOrState);
+  const gold = Number(goldDonated);
+  if (!Number.isFinite(gold) || gold <= 0) return 0;
+  return Math.max(0, Math.floor((gold * cfg.bonesAmount) / cfg.goldAmount + 1e-9));
+}
+
+function getClientMinimumGoldForOneBone(configOrState = null) {
+  const cfg = resolveClientTithingConfig(configOrState);
+  return cfg.goldAmount / cfg.bonesAmount;
+}
+
+function deriveClientTithingPairFromConstant(kValue) {
+  const k = Number(kValue);
+  if (!Number.isFinite(k) || k <= 0) {
+    return { goldAmount: 1, bonesAmount: 1 };
+  }
+  if (k < 1) {
+    const inv = 1 / k;
+    const roundedInv = Math.round(inv);
+    if (roundedInv >= 1 && Math.abs(inv - roundedInv) < 1e-6) {
+      return { goldAmount: roundedInv, bonesAmount: 1 };
+    }
+    for (let denom = 2; denom <= 100; denom++) {
+      const scaled = k * denom;
+      const roundedScaled = Math.round(scaled);
+      if (roundedScaled >= 1 && Math.abs(scaled - roundedScaled) < 1e-6) {
+        return { goldAmount: denom, bonesAmount: roundedScaled };
+      }
+    }
+  }
+  return { goldAmount: 1, bonesAmount: Number(k.toFixed(6)) };
+}
+
 /**
  * Render Bounty Board
  */
@@ -862,6 +932,8 @@ function renderBounties() {
   if (!state.bseState) return;
   const bounties = (state.bseState.bounties || []).filter(b => (b.status || 'active') === 'active');
   const currName = state.bseState?.branding?.currencyName || 'Bones';
+  const tithingCfg = resolveClientTithingConfig();
+  const tithingRateStr = formatClientTithingRate(tithingCfg, currName);
 
   // Toggle Request a Bounty button for logged-in members
   const reqBtn = document.getElementById('btnOpenRequestBountyModal');
@@ -877,14 +949,28 @@ function renderBounties() {
   bountiesGrid.innerHTML = bounties.map(b => {
     const badgeClass = (b.category || 'General').toLowerCase();
     const isPlayerSponsored = Boolean(b.creatorId);
+    const isTithing = b.bountyType === 'tithing';
     const sponsorName = b.creatorNickname || b.creatorUsername || 'Guild Member';
+
+    const rewardBadgeHtml = isTithing
+      ? `<div class="tithing-rate-badge">${escapeHtml(tithingRateStr)}</div>`
+      : `<div class="card-reward">+${(b.rewardBones || 0).toLocaleString()} ${currName}</div>`;
+
+    const tithingBoardBoxHtml = isTithing ? `
+      <div class="tithing-board-box">
+        <div><strong>Guild Vault Exchange Rate:</strong> ${escapeHtml(tithingRateStr)}</div>
+        <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.2rem;">
+          Donate Gold to the Guild Vault and enter the deposit amount on your claim &mdash; your ${escapeHtml(currName)} payout is calculated automatically.
+        </div>
+      </div>
+    ` : '';
 
     const bonusesHtml = (b.bonuses && b.bonuses.length) ? `
       <div class="bounty-bonuses-box">
         <div style="font-size: 0.7rem; color: var(--gold-300); font-weight: 700; text-transform: uppercase;">Optional Bonus Objectives:</div>
         <div style="display: flex; flex-wrap: wrap; margin-top: 0.2rem;">
           ${b.bonuses.map(bonus => `
-            <span class="bounty-bonus-pill">⭐ ${escapeHtml(bonus.description)} (<strong>+${bonus.bonusBones} Bones</strong>)</span>
+            <span class="bounty-bonus-pill">⭐ ${escapeHtml(bonus.description)} (<strong>+${bonus.bonusBones} ${currName}</strong>)</span>
           `).join('')}
         </div>
       </div>
@@ -896,10 +982,11 @@ function renderBounties() {
           ${isPlayerSponsored ? `<div class="bounty-sponsor-tag">Sponsored by: <strong>${escapeHtml(sponsorName)}</strong></div>` : ''}
           <div class="card-top">
             <span class="card-badge ${badgeClass}">${b.category || 'Guild'}</span>
-            <div class="card-reward">+${(b.rewardBones || 0).toLocaleString()} ${currName}</div>
+            ${rewardBadgeHtml}
           </div>
           <div class="card-title">${escapeHtml(b.title)}</div>
           <div class="card-desc">${escapeHtml(b.description || '')}</div>
+          ${tithingBoardBoxHtml}
           ${bonusesHtml}
         </div>
         <div class="card-footer">
@@ -1428,6 +1515,12 @@ function renderOfficerQueues() {
         `;
       }
 
+      const tithingHtml = Number(c.goldDonated) > 0
+        ? `<div style="margin-bottom: 0.45rem; padding: 0.45rem 0.65rem; background: rgba(229, 169, 59, 0.08); border: 1px solid rgba(255, 209, 0, 0.25); border-radius: var(--radius-sm); font-size: 0.82rem; color: var(--gold-200);">
+             🪙 <strong>Gold Donated to Vault:</strong> ${escapeHtml(formatClientTithingNumber(c.goldDonated))}g &bull; Rate: <strong>${escapeHtml(formatClientTithingRate(c.tithingRate || null, currName))}</strong> &rarr; <strong>+${c.rewardBones} ${currName}</strong>
+           </div>`
+        : '';
+
       return `
         <div class="officer-review-card">
           <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.5rem; flex-wrap: wrap; gap: 0.5rem;">
@@ -1446,6 +1539,7 @@ function renderOfficerQueues() {
           <div style="display: flex; gap: 1rem; align-items: center; margin: 0.75rem 0; background: var(--bg-inner); padding: 0.75rem; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle); flex-wrap: wrap;">
             ${isImg ? `<img src="${c.proofUrl}" class="proof-thumbnail" alt="Proof" onclick="zoomImage('${c.proofUrl}')">` : ''}
             <div style="flex: 1; min-width: 200px;">
+              ${tithingHtml}
               ${c.proofUrl ? `<div style="font-size: 0.85rem; margin-bottom: 0.25rem;"><a href="${c.proofUrl}" target="_blank" rel="noopener" style="color: var(--blue); font-weight: 600;">Open Proof Link</a></div>` : '<div style="color: var(--text-dim); font-size: 0.8rem;">No proof link provided (optional)</div>'}
               ${c.notes ? `<div style="font-size: 0.85rem; color: var(--text-main); font-style: italic;">"${escapeHtml(c.notes)}"</div>` : '<div style="color: var(--text-dim); font-size: 0.8rem;">No notes provided</div>'}
             </div>
@@ -1630,6 +1724,55 @@ function populateOfficerSettingsForms() {
   if (editCapAmount) editCapAmount.value = parseInt(weeklyCapCfg.cap, 10) || 50;
   const editResetDay = document.getElementById('editorWeeklyResetDay');
   if (editResetDay) editResetDay.value = String(Number.isInteger(parseInt(weeklyCapCfg.resetDay, 10)) ? parseInt(weeklyCapCfg.resetDay, 10) : 2);
+
+  // Guild Tithing Status & Ratio Inputs
+  const tithingCfg = resolveClientTithingConfig();
+  const currName = branding.currencyName || 'Bones';
+  const rateText = formatClientTithingRate(tithingCfg, currName);
+  const newRateInfoEl = document.getElementById('newBountyTithingRateInfo');
+  if (newRateInfoEl) newRateInfoEl.textContent = `Uses global rate: ${rateText} (k = ${formatClientTithingNumber(tithingCfg.ratio)})`;
+  const editRateInfoEl = document.getElementById('editBountyTithingRateInfo');
+  if (editRateInfoEl) editRateInfoEl.textContent = `Uses global rate: ${rateText} (k = ${formatClientTithingNumber(tithingCfg.ratio)})`;
+
+  const allTithingBounties = (state.bseState?.bounties || []).filter(b => b.bountyType === 'tithing');
+  const activeTithing = allTithingBounties.find(b => (b.status || 'active') === 'active');
+  const pausedTithing = allTithingBounties.find(b => (b.status || 'active') !== 'active');
+  const statusBadgeEl = document.getElementById('tithingBountyStatusBadge');
+  const ensureBtn = document.getElementById('btnEnsureTithingBounty');
+
+  if (statusBadgeEl) {
+    if (activeTithing) {
+      statusBadgeEl.textContent = `Live: ${activeTithing.title}`;
+      statusBadgeEl.className = 'tithing-status-pill is-live';
+      if (ensureBtn) ensureBtn.style.display = 'none';
+    } else if (pausedTithing) {
+      statusBadgeEl.textContent = `Paused: ${pausedTithing.title}`;
+      statusBadgeEl.className = 'tithing-status-pill is-inactive';
+      if (ensureBtn) {
+        ensureBtn.textContent = 'Activate Guild Tithing Bounty';
+        ensureBtn.style.display = 'inline-flex';
+      }
+    } else {
+      statusBadgeEl.textContent = 'Not Posted Yet';
+      statusBadgeEl.className = 'tithing-status-pill is-inactive';
+      if (ensureBtn) {
+        ensureBtn.textContent = 'Create Guild Tithing Bounty';
+        ensureBtn.style.display = 'inline-flex';
+      }
+    }
+  }
+
+  const activeEl = document.activeElement;
+  const isEditingTithingInput = Boolean(
+    activeEl && (
+      activeEl.classList.contains('tithing-input-gold')
+      || activeEl.classList.contains('tithing-input-bones')
+      || activeEl.classList.contains('tithing-input-k')
+    )
+  );
+  if (!state.tithingDraftDirty && !isEditingTithingInput) {
+    syncTithingEditorDisplays(tithingCfg.goldAmount, tithingCfg.bonesAmount);
+  }
 }
 
 /**
@@ -1880,6 +2023,244 @@ function setupDataEditor() {
 
 }
 
+function updateTithingPreviewAndPresets(goldAmount, bonesAmount) {
+  const validGold = Number(goldAmount);
+  const validBones = Number(bonesAmount);
+  const isValid = Number.isFinite(validGold) && validGold > 0 && Number.isFinite(validBones) && validBones > 0;
+  const k = isValid ? validBones / validGold : 1;
+  const currName = state.bseState?.branding?.currencyName || 'Bones';
+
+  document.querySelectorAll('.tithing-preview-target').forEach(el => {
+    if (!isValid) {
+      el.innerHTML = `<span style="color: #fca5a5;">Enter positive numbers for Gold (Y), Bones (X), or Constant (k).</span>`;
+      return;
+    }
+    const rateLabel = formatClientTithingRate({ goldAmount: validGold, bonesAmount: validBones }, currName);
+    el.innerHTML = `Members see: <strong>${escapeHtml(rateLabel)}</strong> &bull; Constant <code>k = ${escapeHtml(formatClientTithingNumber(k))}</code>`;
+  });
+
+  document.querySelectorAll('.tithing-preset-chip').forEach(chip => {
+    const cg = Number(chip.getAttribute('data-gold'));
+    const cb = Number(chip.getAttribute('data-bones'));
+    const matches = isValid && Math.abs((cb / cg) - k) < 1e-6;
+    chip.classList.toggle('active', matches);
+  });
+}
+
+function syncTithingEditorDisplays(goldAmount, bonesAmount, options = {}) {
+  const { skipInput = null, rawK = null } = options;
+  const validGold = Number(goldAmount);
+  const validBones = Number(bonesAmount);
+  const isValid = Number.isFinite(validGold) && validGold > 0 && Number.isFinite(validBones) && validBones > 0;
+  const computedK = isValid ? Number((validBones / validGold).toFixed(6)) : '';
+
+  document.querySelectorAll('.tithing-input-gold').forEach(input => {
+    if (input !== skipInput) input.value = isValid ? validGold : '';
+  });
+  document.querySelectorAll('.tithing-input-bones').forEach(input => {
+    if (input !== skipInput) input.value = isValid ? validBones : '';
+  });
+  document.querySelectorAll('.tithing-input-k').forEach(input => {
+    if (input !== skipInput) input.value = rawK !== null ? rawK : computedK;
+  });
+
+  updateTithingPreviewAndPresets(goldAmount, bonesAmount);
+}
+
+function setupTithingSettingsControls() {
+  document.querySelectorAll('.tithing-input-gold, .tithing-input-bones').forEach(input => {
+    input.addEventListener('input', () => {
+      state.tithingDraftDirty = true;
+      const card = input.closest('.officer-box');
+      const g = Number(card?.querySelector('.tithing-input-gold')?.value);
+      const b = Number(card?.querySelector('.tithing-input-bones')?.value);
+      syncTithingEditorDisplays(g, b, { skipInput: input });
+    });
+  });
+
+  document.querySelectorAll('.tithing-input-k').forEach(input => {
+    input.addEventListener('input', () => {
+      state.tithingDraftDirty = true;
+      const kVal = Number(input.value);
+      if (Number.isFinite(kVal) && kVal > 0) {
+        const pair = deriveClientTithingPairFromConstant(kVal);
+        syncTithingEditorDisplays(pair.goldAmount, pair.bonesAmount, {
+          skipInput: input,
+          rawK: input.value
+        });
+      } else {
+        updateTithingPreviewAndPresets(NaN, NaN);
+      }
+    });
+  });
+
+  document.querySelectorAll('.tithing-preset-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      const g = Number(chip.getAttribute('data-gold'));
+      const b = Number(chip.getAttribute('data-bones'));
+      state.tithingDraftDirty = true;
+      syncTithingEditorDisplays(g, b);
+    });
+  });
+
+  document.querySelectorAll('.tithing-save-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const card = btn.closest('.officer-box');
+      const g = Number(card?.querySelector('.tithing-input-gold')?.value);
+      const b = Number(card?.querySelector('.tithing-input-bones')?.value);
+      const k = Number(card?.querySelector('.tithing-input-k')?.value);
+
+      if (!Number.isFinite(g) || g <= 0 || !Number.isFinite(b) || b <= 0) {
+        if (Number.isFinite(k) && k > 0) {
+          const derived = deriveClientTithingPairFromConstant(k);
+          syncTithingEditorDisplays(derived.goldAmount, derived.bonesAmount);
+        } else {
+          showToast('Please enter positive numbers for Gold (Y) and Bones (X).');
+          return;
+        }
+      }
+
+      const finalGold = Number(card?.querySelector('.tithing-input-gold')?.value);
+      const finalBones = Number(card?.querySelector('.tithing-input-bones')?.value);
+
+      const originalLabel = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = 'Saving...';
+
+      try {
+        const res = await fetch('/api/exchange/settings/tithing', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            goldAmount: finalGold,
+            bonesAmount: finalBones
+          })
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          state.tithingDraftDirty = false;
+          showToast(`Guild Tithing rate updated: ${data.rateText}`);
+          await refreshBseState();
+        } else {
+          showToast(`Failed: ${data.error || 'Server error'}`);
+        }
+      } catch (err) {
+        showToast(`Error: ${err.message}`);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = originalLabel;
+      }
+    });
+  });
+
+  const btnEnsureTithing = document.getElementById('btnEnsureTithingBounty');
+  if (btnEnsureTithing) {
+    btnEnsureTithing.addEventListener('click', async () => {
+      const existing = (state.bseState?.bounties || []).find(b => b.bountyType === 'tithing');
+      btnEnsureTithing.disabled = true;
+      try {
+        if (existing) {
+          await toggleBountyStatus(existing.id, 'active');
+        } else {
+          const res = await fetch('/api/exchange/bounty/create', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              title: 'Guild Tithing',
+              bountyType: 'tithing',
+              rewardBones: resolveClientTithingConfig().bonesAmount,
+              category: 'Economy',
+              description: 'Donate Gold directly to the Guild Bank Vault to support consumables, repairs, and guild operations. Claim Bones based on the current guild exchange rate.',
+              bonuses: []
+            })
+          });
+          if (res.ok) {
+            showToast('Guild Tithing bounty posted to the Bounty Board!');
+            await refreshBseState();
+          } else {
+            const err = await res.json().catch(() => ({}));
+            showToast(`Failed: ${err.error || 'Server error'}`);
+          }
+        }
+      } finally {
+        btnEnsureTithing.disabled = false;
+      }
+    });
+  }
+}
+
+function addCreateBonusRow(desc = '', amt = '') {
+  const container = document.getElementById('createBountyBonusesList');
+  if (!container) return;
+  document.getElementById('noCreateBonusesMsg')?.remove();
+  const row = document.createElement('div');
+  row.className = 'create-bonus-row';
+  row.innerHTML = `
+    <input type="text" class="form-control create-bonus-desc" placeholder="e.g. Complete in under 30 minutes / zero deaths" value="${escapeHtml(desc)}">
+    <input type="number" class="form-control create-bonus-amount" min="1" placeholder="+ Extra Bones (e.g. 15)" value="${amt !== '' && amt !== null && amt !== undefined ? escapeHtml(String(amt)) : ''}">
+    <button type="button" class="btn-danger" style="padding: 0.35rem 0.55rem; font-size: 0.75rem;" onclick="removeCreateBonusRow(this)" title="Remove bonus">✕</button>
+  `;
+  container.appendChild(row);
+}
+
+window.removeCreateBonusRow = function(btn) {
+  const container = document.getElementById('createBountyBonusesList');
+  btn?.closest('.create-bonus-row')?.remove();
+  if (container && !container.querySelector('.create-bonus-row')) {
+    container.innerHTML = `<div id="noCreateBonusesMsg" style="font-size: 0.75rem; color: var(--text-dim);">No optional bonus objectives. Click "+ Add Bonus" to add one.</div>`;
+  }
+};
+
+function resetCreateBountyBonusRows() {
+  const container = document.getElementById('createBountyBonusesList');
+  if (!container) return;
+  container.innerHTML = '';
+  addCreateBonusRow();
+}
+
+function syncCreateBountyTypeFields() {
+  const typeSelect = document.getElementById('newBountyType');
+  const rewardGroup = document.getElementById('newBountyRewardGroup');
+  const tithingInfo = document.getElementById('newBountyTithingInfo');
+  const rateInfoEl = document.getElementById('newBountyTithingRateInfo');
+  const catSelect = document.getElementById('newBountyCategory');
+  const titleInput = document.getElementById('newBountyTitle');
+  if (!typeSelect) return;
+
+  const isTithing = typeSelect.value === 'tithing';
+  if (rewardGroup) rewardGroup.style.display = isTithing ? 'none' : 'block';
+  if (tithingInfo) tithingInfo.style.display = isTithing ? 'block' : 'none';
+
+  if (isTithing) {
+    const tithingCfg = resolveClientTithingConfig();
+    const currName = state.bseState?.branding?.currencyName || 'Bones';
+    if (rateInfoEl) {
+      rateInfoEl.textContent = `Uses global rate: ${formatClientTithingRate(tithingCfg, currName)} (k = ${formatClientTithingNumber(tithingCfg.ratio)})`;
+    }
+    if (catSelect && catSelect.value === 'Raid') {
+      catSelect.value = 'Economy';
+    }
+    if (titleInput && !titleInput.value.trim()) {
+      titleInput.placeholder = 'e.g. Guild Tithing';
+    }
+  } else if (titleInput) {
+    titleInput.placeholder = 'e.g. Molten Core Full Clear';
+  }
+}
+
+function setupCreateBountyFormControls() {
+  resetCreateBountyBonusRows();
+  syncCreateBountyTypeFields();
+
+  document.getElementById('btnAddCreateBonus')?.addEventListener('click', () => {
+    addCreateBonusRow();
+  });
+
+  document.getElementById('newBountyType')?.addEventListener('change', () => {
+    syncCreateBountyTypeFields();
+  });
+}
+
 /**
  * Render Officer Bounties Control
  */
@@ -1890,6 +2271,10 @@ function renderOfficerBountiesList() {
     officerBountiesList.innerHTML = `<div style="font-size: 0.85rem; color: var(--text-muted); padding: 1rem; text-align: center;">No bounties created yet.</div>`;
     return;
   }
+  const currName = state.bseState?.branding?.currencyName || 'Bones';
+  const tithingCfg = resolveClientTithingConfig();
+  const tithingRateStr = formatClientTithingRate(tithingCfg, currName);
+
   officerBountiesList.innerHTML = bounties.map(b => {
     const bonusCount = Array.isArray(b.bonuses) ? b.bonuses.length : 0;
     const bonusLabel = bonusCount > 0 ? ` &bull; <span style="color:var(--gold-200);">${bonusCount} Bonus${bonusCount > 1 ? 'es' : ''}</span>` : '';
@@ -1904,6 +2289,13 @@ function renderOfficerBountiesList() {
     const sponsorBadge = b.creatorId
       ? `<span style="font-size: 0.68rem; padding: 0.1rem 0.45rem; border-radius: 3px; background: rgba(74, 222, 128, 0.12); border: 1px solid rgba(74, 222, 128, 0.35); color: #86efac;">Sponsored by ${escapeHtml(sponsorName)}</span>`
       : '';
+    const isTithing = b.bountyType === 'tithing';
+    const tithingTypeBadge = isTithing
+      ? `<span style="font-size: 0.68rem; padding: 0.1rem 0.45rem; border-radius: 3px; background: rgba(255, 209, 0, 0.12); border: 1px solid rgba(255, 209, 0, 0.35); color: var(--gold-300);">Guild Tithing</span>`
+      : '';
+    const rewardDisplay = isTithing
+      ? `<span style="color: var(--gold-300); font-weight: 700; font-size: 0.92rem; margin-right: 0.5rem;">${escapeHtml(tithingRateStr)}</span>`
+      : `<span style="color: var(--gold-300); font-weight: 700; font-size: 1rem; margin-right: 0.5rem;">+${b.rewardBones} ${currName}</span>`;
 
     return `
     <div class="officer-review-card" style="display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap;">
@@ -1911,6 +2303,7 @@ function renderOfficerBountiesList() {
         <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
           <strong style="color: var(--gold-100); font-size: 0.95rem;">${escapeHtml(b.title)}</strong>
           <span style="font-size: 0.7rem; padding: 0.1rem 0.4rem; border-radius: 3px; background: rgba(198, 155, 109, 0.15); border: 1px solid rgba(198, 155, 109, 0.3); color: var(--gold-300);">${escapeHtml(b.category || 'General')}</span>
+          ${tithingTypeBadge}
           ${sponsorBadge}
         </div>
         <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.25rem;">
@@ -1919,7 +2312,7 @@ function renderOfficerBountiesList() {
         ${b.description ? `<div style="font-size: 0.8rem; color: var(--text-dim); margin-top: 0.35rem; line-height: 1.3;">${escapeHtml(b.description)}</div>` : ''}
       </div>
       <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
-        <span style="color: var(--gold-300); font-weight: 700; font-size: 1rem; margin-right: 0.5rem;">+${b.rewardBones} Bones</span>
+        ${rewardDisplay}
         <button class="btn-primary" style="padding: 0.35rem 0.75rem; font-size: 0.75rem;" onclick="openEditBountyModal('${b.id}')">Edit</button>
         ${statusVal === 'pending_review'
           ? `<button class="btn-success" style="padding: 0.35rem 0.65rem; font-size: 0.75rem;" onclick="approveMemberBountyRequest('${b.id}')">Approve Request</button>`
@@ -2279,12 +2672,35 @@ function setupModals() {
     openClaimModal();
   });
 
+  document.getElementById('claimGoldAmount')?.addEventListener('input', () => {
+    updateClaimTithingPreview();
+  });
+
   // Submit Claim Execute (Proof URL is optional)
   document.getElementById('btnSubmitClaimExecute').addEventListener('click', async () => {
     const bountyId = document.getElementById('claimBountySelect').value;
+    const selectedBounty = (state.bseState?.bounties || []).find(b => b.id === bountyId);
+    const isTithing = selectedBounty?.bountyType === 'tithing';
     const characterName = document.getElementById('claimCharacterSelect').value;
     const proofUrl = document.getElementById('claimProofUrl').value.trim();
     const notes = document.getElementById('claimNotes').value.trim();
+
+    let goldDonated;
+    if (isTithing) {
+      goldDonated = Number(document.getElementById('claimGoldAmount')?.value);
+      if (!Number.isFinite(goldDonated) || goldDonated <= 0) {
+        showToast('Please enter the positive Gold amount donated to the guild vault.');
+        return;
+      }
+      const earnedBones = calculateClientTithingBones(goldDonated);
+      if (earnedBones < 1) {
+        const currName = state.bseState?.branding?.currencyName || 'Bones';
+        const minGold = formatClientTithingNumber(getClientMinimumGoldForOneBone());
+        const rateStr = formatClientTithingRate(null, currName);
+        showToast(`At the current rate (${rateStr}), at least ${minGold} Gold is required to claim 1 Bone.`);
+        return;
+      }
+    }
 
     // Collect checked bonus checkboxes
     const achievedBonusIds = [];
@@ -2294,18 +2710,23 @@ function setupModals() {
     });
 
     try {
+      const payload = {
+        bountyId,
+        characterName,
+        proofUrl,
+        notes,
+        achievedBonusIds,
+        discordId: state.user?.id,
+        discordUsername: state.user?.username
+      };
+      if (isTithing) {
+        payload.goldDonated = goldDonated;
+      }
+
       const res = await fetch('/api/exchange/claim', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          bountyId,
-          characterName,
-          proofUrl,
-          notes,
-          achievedBonusIds,
-          discordId: state.user?.id,
-          discordUsername: state.user?.username
-        })
+        body: JSON.stringify(payload)
       });
       const data = await res.json();
       if (res.ok) {
@@ -2350,28 +2771,35 @@ function setupModals() {
 
   // Edit Bounty Modal Handlers
   document.getElementById('btnAddEditBonus')?.addEventListener('click', addEditBonusRow);
+  document.getElementById('editBountyType')?.addEventListener('change', syncEditBountyTypeFields);
 
   document.getElementById('btnSaveEditedBounty')?.addEventListener('click', async () => {
     const bountyId = document.getElementById('editBountyId').value;
     const title = document.getElementById('editBountyTitle').value.trim();
-    const rewardBones = parseInt(document.getElementById('editBountyReward').value, 10);
+    const bountyType = document.getElementById('editBountyType')?.value === 'tithing' ? 'tithing' : 'fixed';
+    const rawReward = parseInt(document.getElementById('editBountyReward').value, 10);
     const category = document.getElementById('editBountyCategory').value;
     const status = document.getElementById('editBountyStatus').value;
     const description = document.getElementById('editBountyDesc').value.trim();
 
-    if (!title || isNaN(rewardBones) || rewardBones < 0) {
+    if (!title || (bountyType !== 'tithing' && (isNaN(rawReward) || rawReward < 0))) {
       showToast('Please enter a title and valid reward amount (0 or higher).');
       return;
     }
 
+    const rewardBones = bountyType === 'tithing'
+      ? (Number.isNaN(rawReward) ? resolveClientTithingConfig().bonesAmount : Math.max(0, rawReward))
+      : rawReward;
+
     const bonusRows = document.querySelectorAll('#editBountyBonusesList .edit-bonus-row');
     const bonuses = [];
+    const baseTs = Date.now();
     bonusRows.forEach((row, idx) => {
       const desc = row.querySelector('.edit-bonus-desc')?.value.trim() || '';
       const amt = parseInt(row.querySelector('.edit-bonus-amount')?.value, 10) || 0;
       if (desc && amt > 0) {
         bonuses.push({
-          id: `bonus_${Date.now()}_${idx}`,
+          id: row.dataset.bonusId || `bonus_${baseTs}_${idx}`,
           description: desc,
           bonusBones: amt
         });
@@ -2389,6 +2817,7 @@ function setupModals() {
         body: JSON.stringify({
           bountyId,
           title,
+          bountyType,
           rewardBones,
           category,
           status,
@@ -2450,19 +2879,89 @@ function renderClaimBonusesForBounty(bountyId) {
   }
 }
 
+function updateClaimTithingPreview() {
+  const input = document.getElementById('claimGoldAmount');
+  const preview = document.getElementById('claimTithingPreview');
+  if (!preview) return;
+
+  const tithingCfg = resolveClientTithingConfig();
+  const currName = state.bseState?.branding?.currencyName || 'Bones';
+  const rateText = formatClientTithingRate(tithingCfg, currName);
+  const raw = (input?.value || '').trim();
+
+  preview.classList.remove('is-valid', 'is-warning');
+  if (!raw) {
+    preview.innerHTML = `Enter Gold donated to calculate your ${escapeHtml(currName)} payout. (Rate: <strong>${escapeHtml(rateText)}</strong>)`;
+    return;
+  }
+
+  const goldVal = Number(raw);
+  if (!Number.isFinite(goldVal) || goldVal <= 0) {
+    preview.classList.add('is-warning');
+    preview.textContent = 'Please enter a positive Gold amount greater than 0.';
+    return;
+  }
+
+  const earnedBones = calculateClientTithingBones(goldVal, tithingCfg);
+  if (earnedBones < 1) {
+    const minGoldStr = formatClientTithingNumber(getClientMinimumGoldForOneBone(tithingCfg));
+    preview.classList.add('is-warning');
+    preview.innerHTML = `At <strong>${escapeHtml(rateText)}</strong>, at least <strong>${escapeHtml(minGoldStr)} Gold</strong> is needed to earn 1 ${escapeHtml(currName.toLowerCase() === 'bones' ? 'Bone' : currName)}.`;
+    return;
+  }
+
+  const earnedUnit = currName.toLowerCase() === 'bones'
+    ? (earnedBones === 1 ? 'Bone' : 'Bones')
+    : currName;
+  preview.classList.add('is-valid');
+  preview.innerHTML = `Donating <strong>${escapeHtml(formatClientTithingNumber(goldVal))} Gold</strong> at <strong>${escapeHtml(rateText)}</strong> earns <strong style="color: #86efac;">+${earnedBones.toLocaleString()} ${escapeHtml(earnedUnit)}</strong>.`;
+}
+
+function updateClaimModalForBounty(bountyId) {
+  renderClaimBonusesForBounty(bountyId);
+  const bounty = (state.bseState?.bounties || []).find(b => b.id === bountyId);
+  const isTithing = bounty?.bountyType === 'tithing';
+  const tithingSection = document.getElementById('claimTithingSection');
+  const rateTextEl = document.getElementById('claimTithingRateText');
+  const notesInput = document.getElementById('claimNotes');
+
+  if (tithingSection) {
+    tithingSection.style.display = isTithing ? 'block' : 'none';
+  }
+  if (isTithing) {
+    const tithingCfg = resolveClientTithingConfig();
+    const currName = state.bseState?.branding?.currencyName || 'Bones';
+    if (rateTextEl) {
+      rateTextEl.textContent = formatClientTithingRate(tithingCfg, currName);
+    }
+    if (notesInput) {
+      notesInput.placeholder = 'Optional: vault deposit time, guild bank tab, or notes...';
+    }
+    updateClaimTithingPreview();
+  } else if (notesInput) {
+    notesInput.placeholder = 'Describe kill, participants, or details...';
+  }
+}
+
 window.openClaimModal = function(bountyId) {
   const select = document.getElementById('claimBountySelect');
   const bounties = (state.bseState?.bounties || []).filter(b => (b.status || 'active') === 'active');
   const currName = state.bseState?.branding?.currencyName || 'Bones';
+  const tithingCfg = resolveClientTithingConfig();
 
-  select.innerHTML = bounties.map(b => `
-    <option value="${b.id}" ${b.id === bountyId ? 'selected' : ''}>
-      ${escapeHtml(b.title)} (+${b.rewardBones} ${escapeHtml(currName)})
-    </option>
-  `).join('');
+  select.innerHTML = bounties.map(b => {
+    const rateLabel = b.bountyType === 'tithing'
+      ? formatClientTithingRate(tithingCfg, currName)
+      : `+${b.rewardBones} ${currName}`;
+    return `
+      <option value="${b.id}" ${b.id === bountyId ? 'selected' : ''}>
+        ${escapeHtml(b.title)} (${escapeHtml(rateLabel)})
+      </option>
+    `;
+  }).join('');
 
   select.onchange = () => {
-    renderClaimBonusesForBounty(select.value);
+    updateClaimModalForBounty(select.value);
   };
 
   // Completing Character Select
@@ -2480,11 +2979,14 @@ window.openClaimModal = function(bountyId) {
     charSelect.innerHTML = `<option value="">Unlinked (Add characters in your wallet)</option>`;
   }
 
-  const activeBountyId = bountyId || select.value;
-  renderClaimBonusesForBounty(activeBountyId);
-
+  const goldInput = document.getElementById('claimGoldAmount');
+  if (goldInput) goldInput.value = '';
   document.getElementById('claimProofUrl').value = '';
   document.getElementById('claimNotes').value = '';
+
+  const activeBountyId = bountyId || select.value;
+  updateClaimModalForBounty(activeBountyId);
+
   document.getElementById('modalClaim').classList.add('active');
 };
 
@@ -2720,12 +3222,12 @@ function setupOfficerTools() {
 
   // Create Bounty
   document.getElementById('btnCreateBounty').addEventListener('click', async () => {
+    const bountyType = document.getElementById('newBountyType')?.value === 'tithing' ? 'tithing' : 'fixed';
     const title = document.getElementById('newBountyTitle').value.trim();
-    const rewardBones = document.getElementById('newBountyReward').value;
+    const rawRewardBones = document.getElementById('newBountyReward').value;
+    const parsedRewardBones = parseInt(rawRewardBones, 10);
     const category = document.getElementById('newBountyCategory').value;
     const description = document.getElementById('newBountyDesc').value.trim();
-    const bonusDesc = document.getElementById('newBountyBonusDesc')?.value.trim() || '';
-    const bonusAmount = parseInt(document.getElementById('newBountyBonusAmount')?.value, 10) || 0;
 
     const announce = Boolean(document.getElementById('bountyAnnounceToggle')?.checked);
     const announceChannelId = document.getElementById('bountyAnnounceChannel')?.value || null;
@@ -2734,15 +3236,34 @@ function setupOfficerTools() {
     const eventEndTime = document.getElementById('bountyEventEnd')?.value || null;
     const eventLocation = document.getElementById('bountyEventLocation')?.value?.trim() || null;
 
-    if (!title || !rewardBones) {
-      showToast('Please enter bounty title and reward.');
+    if (!title || (bountyType !== 'tithing' && (!rawRewardBones || isNaN(parsedRewardBones) || parsedRewardBones < 1))) {
+      showToast(bountyType === 'tithing'
+        ? 'Please enter a bounty title.'
+        : 'Please enter a bounty title and valid reward.');
       return;
     }
 
+    const rewardBones = bountyType === 'tithing'
+      ? resolveClientTithingConfig().bonesAmount
+      : parsedRewardBones;
+
     const bonuses = [];
-    if (bonusDesc && bonusAmount > 0) {
+    const bonusRows = document.querySelectorAll('#createBountyBonusesList .create-bonus-row');
+    const baseTs = Date.now();
+    for (let idx = 0; idx < bonusRows.length; idx++) {
+      const row = bonusRows[idx];
+      const bonusDesc = row.querySelector('.create-bonus-desc')?.value.trim() || '';
+      const rawBonusAmt = row.querySelector('.create-bonus-amount')?.value.trim() || '';
+      const bonusAmount = parseInt(rawBonusAmt, 10) || 0;
+
+      if (!bonusDesc && !rawBonusAmt) continue;
+      if (!bonusDesc || bonusAmount < 1) {
+        showToast('Each bonus objective needs both a description and at least +1 Bone (or remove unused rows).');
+        return;
+      }
+
       bonuses.push({
-        id: `bonus_${Date.now()}`,
+        id: `bonus_${baseTs}_${idx}`,
         description: bonusDesc,
         bonusBones: bonusAmount
       });
@@ -2753,6 +3274,7 @@ function setupOfficerTools() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         title,
+        bountyType,
         rewardBones,
         category,
         description,
@@ -2770,8 +3292,11 @@ function setupOfficerTools() {
       document.getElementById('newBountyTitle').value = '';
       document.getElementById('newBountyReward').value = '';
       document.getElementById('newBountyDesc').value = '';
-      if (document.getElementById('newBountyBonusDesc')) document.getElementById('newBountyBonusDesc').value = '';
-      if (document.getElementById('newBountyBonusAmount')) document.getElementById('newBountyBonusAmount').value = '';
+      if (document.getElementById('newBountyType')) {
+        document.getElementById('newBountyType').value = 'fixed';
+      }
+      syncCreateBountyTypeFields();
+      resetCreateBountyBonusRows();
       if (document.getElementById('bountyAnnounceToggle')) {
         document.getElementById('bountyAnnounceToggle').checked = false;
         document.getElementById('bountyAnnounceFields').style.display = 'none';
@@ -3332,19 +3857,47 @@ window.deleteBounty = async function(bountyId) {
   }
 };
 
+function syncEditBountyTypeFields() {
+  const typeSelect = document.getElementById('editBountyType');
+  const rewardGroup = document.getElementById('editBountyRewardGroup');
+  const tithingGroup = document.getElementById('editBountyTithingGroup');
+  const rateInfoEl = document.getElementById('editBountyTithingRateInfo');
+  if (!typeSelect) return;
+
+  const isTithing = typeSelect.value === 'tithing';
+  if (rewardGroup) rewardGroup.style.display = isTithing ? 'none' : 'block';
+  if (tithingGroup) tithingGroup.style.display = isTithing ? 'block' : 'none';
+  if (isTithing && rateInfoEl) {
+    const tithingCfg = resolveClientTithingConfig();
+    const currName = state.bseState?.branding?.currencyName || 'Bones';
+    rateInfoEl.textContent = `Uses global rate: ${formatClientTithingRate(tithingCfg, currName)} (k = ${formatClientTithingNumber(tithingCfg.ratio)})`;
+  }
+}
+
 window.openEditBountyModal = function(bountyId) {
   const bounty = (state.bseState?.bounties || []).find(b => b.id === bountyId);
   if (!bounty) { showToast('Bounty not found.'); return; }
   document.getElementById('editBountyId').value = bounty.id;
   document.getElementById('editBountyTitle').value = bounty.title || '';
+  const typeEl = document.getElementById('editBountyType');
+  if (typeEl) typeEl.value = bounty.bountyType === 'tithing' ? 'tithing' : 'fixed';
   document.getElementById('editBountyReward').value = bounty.rewardBones ?? 10;
   document.getElementById('editBountyCategory').value = bounty.category || 'General';
   document.getElementById('editBountyStatus').value = bounty.status || 'active';
   document.getElementById('editBountyDesc').value = bounty.description || '';
   const eventNotice = document.getElementById('editBountyDiscordEventNotice');
   if (eventNotice) eventNotice.style.display = bounty.discordEventId ? 'block' : 'none';
+  syncEditBountyTypeFields();
   renderEditBountyBonuses(bounty.bonuses || []);
   document.getElementById('modalEditBounty')?.classList.add('active');
+};
+
+window.removeEditBonusRow = function(btn) {
+  const container = document.getElementById('editBountyBonusesList');
+  btn?.closest('.edit-bonus-row')?.remove();
+  if (container && !container.querySelector('.edit-bonus-row')) {
+    container.innerHTML = `<div id="noEditBonusesMsg" style="font-size: 0.75rem; color: var(--text-dim);">No bonus objectives. Click "+ Add Bonus" to add one.</div>`;
+  }
 };
 
 function renderEditBountyBonuses(bonuses = []) {
@@ -3358,11 +3911,11 @@ function renderEditBountyBonuses(bonuses = []) {
   bonuses.forEach(bonus => {
     const row = document.createElement('div');
     row.className = 'edit-bonus-row';
-    row.style.cssText = 'display: grid; grid-template-columns: 2fr 1fr auto; gap: 0.5rem; align-items: center;';
+    if (bonus.id) row.dataset.bonusId = bonus.id;
     row.innerHTML = `
       <input type="text" class="form-control edit-bonus-desc" placeholder="Bonus objective description" value="${escapeHtml(bonus.description || '')}">
       <input type="number" class="form-control edit-bonus-amount" min="1" placeholder="+ Bones" value="${bonus.bonusBones || 5}">
-      <button type="button" class="btn-danger" style="padding: 0.3rem 0.5rem; font-size: 0.75rem;" onclick="this.closest('.edit-bonus-row').remove()">✕</button>
+      <button type="button" class="btn-danger" style="padding: 0.3rem 0.5rem; font-size: 0.75rem;" onclick="removeEditBonusRow(this)">✕</button>
     `;
     container.appendChild(row);
   });
@@ -3375,11 +3928,10 @@ function addEditBonusRow() {
   document.getElementById('noEditBonusesMsg')?.remove();
   const row = document.createElement('div');
   row.className = 'edit-bonus-row';
-  row.style.cssText = 'display: grid; grid-template-columns: 2fr 1fr auto; gap: 0.5rem; align-items: center;';
   row.innerHTML = `
     <input type="text" class="form-control edit-bonus-desc" placeholder="Bonus objective description">
     <input type="number" class="form-control edit-bonus-amount" min="1" placeholder="+ Bones" value="10">
-    <button type="button" class="btn-danger" style="padding: 0.3rem 0.5rem; font-size: 0.75rem;" onclick="this.closest('.edit-bonus-row').remove()">✕</button>
+    <button type="button" class="btn-danger" style="padding: 0.3rem 0.5rem; font-size: 0.75rem;" onclick="removeEditBonusRow(this)">✕</button>
   `;
   container.appendChild(row);
 }

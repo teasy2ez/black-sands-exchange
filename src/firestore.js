@@ -374,6 +374,16 @@ export class FirestoreClient {
           category: 'Economy',
           status: 'active',
           createdAt: new Date().toISOString()
+        },
+        {
+          id: 'bounty_guild_tithing',
+          title: 'Guild Tithing',
+          description: 'Donate Gold directly to the Guild Bank Vault to support consumables, repairs, and guild operations. Claim Bones based on the current guild exchange rate.',
+          rewardBones: 1,
+          bountyType: 'tithing',
+          category: 'Economy',
+          status: 'active',
+          createdAt: new Date().toISOString()
         }
       ],
       shop: [
@@ -430,7 +440,11 @@ export class FirestoreClient {
       config: {
         standingsMessageId: '',
         bountiesMessageId: '',
-        shopMessageId: ''
+        shopMessageId: '',
+        tithing: {
+          goldAmount: 1,
+          bonesAmount: 1
+        }
       }
     };
   }

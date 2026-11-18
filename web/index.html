@@ -513,16 +513,69 @@
             <div id="memberBountyRequestsList" class="officer-cards-list"></div>
           </div>
 
+          <!-- Global Guild Tithing Exchange Rate Settings -->
+          <div class="officer-box" style="grid-column: 1 / -1;" id="tithingSettingsCard">
+            <div style="display: flex; justify-content: space-between; align-items: center; gap: 0.75rem; flex-wrap: wrap; margin-bottom: 0.45rem;">
+              <h4 style="margin-bottom: 0;">Guild Tithing Exchange Rate (Gold Vault &rarr; Bones)</h4>
+              <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+                <span class="tithing-status-pill" id="tithingBountyStatusBadge">Checking...</span>
+                <button type="button" class="btn-secondary" id="btnEnsureTithingBounty" style="display: none; font-size: 0.75rem; padding: 0.28rem 0.65rem;">Activate Guild Tithing Bounty</button>
+              </div>
+            </div>
+            <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.85rem;">
+              Set the global ratio for Guild Tithing bounties: players receive <strong>X Bones</strong> for every <strong>Y Gold</strong> donated to the guild vault (default <strong>1:1</strong>, proportionality constant <code>k = X / Y</code>).
+            </p>
+            <div class="tithing-ratio-editor">
+              <div class="form-group" style="margin-bottom: 0;">
+                <label style="color: var(--gold-200); font-weight: 700;">Gold Donated (Y)</label>
+                <input type="number" class="form-control tithing-input-gold" id="editorTithingGold" min="0.0001" step="any" placeholder="1">
+              </div>
+              <div class="tithing-equals-sign" aria-hidden="true">=</div>
+              <div class="form-group" style="margin-bottom: 0;">
+                <label style="color: var(--gold-200); font-weight: 700;">Bones Earned (X)</label>
+                <input type="number" class="form-control tithing-input-bones" id="editorTithingBones" min="0.0001" step="any" placeholder="1">
+              </div>
+              <div class="form-group" style="margin-bottom: 0;">
+                <label style="color: var(--blue); font-weight: 700;">Constant of Proportionality (k = Bones/Gold)</label>
+                <input type="number" class="form-control tithing-input-k" id="editorTithingConstant" min="0.0001" step="any" placeholder="1">
+              </div>
+            </div>
+            <div class="quick-chips-row" style="margin: 0.75rem 0;">
+              <button type="button" class="quick-chip tithing-preset-chip" data-gold="1" data-bones="1">1:1 (Default)</button>
+              <button type="button" class="quick-chip tithing-preset-chip" data-gold="5" data-bones="1">5 Gold = 1 Bone (k=0.2)</button>
+              <button type="button" class="quick-chip tithing-preset-chip" data-gold="10" data-bones="1">10 Gold = 1 Bone (k=0.1)</button>
+              <button type="button" class="quick-chip tithing-preset-chip" data-gold="25" data-bones="1">25 Gold = 1 Bone (k=0.04)</button>
+              <button type="button" class="quick-chip tithing-preset-chip" data-gold="1" data-bones="2">1 Gold = 2 Bones (k=2)</button>
+            </div>
+            <div style="display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap;">
+              <div class="tithing-preview-banner tithing-preview-target" id="tithingRatePreviewBanner">
+                Members see: <strong>1 Gold = 1 Bone</strong> &bull; Constant <code>k = 1</code>
+              </div>
+              <button type="button" class="btn-primary tithing-save-btn" id="btnSaveTithingSettings" style="min-width: 190px;">Save Tithing Ratio</button>
+            </div>
+          </div>
+
           <div class="officer-box" style="grid-column: 1 / -1;">
             <h4>Create Guild Bounty</h4>
-            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1rem;">
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem;">
               <div class="form-group">
                 <label>Bounty Title</label>
                 <input type="text" class="form-control" id="newBountyTitle" placeholder="e.g. Molten Core Full Clear">
               </div>
               <div class="form-group">
+                <label>Bounty Type</label>
+                <select class="form-control" id="newBountyType">
+                  <option value="fixed">Fixed Reward (Static Bones)</option>
+                  <option value="tithing">Guild Tithing (Gold Donated &rarr; Bones)</option>
+                </select>
+              </div>
+              <div class="form-group" id="newBountyRewardGroup">
                 <label>Base Reward (Bones)</label>
                 <input type="number" class="form-control" id="newBountyReward" min="1" placeholder="50">
+              </div>
+              <div class="form-group" id="newBountyTithingInfo" style="display: none;">
+                <label style="color: var(--gold-300);">Dynamic Rate (Auto-Calculated)</label>
+                <div class="tithing-inline-info" id="newBountyTithingRateInfo">Uses global rate: 1 Gold = 1 Bone</div>
               </div>
               <div class="form-group">
                 <label>Category</label>
@@ -539,12 +592,14 @@
               <label>Description &amp; Requirements</label>
               <textarea class="form-control" id="newBountyDesc" rows="2" placeholder="Full completion details and requirements..."></textarea>
             </div>
-            <!-- Optional Bonus Objective -->
+            <!-- Optional Bonus Objectives (Dynamic multi-bonus builder) -->
             <div class="wow-inner-box" style="padding: 0.75rem; margin-bottom: 1rem;">
-              <label style="font-size: 0.8rem; color: var(--gold-300); font-weight: 700; margin-bottom: 0.35rem; display: block;">Optional Bonus Objective (Extra Bones)</label>
-              <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 0.5rem;">
-                <input type="text" class="form-control" id="newBountyBonusDesc" placeholder="e.g. Complete in under 30 minutes / zero deaths">
-                <input type="number" class="form-control" id="newBountyBonusAmount" min="0" placeholder="+ Extra Bones (e.g. 15)">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; gap: 0.5rem; flex-wrap: wrap;">
+                <label style="font-size: 0.8rem; color: var(--gold-300); font-weight: 700; margin: 0;">Optional Bonus Objectives (Extra Bones)</label>
+                <button type="button" class="btn-secondary" id="btnAddCreateBonus" style="font-size: 0.72rem; padding: 0.25rem 0.6rem;">+ Add Bonus</button>
+              </div>
+              <div id="createBountyBonusesList" style="display: flex; flex-direction: column; gap: 0.5rem;">
+                <!-- Dynamic bonus rows added by app.js -->
               </div>
             </div>
             <!-- Discord Broadcast & Scheduled Guild Event Section -->
@@ -780,6 +835,42 @@
               </div>
             </div>
             <button class="btn-primary" id="btnSaveWeeklyCapSettings" style="max-width: 240px; margin-top: 0.5rem;">Save Weekly Cap Settings</button>
+          </div>
+
+          <!-- 6. Guild Tithing Proportionality Ratio -->
+          <div class="officer-box" style="grid-column: 1 / -1;" id="modulesTithingSettingsCard">
+            <h4>Guild Tithing Proportionality Rate (Gold Vault &rarr; Bones)</h4>
+            <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.85rem;">
+              Global exchange rate for Guild Tithing bounties (default <strong>1:1</strong>). Adjust either <strong>Y Gold = X Bones</strong> or the proportionality constant <strong>k</strong>.
+            </p>
+            <div class="tithing-ratio-editor">
+              <div class="form-group" style="margin-bottom: 0;">
+                <label style="color: var(--gold-200); font-weight: 700;">Gold Donated (Y)</label>
+                <input type="number" class="form-control tithing-input-gold" id="modulesTithingGold" min="0.0001" step="any" placeholder="1">
+              </div>
+              <div class="tithing-equals-sign" aria-hidden="true">=</div>
+              <div class="form-group" style="margin-bottom: 0;">
+                <label style="color: var(--gold-200); font-weight: 700;">Bones Earned (X)</label>
+                <input type="number" class="form-control tithing-input-bones" id="modulesTithingBones" min="0.0001" step="any" placeholder="1">
+              </div>
+              <div class="form-group" style="margin-bottom: 0;">
+                <label style="color: var(--blue); font-weight: 700;">Constant of Proportionality (k = Bones/Gold)</label>
+                <input type="number" class="form-control tithing-input-k" id="modulesTithingConstant" min="0.0001" step="any" placeholder="1">
+              </div>
+            </div>
+            <div class="quick-chips-row" style="margin: 0.75rem 0;">
+              <button type="button" class="quick-chip tithing-preset-chip" data-gold="1" data-bones="1">1:1 (Default)</button>
+              <button type="button" class="quick-chip tithing-preset-chip" data-gold="5" data-bones="1">5 Gold = 1 Bone (k=0.2)</button>
+              <button type="button" class="quick-chip tithing-preset-chip" data-gold="10" data-bones="1">10 Gold = 1 Bone (k=0.1)</button>
+              <button type="button" class="quick-chip tithing-preset-chip" data-gold="25" data-bones="1">25 Gold = 1 Bone (k=0.04)</button>
+              <button type="button" class="quick-chip tithing-preset-chip" data-gold="1" data-bones="2">1 Gold = 2 Bones (k=2)</button>
+            </div>
+            <div style="display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap;">
+              <div class="tithing-preview-banner tithing-preview-target" id="modulesTithingPreviewBanner">
+                Members see: <strong>1 Gold = 1 Bone</strong> &bull; Constant <code>k = 1</code>
+              </div>
+              <button type="button" class="btn-primary tithing-save-btn" id="btnSaveTithingSettingsModules" style="min-width: 190px;">Save Tithing Ratio</button>
+            </div>
           </div>
 
         </div>
@@ -1025,6 +1116,20 @@
       <div class="form-group">
         <label>Completing Character</label>
         <select class="form-control" id="claimCharacterSelect"></select>
+      </div>
+      <!-- Guild Tithing Calculator (shown when bountyType === 'tithing') -->
+      <div id="claimTithingSection" class="tithing-calc-box" style="display: none; margin-bottom: 1rem;">
+        <div class="tithing-calc-header">
+          <span>Guild Vault Exchange Rate</span>
+          <strong id="claimTithingRateText">1 Gold = 1 Bone</strong>
+        </div>
+        <div class="form-group" style="margin-bottom: 0.65rem;">
+          <label style="color: var(--gold-200);">Gold Donated to Guild Vault</label>
+          <input type="number" class="form-control" id="claimGoldAmount" min="0.01" step="any" placeholder="Enter gold donated (e.g. 50)">
+        </div>
+        <div id="claimTithingPreview" class="tithing-calc-result">
+          Enter Gold donated to calculate your Bones payout.
+        </div>
       </div>
       <!-- Optional Bonus Checklist container -->
       <div id="claimBonusesContainer" style="display: none; margin-bottom: 1rem;"></div>
@@ -1275,8 +1380,19 @@
           <input type="text" class="form-control" id="editBountyTitle" placeholder="Bounty Title">
         </div>
         <div class="form-group" style="margin-bottom: 0.5rem;">
+          <label>Bounty Type</label>
+          <select class="form-control" id="editBountyType">
+            <option value="fixed">Fixed Reward (Static Bones)</option>
+            <option value="tithing">Guild Tithing (Gold Donated &rarr; Bones)</option>
+          </select>
+        </div>
+        <div class="form-group" style="margin-bottom: 0.5rem;" id="editBountyRewardGroup">
           <label>Base Reward (Bones)</label>
           <input type="number" class="form-control" id="editBountyReward" min="0" placeholder="10">
+        </div>
+        <div class="form-group" style="margin-bottom: 0.5rem; display: none;" id="editBountyTithingGroup">
+          <label style="color: var(--gold-300);">Dynamic Rate</label>
+          <div class="tithing-inline-info" id="editBountyTithingRateInfo">Uses global rate: 1 Gold = 1 Bone</div>
         </div>
         <div class="form-group" style="margin-bottom: 0.5rem;">
           <label>Category</label>

@@ -16,6 +16,7 @@ import {
   getChannelRouting
 } from './discord.js';
 import { applyWeeklyBoneAward } from './weeklyCap.js';
+import { getTithingConfig, calculateTithingBones, formatTithingRate, getMinimumGoldForOneBone, formatTithingNumber } from './tithing.js';
 
 /**
  * Check if the member calling the command is an authorized Officer
@@ -170,7 +171,7 @@ async function handleLeaderboardCommand(interaction, env, firestore) {
  */
 async function handleBountiesCommand(interaction, env, firestore) {
   const state = await firestore.getBseState();
-  const embed = buildBountiesEmbed(state.bounties || []);
+  const embed = buildBountiesEmbed(state.bounties || [], state.config?.tithing);
   return {
     type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
     data: { embeds: [embed] }
@@ -210,6 +211,37 @@ async function handleClaimCommand(interaction, opts, env, firestore) {
   }
 
   const wallet = state.wallets?.[caller.id];
+  const isTithing = bounty.bountyType === 'tithing';
+  let rewardBones = bounty.rewardBones || 0;
+  let goldDonated = null;
+  let tithingRate = null;
+
+  if (isTithing) {
+    const tithingCfg = getTithingConfig(state);
+    const goldMatch = String(notes || '').match(/(?:^|\s)(\d+(?:\.\d+)?)\s*(?:g|gold)\b/i)
+      || String(notes || '').trim().match(/^(\d+(?:\.\d+)?)\b/);
+    const parsedGold = Number(opts.gold_donated ?? (goldMatch ? goldMatch[1] : NaN));
+    const calculatedBones = calculateTithingBones(parsedGold, tithingCfg);
+
+    if (!Number.isFinite(parsedGold) || parsedGold <= 0 || calculatedBones < 1) {
+      const minGold = formatTithingNumber(getMinimumGoldForOneBone(tithingCfg));
+      return {
+        type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+        data: {
+          content: `❌ **Guild Tithing requires the amount of Gold donated** (minimum **${minGold} Gold** at the current rate).\nCurrent rate: **${formatTithingRate(tithingCfg)}**\nInclude the gold amount in \`notes\` (for example: \`notes: 50g donated to guild vault\`) or submit using the Gold calculator at https://bse.teasy2ez.win.`,
+          flags: 64
+        }
+      };
+    }
+
+    rewardBones = calculatedBones;
+    goldDonated = Number(parsedGold.toFixed(4));
+    tithingRate = {
+      goldAmount: tithingCfg.goldAmount,
+      bonesAmount: tithingCfg.bonesAmount,
+      ratio: tithingCfg.ratio
+    };
+  }
 
   // Create claim entry
   const claimId = `claim_${Date.now()}_${caller.id.slice(-4)}`;
@@ -217,7 +249,8 @@ async function handleClaimCommand(interaction, opts, env, firestore) {
     id: claimId,
     bountyId: bounty.id,
     bountyTitle: bounty.title,
-    rewardBones: bounty.rewardBones,
+    rewardBones,
+    ...(goldDonated !== null ? { goldDonated, tithingRate } : {}),
     discordId: caller.id,
     discordUsername: caller.username,
     serverNickname: interaction.member?.nick || caller.global_name || caller.username,
@@ -242,10 +275,14 @@ async function handleClaimCommand(interaction, opts, env, firestore) {
     }
   }
 
+  const tithingConfirm = isTithing && goldDonated
+    ? ` for depositing **${formatTithingNumber(goldDonated)} Gold** (Rate: **${formatTithingRate(tithingRate)}**)`
+    : '';
+
   return {
     type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
     data: {
-      content: `✅ **Bounty Claim Submitted!** Your proof for **${bounty.title}** has been sent to the Officers for 1-click review. You will receive **+${bounty.rewardBones} Bones** once approved!`,
+      content: `✅ **Bounty Claim Submitted!** Your proof for **${bounty.title}**${tithingConfirm} has been sent to the Officers for 1-click review. You will receive **+${rewardBones} Bones** once approved!`,
       flags: 64
     }
   };

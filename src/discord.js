@@ -1,5 +1,6 @@
 import nacl from 'tweetnacl';
 import { resolveRank } from './commands.js';
+import { resolveTithingConfig, formatTithingRate, formatTithingNumber } from './tithing.js';
 
 /**
  * Verifies that an incoming HTTP request originated from Discord using Ed25519.
@@ -319,19 +320,32 @@ export function buildLeaderboardEmbed(topMembers = []) {
 /**
  * Build Active Bounties embed
  */
-export function buildBountiesEmbed(bounties = []) {
+export function buildBountiesEmbed(bounties = [], tithingConfig = null) {
   const active = bounties.filter(b => (b.status || 'active') === 'active');
+  const resolvedTithing = resolveTithingConfig(tithingConfig);
   let description = '';
 
   if (!active.length) {
     description = '*No active bounties posted right now. Check back soon for new guild tasks!*';
   } else {
-    description = active.map(b => {
-      const reward = (b.rewardBones || 0).toLocaleString();
+    const entries = active.map(b => {
+      const isTithing = b.bountyType === 'tithing';
+      const rewardLine = isTithing
+        ? `💰 **${formatTithingRate(resolvedTithing)}** *(Guild Vault Gold → Bones)*`
+        : `💰 **+${(b.rewardBones || 0).toLocaleString()} Bones**`;
       const sponsor = b.creatorId ? ` • *Sponsored by ${b.creatorNickname || b.creatorUsername || 'Guild Member'}*` : '';
       const desc = b.description ? `\n> ${b.description}` : '';
-      return `📜 **${b.title}** (ID: \`${b.id}\`)\n💰 **+${reward} Bones**${sponsor}${desc}`;
-    }).join('\n\n');
+      const bonusesLine = Array.isArray(b.bonuses) && b.bonuses.length > 0
+        ? `\n⭐ *Bonuses:* ${b.bonuses.map(bn => `${bn.description} (+${bn.bonusBones} Bones)`).join(' • ')}`
+        : '';
+      return `📜 **${b.title}** (ID: \`${b.id}\`)\n${rewardLine}${sponsor}${desc}${bonusesLine}`;
+    });
+
+    // Respect Discord's 4096-character embed description limit safely
+    description = entries.join('\n\n');
+    if (description.length > 3800) {
+      description = `${description.slice(0, 3780)}…\n\n*See full details at bse.teasy2ez.win*`;
+    }
   }
 
   return {
@@ -376,19 +390,45 @@ export function buildShopEmbed(items = []) {
 export function buildBountyClaimReviewMessage(claim, bounty, user) {
   const memberName = user?.serverNickname || user?.globalName || user?.username || claim.discordUsername || 'Member';
   const handle = user?.username ? `@${user.username}` : (claim.discordUsername ? `@${claim.discordUsername}` : '');
-  const reward = bounty?.rewardBones || claim.rewardBones || 0;
+  const baseReward = (claim.rewardBones !== undefined && claim.rewardBones !== null)
+    ? claim.rewardBones
+    : (bounty?.rewardBones || 0);
+  const achievedBonusIds = Array.isArray(claim.achievedBonusIds) ? claim.achievedBonusIds : [];
+  const achievedBonuses = (bounty?.bonuses || []).filter(bn => achievedBonusIds.includes(bn.id));
+  const bonusSum = achievedBonuses.reduce((acc, bn) => acc + Math.max(0, parseInt(bn.bonusBones, 10) || 0), 0);
+  const reward = Math.max(0, baseReward + bonusSum);
   const character = claim.characterName || user?.primaryCharacter || 'Unspecified';
+
+  const fields = [
+    { name: '⚔️ In-Game Character', value: `**${character}**`, inline: true },
+    { name: '💰 Reward', value: `**+${reward.toLocaleString()}** Bones`, inline: true },
+    { name: '🔗 Proof Link', value: claim.proofUrl ? `[View Proof](${claim.proofUrl})` : '*No link provided*', inline: true }
+  ];
+
+  if (Number(claim.goldDonated) > 0) {
+    const rateLabel = claim.tithingRate ? ` (${formatTithingRate(claim.tithingRate)})` : '';
+    fields.push({
+      name: '🪙 Gold Donated to Vault',
+      value: `**${formatTithingNumber(claim.goldDonated)}g**${rateLabel}`,
+      inline: true
+    });
+  }
+
+  if (achievedBonuses.length > 0) {
+    fields.push({
+      name: '⭐ Claimed Bonuses',
+      value: achievedBonuses.map(bn => `• ${bn.description} (+${bn.bonusBones} Bones)`).join('\n'),
+      inline: false
+    });
+  }
+
+  fields.push({ name: '📝 Member Note', value: claim.notes || '*No additional notes provided*', inline: false });
 
   const embed = {
     title: `🛡️ Bounty Claim Submitted: ${bounty?.title || 'Unknown Bounty'}`,
     description: `Submitted by **${memberName}** ${handle ? `(${handle})` : ''}\nClaim ID: \`${claim.id}\``,
     color: Colors.BLUE,
-    fields: [
-      { name: '⚔️ In-Game Character', value: `**${character}**`, inline: true },
-      { name: '💰 Reward', value: `**+${reward.toLocaleString()}** Bones`, inline: true },
-      { name: '🔗 Proof Link', value: claim.proofUrl ? `[View Proof](${claim.proofUrl})` : '*No link provided*', inline: true },
-      { name: '📝 Member Note', value: claim.notes || '*No additional notes provided*', inline: false }
-    ],
+    fields,
     footer: { text: 'Officer Review • 1-Click Approval' },
     timestamp: new Date().toISOString()
   };
@@ -595,7 +635,7 @@ export async function syncBountiesEmbed(env, firestore, state) {
   if (!channelId || !token) return false;
 
   try {
-    const bountiesEmbed = buildBountiesEmbed(state.bounties || []);
+    const bountiesEmbed = buildBountiesEmbed(state.bounties || [], state.config?.tithing);
     const config = state.config || {};
     config.messages = config.messages || {};
     const messageId = config.messages.bountiesMessageId || config.bountiesMessageId;

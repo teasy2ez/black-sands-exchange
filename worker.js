@@ -30,6 +30,14 @@ import { FirestoreClient } from './src/firestore.js';
 import { handleApplicationCommand, resolveRank } from './src/commands.js';
 import { handleMessageComponent } from './src/components.js';
 import { WEEK_DAYS, getWeeklyCapConfig, applyWeeklyBoneAward } from './src/weeklyCap.js';
+import {
+  getTithingConfig,
+  calculateTithingBones,
+  getMinimumGoldForOneBone,
+  formatTithingNumber,
+  formatTithingRate,
+  deriveTithingPairFromConstant
+} from './src/tithing.js';
 
 const AUTO_ROSTER_SYNC_INTERVAL_MS = 60 * 1000;
 let lastAutoRosterSyncCheckMs = 0;
@@ -318,6 +326,39 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
   // GET State
   if (path === 'state' && request.method === 'GET') {
     const state = await firestore.getBseState();
+
+    // One-time initialization for Guild Tithing config & default Guild Tithing bounty
+    if (!state.config?.tithing) {
+      state.config = state.config || {};
+      state.config.tithing = { goldAmount: 1, bonesAmount: 1 };
+      state.bounties = state.bounties || [];
+      const existingTithing = state.bounties.find(b => b.bountyType === 'tithing')
+        || state.bounties.find(b => b.id === 'bounty_guild_tithing' || String(b.title || '').trim().toLowerCase() === 'guild tithing');
+      if (existingTithing) {
+        existingTithing.bountyType = 'tithing';
+      } else {
+        state.bounties.push({
+          id: 'bounty_guild_tithing',
+          title: 'Guild Tithing',
+          description: 'Donate Gold directly to the Guild Bank Vault to support consumables, repairs, and guild operations. Claim Bones based on the current guild exchange rate.',
+          rewardBones: 1,
+          bountyType: 'tithing',
+          category: 'Economy',
+          status: 'active',
+          createdAt: new Date().toISOString()
+        });
+      }
+      state.updatedAt = new Date().toISOString();
+      await firestore.saveBseState(state);
+      if (ctx && env.DISCORD_BOT_TOKEN) {
+        ctx.waitUntil(
+          syncBountiesEmbed(env, firestore, state).catch(err => {
+            console.error('Failed initial tithing bounties embed sync:', err);
+          })
+        );
+      }
+    }
+
     const now = Date.now();
     const lastStateSyncMs = state.lastRosterSyncAt ? Date.parse(state.lastRosterSyncAt) : 0;
     const isStale = !lastStateSyncMs || (now - lastStateSyncMs > AUTO_ROSTER_SYNC_INTERVAL_MS);
@@ -624,7 +665,7 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
 
   // POST Submit Bounty Claim (Member or Officer)
   if (path === 'claim' && request.method === 'POST') {
-    const { bountyId, proofUrl, notes, discordId, discordUsername, characterName, achievedBonusIds } = body;
+    const { bountyId, proofUrl, notes, discordId, discordUsername, characterName, achievedBonusIds, goldDonated } = body;
     const targetId = session?.id || discordId;
     const targetUsername = session?.username || discordUsername || 'Anonymous';
 
@@ -639,6 +680,33 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
       return jsonResponse({ error: `Bounty is currently ${bounty.status} and cannot be claimed.` }, 400);
     }
 
+    const isTithing = bounty.bountyType === 'tithing';
+    let rewardBones = bounty.rewardBones || 0;
+    let normalizedGold = null;
+    let tithingRate = null;
+
+    if (isTithing) {
+      const tithingCfg = getTithingConfig(state);
+      const parsedGold = Number(goldDonated);
+      if (!Number.isFinite(parsedGold) || parsedGold <= 0) {
+        return jsonResponse({ error: 'Please enter the positive Gold amount donated to the guild vault.' }, 400);
+      }
+      const calculatedBones = calculateTithingBones(parsedGold, tithingCfg);
+      if (calculatedBones < 1) {
+        const minGold = formatTithingNumber(getMinimumGoldForOneBone(tithingCfg));
+        return jsonResponse({
+          error: `At the current rate (${formatTithingRate(tithingCfg)}), at least ${minGold} Gold is required to claim 1 Bone.`
+        }, 400);
+      }
+      normalizedGold = Number(parsedGold.toFixed(4));
+      rewardBones = calculatedBones;
+      tithingRate = {
+        goldAmount: tithingCfg.goldAmount,
+        bonesAmount: tithingCfg.bonesAmount,
+        ratio: tithingCfg.ratio
+      };
+    }
+
     const userWallet = state.wallets?.[targetId];
     const resolvedChar = characterName || userWallet?.primaryCharacter || null;
 
@@ -647,7 +715,8 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
       id: claimId,
       bountyId: bounty.id,
       bountyTitle: bounty.title,
-      rewardBones: bounty.rewardBones,
+      rewardBones,
+      ...(normalizedGold !== null ? { goldDonated: normalizedGold, tithingRate } : {}),
       achievedBonusIds: Array.isArray(achievedBonusIds) ? achievedBonusIds : [],
       discordId: targetId,
       discordUsername: targetUsername,
@@ -810,6 +879,9 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
       creatorWallet.updatedAt = new Date().toISOString();
     }
 
+    const tithingNote = Number(claim.goldDonated) > 0
+      ? ` (Gold Donated: ${formatTithingNumber(claim.goldDonated)}g @ ${formatTithingRate(claim.tithingRate || state)})`
+      : '';
     const bonusNote = bonusSum > 0
       ? ` + Bonuses (+${bonusSum}: ${achievedBonuses.map(bn => bn.description).join(', ')})`
       : '';
@@ -826,7 +898,7 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
       amount: awardResult.granted,
       spendableBones: wallet.spendableBones,
       boneScore: wallet.boneScore,
-      reason: `Approved claim ${claimId} (${claim.bountyTitle})${bonusNote}${officerNote ? ` - Note: ${officerNote}` : ''}${capNote}`
+      reason: `Approved claim ${claimId} (${claim.bountyTitle})${tithingNote}${bonusNote}${officerNote ? ` - Note: ${officerNote}` : ''}${capNote}`
     });
 
     return jsonResponse({
@@ -1395,6 +1467,7 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
     const {
       title,
       rewardBones,
+      bountyType,
       description,
       category,
       bonuses,
@@ -1407,6 +1480,13 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
     } = body;
 
     const state = await firestore.getBseState();
+    const normalizedType = bountyType === 'tithing' ? 'tithing' : 'fixed';
+    const tithingCfg = getTithingConfig(state);
+    const parsedReward = parseInt(rewardBones, 10);
+    const resolvedReward = normalizedType === 'tithing'
+      ? Math.max(0, Number.isFinite(parsedReward) ? parsedReward : tithingCfg.bonesAmount)
+      : Math.max(1, Number.isFinite(parsedReward) ? parsedReward : 10);
+
     const parsedBonuses = Array.isArray(bonuses) ? bonuses.map((b, idx) => ({
       id: b.id || `bonus_${Date.now()}_${idx}`,
       description: String(b.description || '').trim(),
@@ -1416,13 +1496,18 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
     const bounty = {
       id: `bounty_${Date.now()}`,
       title,
-      rewardBones: Math.max(1, parseInt(rewardBones, 10) || 10),
+      rewardBones: resolvedReward,
+      bountyType: normalizedType,
       description: description || '',
-      category: category || 'General',
+      category: category || (normalizedType === 'tithing' ? 'Economy' : 'General'),
       status: 'active',
       bonuses: parsedBonuses,
       createdAt: new Date().toISOString()
     };
+
+    const rewardSummaryText = normalizedType === 'tithing'
+      ? `${formatTithingRate(tithingCfg)} (Guild Vault Gold → Bones)`
+      : `${bounty.rewardBones} Bones`;
 
     // If requested, create Discord Guild Scheduled Event & Broadcast Announcement
     if (announce && env.DISCORD_BOT_TOKEN) {
@@ -1449,7 +1534,7 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
           const bonusDesc = parsedBonuses.length > 0
             ? '\n\nBonus Objectives:\n' + parsedBonuses.map(b => `• ${b.description} (+${b.bonusBones} Bones)`).join('\n')
             : '';
-          const eventDesc = `Reward: ${bounty.rewardBones} Bones\nCategory: ${bounty.category}\n\n${bounty.description || 'No description'}${bonusDesc}\n\nClaim and submit proof on the Exchange Portal: https://bse.teasy2ez.win`.slice(0, 1000);
+          const eventDesc = `Reward: ${rewardSummaryText}\nCategory: ${bounty.category}\n\n${bounty.description || 'No description'}${bonusDesc}\n\nClaim and submit proof on the Exchange Portal: https://bse.teasy2ez.win`.slice(0, 1000);
 
           const event = await createDiscordScheduledEvent(env.DISCORD_GUILD_ID, {
             name: `[Bounty] ${bounty.title}`.slice(0, 100),
@@ -1485,7 +1570,7 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
           }
 
           const fields = [
-            { name: '🦴 Reward', value: `**${bounty.rewardBones} Bones**`, inline: true },
+            { name: '🦴 Reward', value: `**${rewardSummaryText}**`, inline: true },
             { name: '📁 Category', value: bounty.category, inline: true }
           ];
           if (bounty.discordEventUrl) {
@@ -1547,12 +1632,15 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
 
   // POST Update Existing Bounty
   if (path === 'bounty/update' && request.method === 'POST') {
-    const { bountyId, title, rewardBones, description, category, status, bonuses } = body;
+    const { bountyId, title, rewardBones, bountyType, description, category, status, bonuses } = body;
     const state = await firestore.getBseState();
     const bounty = (state.bounties || []).find(b => b.id === bountyId);
     if (!bounty) return jsonResponse({ error: 'Bounty not found' }, 404);
 
     if (title) bounty.title = title;
+    if (bountyType === 'tithing' || bountyType === 'fixed') {
+      bounty.bountyType = bountyType;
+    }
     if (rewardBones !== undefined) {
       const parsedUpd = parseInt(rewardBones, 10);
       if (!Number.isNaN(parsedUpd) && parsedUpd >= 0) {
@@ -1574,10 +1662,14 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
     // If linked to a Discord Scheduled Event, update it in Discord as well
     if (bounty.discordEventId && env.DISCORD_GUILD_ID && env.DISCORD_BOT_TOKEN) {
       try {
+        const tithingCfg = getTithingConfig(state);
+        const rewardSummaryText = bounty.bountyType === 'tithing'
+          ? `${formatTithingRate(tithingCfg)} (Guild Vault Gold → Bones)`
+          : `${bounty.rewardBones} Bones`;
         const bonusDesc = Array.isArray(bounty.bonuses) && bounty.bonuses.length > 0
           ? '\n\nBonus Objectives:\n' + bounty.bonuses.map(b => `• ${b.description} (+${b.bonusBones} Bones)`).join('\n')
           : '';
-        const eventDesc = `Reward: ${bounty.rewardBones} Bones\nCategory: ${bounty.category}\n\n${bounty.description || 'No description'}${bonusDesc}\n\nClaim and submit proof on the Exchange Portal: https://bse.teasy2ez.win`.slice(0, 1000);
+        const eventDesc = `Reward: ${rewardSummaryText}\nCategory: ${bounty.category}\n\n${bounty.description || 'No description'}${bonusDesc}\n\nClaim and submit proof on the Exchange Portal: https://bse.teasy2ez.win`.slice(0, 1000);
 
         const eventUpdateData = {
           name: `[Bounty] ${bounty.title}`.slice(0, 100),
@@ -1818,6 +1910,64 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
     return jsonResponse({
       success: true,
       weeklyCap: state.config.weeklyCap
+    });
+  }
+
+  // POST Update Global Guild Tithing Proportionality Ratio (Y Gold = X Bones)
+  if (path === 'settings/tithing' && request.method === 'POST') {
+    const { goldAmount, bonesAmount, ratioConstant } = body;
+    let nextGold = 1;
+    let nextBones = 1;
+
+    if (goldAmount !== undefined || bonesAmount !== undefined) {
+      const parsedGold = Number(goldAmount);
+      const parsedBones = Number(bonesAmount);
+      if (!Number.isFinite(parsedGold) || parsedGold <= 0 || !Number.isFinite(parsedBones) || parsedBones <= 0) {
+        return jsonResponse({ error: 'Gold (Y) and Bones (X) must both be positive numbers greater than 0.' }, 400);
+      }
+      nextGold = Number(parsedGold.toFixed(6));
+      nextBones = Number(parsedBones.toFixed(6));
+    } else if (ratioConstant !== undefined) {
+      const parsedK = Number(ratioConstant);
+      if (!Number.isFinite(parsedK) || parsedK <= 0) {
+        return jsonResponse({ error: 'Proportionality constant (k) must be a positive number greater than 0.' }, 400);
+      }
+      const derived = deriveTithingPairFromConstant(parsedK);
+      nextGold = derived.goldAmount;
+      nextBones = derived.bonesAmount;
+    } else {
+      return jsonResponse({ error: 'Missing tithing ratio parameters.' }, 400);
+    }
+
+    const state = await firestore.getBseState();
+    state.config = state.config || {};
+    state.config.tithing = {
+      goldAmount: nextGold,
+      bonesAmount: nextBones
+    };
+
+    const resolvedTithing = getTithingConfig(state);
+    state.updatedAt = new Date().toISOString();
+    await firestore.saveBseState(state);
+
+    await firestore.logAuditEvent({
+      action: 'OFFICER_SETTINGS_UPDATE',
+      officerId,
+      officerName,
+      reason: `Updated Guild Tithing exchange rate: ${formatTithingRate(resolvedTithing)} (k = ${formatTithingNumber(resolvedTithing.ratio)})`,
+      timestamp: new Date().toISOString()
+    });
+
+    try {
+      await syncBountiesEmbed(env, firestore, state);
+    } catch (err) {
+      console.error('Auto-sync bounties embed error after tithing update:', err);
+    }
+
+    return jsonResponse({
+      success: true,
+      tithing: resolvedTithing,
+      rateText: formatTithingRate(resolvedTithing)
     });
   }
 

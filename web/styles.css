@@ -2253,3 +2253,173 @@ textarea.form-control {
 .escrow-notice-banner strong {
   color: var(--gold-200);
 }
+
+/* ==========================================================================
+   GUILD TITHING & MULTI-BONUS BUILDER
+   ========================================================================== */
+.tithing-rate-badge {
+  font-family: var(--font-serif);
+  font-size: 0.95rem;
+  font-weight: 800;
+  color: var(--gold-300);
+  background: linear-gradient(180deg, rgba(229, 169, 59, 0.16) 0%, rgba(120, 82, 24, 0.22) 100%);
+  border: 1px solid var(--border-gold);
+  border-radius: var(--radius-sm);
+  padding: 0.25rem 0.65rem;
+  text-shadow: 1px 1px 0 #000;
+  white-space: nowrap;
+}
+
+.tithing-board-box {
+  margin-top: 0.65rem;
+  padding: 0.55rem 0.7rem;
+  background: rgba(229, 169, 59, 0.08);
+  border: 1px solid rgba(255, 209, 0, 0.28);
+  border-left: 3px solid var(--gold-300);
+  border-radius: var(--radius-sm);
+  font-size: 0.8rem;
+  color: var(--text-main);
+  line-height: 1.45;
+}
+
+.tithing-board-box strong {
+  color: var(--gold-300);
+}
+
+.tithing-calc-box {
+  background: var(--bg-inner);
+  border: 1px solid var(--border-gold);
+  border-radius: var(--radius-sm);
+  padding: 0.85rem 1rem;
+  box-shadow: inset 0 0 12px rgba(0, 0, 0, 0.75);
+}
+
+.tithing-calc-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  padding-bottom: 0.55rem;
+  margin-bottom: 0.65rem;
+  border-bottom: 1px dashed rgba(255, 209, 0, 0.25);
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.tithing-calc-header strong {
+  color: var(--gold-300);
+  font-family: var(--font-serif);
+  font-size: 0.92rem;
+}
+
+.tithing-calc-result {
+  font-size: 0.85rem;
+  color: var(--text-main);
+  background: rgba(14, 16, 23, 0.75);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 0.55rem 0.75rem;
+  line-height: 1.45;
+}
+
+.tithing-calc-result.is-valid {
+  border-color: rgba(74, 222, 128, 0.4);
+  background: rgba(34, 197, 94, 0.08);
+}
+
+.tithing-calc-result.is-warning {
+  border-color: rgba(248, 113, 113, 0.45);
+  background: rgba(239, 68, 68, 0.08);
+}
+
+.tithing-ratio-editor {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) auto minmax(120px, 1fr) minmax(180px, 1.35fr);
+  gap: 0.75rem;
+  align-items: end;
+}
+
+.tithing-equals-sign {
+  font-family: var(--font-serif);
+  font-size: 1.25rem;
+  font-weight: 800;
+  color: var(--gold-300);
+  padding-bottom: 0.45rem;
+  text-align: center;
+}
+
+.tithing-preview-banner {
+  background: rgba(229, 169, 59, 0.08);
+  border: 1px solid rgba(255, 209, 0, 0.3);
+  border-radius: var(--radius-sm);
+  padding: 0.55rem 0.85rem;
+  font-size: 0.85rem;
+  color: var(--text-main);
+  flex: 1;
+  min-width: 240px;
+}
+
+.tithing-preview-banner strong {
+  color: var(--gold-300);
+}
+
+.tithing-inline-info {
+  background: rgba(229, 169, 59, 0.08);
+  border: 1px solid rgba(255, 209, 0, 0.3);
+  border-radius: var(--radius-sm);
+  padding: 0.55rem 0.85rem;
+  font-size: 0.82rem;
+  color: var(--gold-200);
+  line-height: 1.35;
+}
+
+.tithing-status-pill {
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid var(--border-subtle);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-muted);
+}
+
+.tithing-status-pill.is-live {
+  color: #86efac;
+  border-color: rgba(74, 222, 128, 0.4);
+  background: rgba(34, 197, 94, 0.12);
+}
+
+.tithing-status-pill.is-inactive {
+  color: #fcd34d;
+  border-color: rgba(251, 191, 36, 0.4);
+  background: rgba(251, 191, 36, 0.1);
+}
+
+.create-bonus-row,
+.edit-bonus-row {
+  display: grid;
+  grid-template-columns: 2fr 1fr auto;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+@media (max-width: 640px) {
+  .tithing-ratio-editor {
+    grid-template-columns: 1fr;
+  }
+
+  .tithing-equals-sign {
+    padding-bottom: 0;
+  }
+
+  .create-bonus-row,
+  .edit-bonus-row {
+    grid-template-columns: 1fr auto;
+  }
+
+  .create-bonus-row .create-bonus-desc,
+  .edit-bonus-row .edit-bonus-desc {
+    grid-column: 1 / -1;
+  }
+}
