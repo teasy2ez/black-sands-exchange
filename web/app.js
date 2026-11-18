@@ -18,8 +18,24 @@ const state = {
   draftRanks: [],
   draftFaq: [],
   officerLeaderboardFilter: 'active',
-  tithingDraftDirty: false
+  tithingDraftDirty: false,
+  // Member UI filters & pagination
+  ledgerRoleFilter: 'all',
+  ledgerClassFilter: 'all',
+  ledgerPage: 1,
+  ledgerPageSize: 20,
+  ledgerShowAll: false,
+  bountyCategoryFilter: 'all',
+  bountySearchQuery: '',
+  auditSearchQuery: '',
+  onboardingDismissed: false
 };
+
+try {
+  state.onboardingDismissed = sessionStorage.getItem('bse_onboarding_dismissed') === '1';
+} catch (_) {
+  state.onboardingDismissed = false;
+}
 
 // Helper: Safely generate Discord CDN avatar URLs with power-of-2 sizes and fallback
 function getDiscordAvatarUrl(discordId, avatarHash, size = 128) {
@@ -54,6 +70,10 @@ const brandGuildName = document.getElementById('brandGuildName');
 const brandTagline = document.getElementById('brandTagline');
 const pageTitle = document.getElementById('pageTitle');
 const pageFavicon = document.getElementById('pageFavicon');
+
+const walletGuestState = document.getElementById('walletGuestState');
+const walletAuthState = document.getElementById('walletAuthState');
+const guestOnboardingHero = document.getElementById('guestOnboardingHero');
 
 const walletAvatar = document.getElementById('walletAvatar');
 const walletName = document.getElementById('walletName');
@@ -152,6 +172,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupNavigation();
   setupOfficerSubtabs();
   setupModals();
+  setupOnboardingAndGuide();
+  setupLedgerControls();
+  setupBountyBoardControls();
   setupCharacterManagement();
   setupHistory();
   setupOfficerTools();
@@ -167,6 +190,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Ensure leaderboard renders immediately
   renderLeaderboard();
+  updateFaqSpendActions();
 
   // Poll state every 4 seconds for real-time reactivity
   state.pollTimer = setInterval(refreshBseState, 4000);
@@ -184,8 +208,8 @@ async function checkAuthSession() {
       state.userCharacters = data.user.characters || [];
       renderAuthenticatedUser(state.user);
       if (state.bseState) {
-        renderLeaderboard();
-        renderBounties();
+        syncAuthenticatedWalletFromBseState(state.bseState);
+        renderBseDependentViews();
       }
     } else {
       renderUnauthenticatedUser();
@@ -197,8 +221,11 @@ async function checkAuthSession() {
 }
 
 function renderAuthenticatedUser(user) {
-  discordLoginBtn.style.display = 'none';
-  userProfileBadge.style.display = 'flex';
+  if (discordLoginBtn) discordLoginBtn.style.display = 'none';
+  if (userProfileBadge) userProfileBadge.style.display = 'flex';
+  if (walletGuestState) walletGuestState.style.display = 'none';
+  if (walletAuthState) walletAuthState.style.display = '';
+  if (guestOnboardingHero) guestOnboardingHero.style.display = 'none';
 
   const avatarUrl = getDiscordAvatarUrl(user.id, user.avatar, 64);
 
@@ -227,17 +254,18 @@ function renderAuthenticatedUser(user) {
   }
 
   updatePrestigeBanner(user.boneScore || 0, user.spendableBones || 0);
+  updateFaqSpendActions();
 
   // Show Member Transaction History Tab (Desktop + Mobile)
-  if (tabHistory) tabHistory.style.display = 'inline-flex';
+  if (tabHistory) tabHistory.style.display = 'flex';
   if (mobileTabHistory) mobileTabHistory.style.display = 'flex';
 
   // STRICT OFFICER PERMISSION CHECK: Show or Hide Officer Hall
   if (user.isOfficer) {
-    tabOfficer.style.display = 'inline-flex';
+    if (tabOfficer) tabOfficer.style.display = 'flex';
     if (mobileTabOfficer) mobileTabOfficer.style.display = 'flex';
   } else {
-    tabOfficer.style.display = 'none';
+    if (tabOfficer) tabOfficer.style.display = 'none';
     if (mobileTabOfficer) mobileTabOfficer.style.display = 'none';
     if (state.activeTab === 'officer') {
       switchTab('leaderboard');
@@ -246,8 +274,14 @@ function renderAuthenticatedUser(user) {
 }
 
 function renderUnauthenticatedUser() {
-  discordLoginBtn.style.display = 'inline-flex';
-  userProfileBadge.style.display = 'none';
+  if (discordLoginBtn) discordLoginBtn.style.display = 'inline-flex';
+  if (userProfileBadge) userProfileBadge.style.display = 'none';
+  if (walletGuestState) walletGuestState.style.display = '';
+  if (walletAuthState) walletAuthState.style.display = 'none';
+  if (guestOnboardingHero) {
+    guestOnboardingHero.style.display = state.onboardingDismissed ? 'none' : 'block';
+  }
+
   walletName.textContent = 'Welcome, Traveler';
   walletHandle.textContent = 'Sign in with Discord to access your ledger';
   walletSpendable.textContent = '0';
@@ -257,11 +291,12 @@ function renderUnauthenticatedUser() {
   if (reqBtn) reqBtn.style.display = 'none';
   if (tabHistory) tabHistory.style.display = 'none';
   if (mobileTabHistory) mobileTabHistory.style.display = 'none';
-  tabOfficer.style.display = 'none';
+  if (tabOfficer) tabOfficer.style.display = 'none';
   if (mobileTabOfficer) mobileTabOfficer.style.display = 'none';
   if (state.activeTab === 'officer' || state.activeTab === 'history') {
     switchTab('leaderboard');
   }
+  updateFaqSpendActions();
 }
 
 logoutBtn.addEventListener('click', async () => {
@@ -269,6 +304,109 @@ logoutBtn.addEventListener('click', async () => {
   state.user = null;
   window.location.reload();
 });
+
+function syncAuthenticatedWalletFromBseState(bse) {
+  if (!bse || !state.user || !bse.wallets?.[state.user.id]) return;
+
+  const w = bse.wallets[state.user.id];
+  state.user.spendableBones = w.spendableBones || 0;
+  state.user.boneScore = w.boneScore || 0;
+  if (w.rankTier !== undefined && w.rankTier !== null) {
+    state.user.rankTier = w.rankTier;
+  }
+  if (typeof w.guildNote === 'string') {
+    state.user.guildNote = w.guildNote;
+  }
+  state.user.primaryCharacter = w.primaryCharacter || state.user.primaryCharacter;
+  state.user.characters = w.characters || state.user.characters || [];
+  state.userCharacters = state.user.characters;
+
+  walletSpendable.textContent = state.user.spendableBones.toLocaleString();
+  walletScore.textContent = state.user.boneScore.toLocaleString();
+  walletPrimaryCharName.textContent = state.user.primaryCharacter || 'None';
+  updatePrestigeBanner(state.user.boneScore, state.user.spendableBones);
+
+  const weeklyCapEl = document.getElementById('walletWeeklyEarned');
+  const weeklyCapBox = document.getElementById('walletWeeklyCapBox');
+  const weeklyBarFill = document.getElementById('walletWeeklyBarFill');
+  if (weeklyCapEl && weeklyCapBox) {
+    const capCfg = bse.config?.weeklyCap || {};
+    const enabled = capCfg.enabled !== false;
+    const baseCap = parseInt(capCfg.cap, 10) || 50;
+    const resetDay = Number.isInteger(parseInt(capCfg.resetDay, 10)) ? parseInt(capCfg.resetDay, 10) : 2;
+    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const now = new Date();
+    const utcStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0, 0));
+    const diff = (utcStart.getUTCDay() - resetDay + 7) % 7;
+    utcStart.setUTCDate(utcStart.getUTCDate() - diff);
+    const currentWindowIso = utcStart.toISOString();
+
+    let weeklyEarned = 0;
+    let effectiveCap = baseCap;
+    if (w.weeklyWindowStart) {
+      const prevRollover = Math.max(0, w.weeklyCapRollover || 0);
+      const prevEarned = Math.max(0, w.weeklyBonesEarned || 0);
+      if (w.weeklyWindowStart === currentWindowIso) {
+        weeklyEarned = prevEarned;
+        effectiveCap = baseCap + prevRollover;
+      } else {
+        const currentMs = Date.parse(currentWindowIso);
+        const prevMs = Date.parse(w.weeklyWindowStart);
+        const weeksElapsed = (Number.isFinite(currentMs) && Number.isFinite(prevMs) && currentMs > prevMs)
+          ? Math.round((currentMs - prevMs) / (7 * 24 * 60 * 60 * 1000))
+          : 0;
+        if (weeksElapsed > 0) {
+          const unusedPrev = Math.max(0, (baseCap + prevRollover) - prevEarned);
+          const newRollover = unusedPrev + (weeksElapsed - 1) * baseCap;
+          weeklyEarned = 0;
+          effectiveCap = baseCap + newRollover;
+        } else {
+          weeklyEarned = prevEarned;
+          effectiveCap = baseCap + prevRollover;
+        }
+      }
+    }
+
+    if (!enabled) {
+      weeklyCapEl.textContent = `${weeklyEarned.toLocaleString()} / ∞`;
+      weeklyCapEl.style.color = 'var(--gold-200)';
+      weeklyCapBox.title = 'Weekly Bone cap is currently disabled';
+      if (weeklyBarFill) {
+        weeklyBarFill.style.width = '100%';
+        weeklyBarFill.style.opacity = '0.35';
+      }
+    } else {
+      weeklyCapEl.textContent = `${weeklyEarned.toLocaleString()} / ${effectiveCap.toLocaleString()}`;
+      weeklyCapEl.style.color = weeklyEarned >= effectiveCap ? '#f87171' : 'var(--gold-200)';
+      weeklyCapBox.title = `Resets every ${dayNames[resetDay] || 'Tuesday'} at 00:00 UTC (Unused cap rolls over; Spendable Bones can exceed ${effectiveCap})`;
+      if (weeklyBarFill) {
+        const pct = Math.min(100, Math.round((weeklyEarned / Math.max(1, effectiveCap)) * 100));
+        weeklyBarFill.style.width = `${pct}%`;
+        weeklyBarFill.style.opacity = '1';
+      }
+    }
+  }
+}
+
+function renderBseDependentViews() {
+  if (!state.bseState) return;
+  renderLeaderboard();
+  renderMemberHistory();
+  renderBounties();
+  renderShop();
+  renderFaq();
+  updateFaqSpendActions();
+
+  if (state.user?.isOfficer) {
+    renderOfficerQueues();
+    renderOfficerBountiesList();
+    renderOfficerShopList();
+    renderAuditTrail();
+    if (!state.editorMode) {
+      populateOfficerSettingsForms();
+    }
+  }
+}
 
 /**
  * Fetch and Render Central BSE State
@@ -284,85 +422,8 @@ async function refreshBseState() {
     applySiteCustomization(bse);
 
     // Refresh wallet if logged in
-    if (state.user && bse.wallets?.[state.user.id]) {
-      const w = bse.wallets[state.user.id];
-      state.user.spendableBones = w.spendableBones || 0;
-      state.user.boneScore = w.boneScore || 0;
-      state.user.primaryCharacter = w.primaryCharacter || state.user.primaryCharacter;
-      state.user.characters = w.characters || state.user.characters || [];
-      state.userCharacters = state.user.characters;
-
-      walletSpendable.textContent = state.user.spendableBones.toLocaleString();
-      walletScore.textContent = state.user.boneScore.toLocaleString();
-      walletPrimaryCharName.textContent = state.user.primaryCharacter || 'None (Click to link)';
-      updatePrestigeBanner(state.user.boneScore, state.user.spendableBones);
-
-      const weeklyCapEl = document.getElementById('walletWeeklyEarned');
-      const weeklyCapBox = document.getElementById('walletWeeklyCapBox');
-      if (weeklyCapEl && weeklyCapBox) {
-        const capCfg = bse.config?.weeklyCap || {};
-        const enabled = capCfg.enabled !== false;
-        const baseCap = parseInt(capCfg.cap, 10) || 50;
-        const resetDay = Number.isInteger(parseInt(capCfg.resetDay, 10)) ? parseInt(capCfg.resetDay, 10) : 2;
-        const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-        const now = new Date();
-        const utcStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0, 0));
-        const diff = (utcStart.getUTCDay() - resetDay + 7) % 7;
-        utcStart.setUTCDate(utcStart.getUTCDate() - diff);
-        const currentWindowIso = utcStart.toISOString();
-
-        let weeklyEarned = 0;
-        let effectiveCap = baseCap;
-        if (w.weeklyWindowStart) {
-          const prevRollover = Math.max(0, w.weeklyCapRollover || 0);
-          const prevEarned = Math.max(0, w.weeklyBonesEarned || 0);
-          if (w.weeklyWindowStart === currentWindowIso) {
-            weeklyEarned = prevEarned;
-            effectiveCap = baseCap + prevRollover;
-          } else {
-            const currentMs = Date.parse(currentWindowIso);
-            const prevMs = Date.parse(w.weeklyWindowStart);
-            const weeksElapsed = (Number.isFinite(currentMs) && Number.isFinite(prevMs) && currentMs > prevMs)
-              ? Math.round((currentMs - prevMs) / (7 * 24 * 60 * 60 * 1000))
-              : 0;
-            if (weeksElapsed > 0) {
-              const unusedPrev = Math.max(0, (baseCap + prevRollover) - prevEarned);
-              const newRollover = unusedPrev + (weeksElapsed - 1) * baseCap;
-              weeklyEarned = 0;
-              effectiveCap = baseCap + newRollover;
-            } else {
-              weeklyEarned = prevEarned;
-              effectiveCap = baseCap + prevRollover;
-            }
-          }
-        }
-
-        if (!enabled) {
-          weeklyCapEl.textContent = `${weeklyEarned.toLocaleString()} / ∞`;
-          weeklyCapBox.title = 'Weekly Bone cap is currently disabled';
-        } else {
-          weeklyCapEl.textContent = `${weeklyEarned.toLocaleString()} / ${effectiveCap.toLocaleString()}`;
-          weeklyCapEl.style.color = weeklyEarned >= effectiveCap ? '#f87171' : 'var(--gold-200)';
-          weeklyCapBox.title = `Resets every ${dayNames[resetDay] || 'Tuesday'} at 00:00 UTC (Unused cap rolls over; Spendable Bones can exceed ${effectiveCap})`;
-        }
-      }
-    }
-
-    renderLeaderboard();
-    renderMemberHistory();
-    renderBounties();
-    renderShop();
-    renderFaq();
-
-    if (state.user?.isOfficer) {
-      renderOfficerQueues();
-      renderOfficerBountiesList();
-      renderOfficerShopList();
-      renderAuditTrail();
-      if (!state.editorMode) {
-        populateOfficerSettingsForms();
-      }
-    }
+    syncAuthenticatedWalletFromBseState(bse);
+    renderBseDependentViews();
   } catch (err) {
     console.error('State refresh error:', err);
   }
@@ -375,7 +436,6 @@ function applySiteCustomization(bse) {
   if (!bse) return;
   const branding = bse.branding || {};
   const modules = bse.siteModules || {};
-  const theme = bse.theme || {};
 
   const currName = branding.currencyName || 'Bones';
 
@@ -405,21 +465,39 @@ function applySiteCustomization(bse) {
     }
   }
 
-  // Navigation Module Visibility & Custom Titles (Clean non-emoji labels)
+  // Update Guild Tithing labels in Onboarding Hero, Officer Summary Bar, & Modules Shortcut
+  const tithingCfg = resolveClientTithingConfig(bse);
+  const tithingRateLabel = formatClientTithingRate(tithingCfg, currName);
+  const heroTithingEl = document.getElementById('heroTithingRateText');
+  if (heroTithingEl) heroTithingEl.textContent = tithingRateLabel;
+  const officerTithingSummary = document.getElementById('officerTithingSummaryRate');
+  if (officerTithingSummary) officerTithingSummary.textContent = tithingRateLabel;
+  const modulesTithingPreview = document.getElementById('modulesTithingPreviewText');
+  if (modulesTithingPreview) {
+    modulesTithingPreview.textContent = `${tithingRateLabel} (k = ${formatClientTithingNumber(tithingCfg.ratio)})`;
+  }
+
+  // Navigation Module Visibility & Custom Titles (Preserve SVG icons inside .nav-tab-label)
   const cleanTitle = (raw, fallback) => {
     if (!raw) return fallback;
     return raw.replace(/[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/gu, '').trim() || fallback;
+  };
+  const setNavLabel = (tabEl, text) => {
+    if (!tabEl) return;
+    const labelSpan = tabEl.querySelector('.nav-tab-label');
+    if (labelSpan) labelSpan.textContent = text;
+    else tabEl.textContent = text;
   };
 
   if (modules.leaderboard && tabNavLeaderboard) {
     const rawLbTitle = cleanTitle(modules.leaderboard.title, 'Ledger');
     const lbTitle = (rawLbTitle === 'Leaderboard' || rawLbTitle === 'Roster Standings') ? 'Ledger' : rawLbTitle;
-    tabNavLeaderboard.textContent = lbTitle;
-    tabNavLeaderboard.style.display = modules.leaderboard.enabled === false ? 'none' : 'inline-flex';
+    setNavLabel(tabNavLeaderboard, lbTitle);
+    tabNavLeaderboard.style.display = modules.leaderboard.enabled === false ? 'none' : 'flex';
   }
   if (modules.bounties && tabNavBounties) {
-    tabNavBounties.textContent = cleanTitle(modules.bounties.title, 'Bounty Board');
-    tabNavBounties.style.display = modules.bounties.enabled === false ? 'none' : 'inline-flex';
+    setNavLabel(tabNavBounties, cleanTitle(modules.bounties.title, 'Bounty Board'));
+    tabNavBounties.style.display = modules.bounties.enabled === false ? 'none' : 'flex';
   }
   // Hide Exchange Shop tab on desktop and mobile while feature is reserved for future soft-res system
   if (tabNavShop) {
@@ -435,8 +513,8 @@ function applySiteCustomization(bse) {
   if (modules.faq && tabNavFaq) {
     const rawFaqTitle = cleanTitle(modules.faq.title, 'How to Spend');
     const faqTitle = (rawFaqTitle === 'Rules & FAQ' || rawFaqTitle === 'FAQ') ? 'How to Spend' : rawFaqTitle;
-    tabNavFaq.textContent = faqTitle;
-    tabNavFaq.style.display = modules.faq.enabled === false ? 'none' : 'inline-flex';
+    setNavLabel(tabNavFaq, faqTitle);
+    tabNavFaq.style.display = modules.faq.enabled === false ? 'none' : 'flex';
   }
 }
 
@@ -467,10 +545,13 @@ function updatePrestigeBanner(boneScore, spendableBones) {
   } else {
     nextRankTitle.textContent = `Next: ${nextRank.title}`;
     const required = nextRank.costBones;
-    const progress = Math.min(100, Math.floor((spendableBones / required) * 100));
+    const progress = required > 0 ? Math.min(100, Math.floor((spendableBones / required) * 100)) : 100;
     rankProgressText.textContent = `${spendableBones} / ${required} ${currName}`;
     rankProgressBar.style.width = `${progress}%`;
 
+    const canAfford = spendableBones >= required;
+    btnPromoteRank.classList.toggle('btn-primary', canAfford);
+    btnPromoteRank.classList.toggle('btn-secondary', !canAfford);
     btnPromoteRank.style.display = 'block';
     btnPromoteRank.textContent = `Promote to ${nextRank.title} (${required} ${currName})`;
     btnPromoteRank.onclick = () => openRankPromoteModal(nextRank);
@@ -484,14 +565,133 @@ function getClassIcon(className = '') {
   return '';
 }
 
+function resolveMemberPrimaryChar(w) {
+  const chars = w?.characters || [];
+  const primChar = chars.find(c => c.isPrimary)
+    || (w?.primaryCharacter ? chars.find(c => c.name === w.primaryCharacter) : null)
+    || chars[0]
+    || null;
+  return {
+    name: primChar ? primChar.name : (w?.primaryCharacter || null),
+    charClass: primChar ? (primChar.class || 'Warrior') : '',
+    charRole: primChar ? (primChar.role || 'DPS') : ''
+  };
+}
+
+/**
+ * Setup Ledger Search, Role Pills, Class Dropdown & Pagination Controls
+ */
+function setupLedgerControls() {
+  const clearBtn = document.getElementById('btnClearLeaderboardSearch');
+  const classSelect = document.getElementById('filterLeaderboardClass');
+  const roleFilters = document.getElementById('ledgerRoleFilters');
+  const btnPrev = document.getElementById('btnLedgerPrev');
+  const btnNext = document.getElementById('btnLedgerNext');
+  const btnToggleAll = document.getElementById('btnLedgerToggleAll');
+  const btnLocateMe = document.getElementById('btnLocateMe');
+
+  if (searchLeaderboard) {
+    searchLeaderboard.addEventListener('input', () => {
+      state.ledgerPage = 1;
+      if (clearBtn) clearBtn.style.display = searchLeaderboard.value ? 'block' : 'none';
+      renderLeaderboard();
+    });
+  }
+
+  if (clearBtn && searchLeaderboard) {
+    clearBtn.addEventListener('click', () => {
+      searchLeaderboard.value = '';
+      clearBtn.style.display = 'none';
+      state.ledgerPage = 1;
+      renderLeaderboard();
+      searchLeaderboard.focus();
+    });
+  }
+
+  if (roleFilters) {
+    roleFilters.addEventListener('click', (e) => {
+      const btn = e.target.closest('.seg-pill[data-role]');
+      if (!btn) return;
+      state.ledgerRoleFilter = btn.getAttribute('data-role') || 'all';
+      state.ledgerPage = 1;
+      roleFilters.querySelectorAll('.seg-pill').forEach(p => {
+        p.classList.toggle('active', p === btn);
+      });
+      renderLeaderboard();
+    });
+  }
+
+  if (classSelect) {
+    classSelect.addEventListener('change', () => {
+      state.ledgerClassFilter = classSelect.value || 'all';
+      state.ledgerPage = 1;
+      renderLeaderboard();
+    });
+  }
+
+  if (btnPrev) {
+    btnPrev.addEventListener('click', () => {
+      if (state.ledgerPage > 1) {
+        state.ledgerPage--;
+        renderLeaderboard();
+      }
+    });
+  }
+
+  if (btnNext) {
+    btnNext.addEventListener('click', () => {
+      state.ledgerPage++;
+      renderLeaderboard();
+    });
+  }
+
+  if (btnToggleAll) {
+    btnToggleAll.addEventListener('click', () => {
+      state.ledgerShowAll = !state.ledgerShowAll;
+      state.ledgerPage = 1;
+      renderLeaderboard();
+    });
+  }
+
+  if (btnLocateMe) {
+    btnLocateMe.addEventListener('click', () => {
+      if (!state.user?.id || !state.bseState) return;
+      state.ledgerRoleFilter = 'all';
+      state.ledgerClassFilter = 'all';
+      if (roleFilters) {
+        roleFilters.querySelectorAll('.seg-pill').forEach(p => {
+          p.classList.toggle('active', p.getAttribute('data-role') === 'all');
+        });
+      }
+      if (classSelect) classSelect.value = 'all';
+      if (searchLeaderboard) searchLeaderboard.value = '';
+      if (clearBtn) clearBtn.style.display = 'none';
+
+      state.ledgerPage = Number(btnLocateMe.dataset.targetPage) || 1;
+      renderLeaderboard();
+
+      const selfRow = document.querySelector('#leaderboardTbody tr.is-self-row')
+        || document.querySelector(`#mobileLeaderboardList .mobile-roster-card[data-discord-id="${state.user.id}"]`);
+      if (selfRow) {
+        selfRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    });
+  }
+}
+
 /**
  * Render Leaderboard with Dual Desktop Table & Mobile Roster Stream
  */
 function renderLeaderboard() {
-  if (!state.bseState) return;
+  if (!state.bseState || !leaderboardTbody) return;
   const allWallets = Object.values(state.bseState.wallets || {});
   const query = (searchLeaderboard?.value || '').toLowerCase().trim();
+  const clearBtn = document.getElementById('btnClearLeaderboardSearch');
+  if (clearBtn) clearBtn.style.display = query ? 'block' : 'none';
+
   const isOfficer = Boolean(state.user?.isOfficer);
+  const roleFilter = (state.ledgerRoleFilter || 'all').toLowerCase();
+  const classFilter = (state.ledgerClassFilter || 'all').toLowerCase();
 
   // Helper check: Zero-Bones member (separate from officer-hidden)
   const isZeroBones = (w) => (w.boneScore || 0) === 0 && (w.spendableBones || 0) === 0;
@@ -539,13 +739,9 @@ function renderLeaderboard() {
   // Determine visible pool based on permissions and filter selection
   let visiblePool = [];
   if (!isOfficer) {
-    // Regular Guild Members:
-    // 1. Hide members who have 0 bones (auto-unhidden once earning bones)
-    // 2. Hide members who are officer-hidden
     visiblePool = allWallets.filter(w => !w.officerHidden && !isZeroBones(w));
     visiblePool.sort(compareByRank);
   } else {
-    // Officers: respect selected filter tab
     const currentFilter = state.officerLeaderboardFilter || 'active';
     let pool = [];
 
@@ -559,8 +755,6 @@ function renderLeaderboard() {
       pool = allWallets.filter(w => Boolean(w.officerHidden));
       pool.sort(compareByRank);
     } else {
-      // 'all'
-      // Segregate into: active members (top), zero-bones members (middle), officer-hidden (bottom)
       const activePart = allWallets.filter(w => !w.officerHidden && !isZeroBones(w));
       activePart.sort(compareByRank);
 
@@ -575,44 +769,11 @@ function renderLeaderboard() {
     visiblePool = pool;
   }
 
-  // Apply search query filter
-  const filtered = visiblePool.filter(w => {
-    if (!query) return true;
-    const name = (w.serverNickname || w.globalName || w.username || '').toLowerCase();
-    const handle = (w.username || '').toLowerCase();
-    const char = (w.primaryCharacter || '').toLowerCase();
-    const note = (w.guildNote || '').toLowerCase();
-    return name.includes(query) || handle.includes(query) || char.includes(query) || note.includes(query);
-  });
-
-  if (thLeaderboardActions) {
-    thLeaderboardActions.style.display = isOfficer ? 'table-cell' : 'none';
-    thLeaderboardActions.textContent = `Actions (+${defaultAward} / -${defaultDeduct})`;
-  }
-
-  const colSpanCount = isOfficer ? 8 : 7;
-
-  if (!filtered.length) {
-    let emptyMsg = 'No members match the search query.';
-    if (!query) {
-      if (!isOfficer && !activeCount) {
-        emptyMsg = 'The season standings are reset! Complete bounties or attend guild events to claim the #1 rank on the leaderboard.';
-      } else if (isOfficer && state.officerLeaderboardFilter === 'active' && !activeCount) {
-        emptyMsg = 'All members currently have 0 Bones. Use "0-Bones Members" or "All Guild Members" filter tab above to view the roster and award Bones.';
-      }
-    }
-    leaderboardTbody.innerHTML = `<tr><td colspan="${colSpanCount}" style="text-align: center; color: var(--gold-200); padding: 3rem; font-family: 'Cinzel', serif;">${emptyMsg}</td></tr>`;
-    if (mobileLeaderboardList) {
-      mobileLeaderboardList.innerHTML = `<div style="text-align: center; color: var(--gold-200); padding: 3rem; font-family: 'Cinzel', serif;">${emptyMsg}</div>`;
-    }
-    return;
-  }
-
-  // Compute tied competition ranks (1, 1, 3...) based on Career Score
+  // Compute tied competition ranks (1, 1, 3...) across visiblePool BEFORE filters
   let activePosition = 0;
   let currentRank = 0;
   let prevRankScore = null;
-  const rankedRows = filtered.map(w => {
+  const rankedPool = visiblePool.map(w => {
     const isHidden = Boolean(w.officerHidden);
     const isZero = isZeroBones(w);
     let rankNumber = null;
@@ -628,38 +789,169 @@ function renderLeaderboard() {
     return { w, isHidden, isZero, rankNumber };
   });
 
+  // Update Ledger Summary Strip (guild totals & member standing)
+  const rankedCountEl = document.getElementById('ledgerRankedCount');
+  const totalBonesEl = document.getElementById('ledgerTotalBones');
+  const myChipEl = document.getElementById('ledgerMyStandingChip');
+  const myStandingEl = document.getElementById('ledgerMyStandingText');
+  const btnLocateMe = document.getElementById('btnLocateMe');
+
+  if (rankedCountEl) rankedCountEl.textContent = activeCount.toLocaleString();
+  if (totalBonesEl) {
+    const totalGuildCareerBones = allWallets.reduce((sum, w) => sum + (w.boneScore || 0), 0);
+    totalBonesEl.textContent = totalGuildCareerBones.toLocaleString();
+  }
+
+  // Apply Role, Class, and Search query filters
+  const filtered = rankedPool.filter(({ w }) => {
+    const prim = resolveMemberPrimaryChar(w);
+    if (roleFilter !== 'all') {
+      if (!prim.name || prim.charRole.toLowerCase() !== roleFilter) return false;
+    }
+    if (classFilter !== 'all') {
+      if (!prim.name || prim.charClass.toLowerCase() !== classFilter) return false;
+    }
+    if (!query) return true;
+    const name = (w.serverNickname || w.globalName || w.username || '').toLowerCase();
+    const handle = (w.username || '').toLowerCase();
+    const char = (prim.name || w.primaryCharacter || '').toLowerCase();
+    const note = (w.guildNote || '').toLowerCase();
+    return name.includes(query) || handle.includes(query) || char.includes(query) || note.includes(query);
+  });
+
+  // Pagination slice (skip paging when typing search query or Show All toggled)
+  const pageSize = state.ledgerPageSize || 20;
+  const totalFiltered = filtered.length;
+  const usePagination = !state.ledgerShowAll && !query && totalFiltered > pageSize;
+  const totalPages = usePagination ? Math.max(1, Math.ceil(totalFiltered / pageSize)) : 1;
+  if (state.ledgerPage > totalPages) state.ledgerPage = totalPages;
+  if (state.ledgerPage < 1) state.ledgerPage = 1;
+
+  const startIdx = usePagination ? (state.ledgerPage - 1) * pageSize : 0;
+  const endIdx = usePagination ? Math.min(totalFiltered, startIdx + pageSize) : totalFiltered;
+  const displayedRows = filtered.slice(startIdx, endIdx);
+
+  if (myChipEl && myStandingEl) {
+    if (state.user?.authenticated && state.user.id) {
+      myChipEl.style.display = 'inline-flex';
+      const myPoolIdx = rankedPool.findIndex(item => item.w.discordId === state.user.id);
+      const myPoolEntry = myPoolIdx >= 0 ? rankedPool[myPoolIdx] : null;
+      const rankLabel = myPoolEntry?.rankNumber ? `#${myPoolEntry.rankNumber}` : (myPoolEntry ? '0 Bones' : 'Unranked');
+      myStandingEl.textContent = rankLabel;
+
+      if (btnLocateMe) {
+        const myPage = myPoolIdx >= 0 ? Math.floor(myPoolIdx / pageSize) + 1 : 1;
+        const onCurrentView = displayedRows.some(r => r.w.discordId === state.user.id);
+        const showLocate = myPoolIdx >= 0 && !onCurrentView;
+        btnLocateMe.style.display = showLocate ? 'inline-block' : 'none';
+        btnLocateMe.dataset.targetPage = String(myPage);
+      }
+    } else {
+      myChipEl.style.display = 'none';
+      if (btnLocateMe) btnLocateMe.style.display = 'none';
+    }
+  }
+
+  // Pagination Bar Controls
+  const paginationBar = document.getElementById('ledgerPaginationBar');
+  const paginationInfo = document.getElementById('ledgerPaginationInfo');
+  const btnPrev = document.getElementById('btnLedgerPrev');
+  const btnNext = document.getElementById('btnLedgerNext');
+  const btnToggleAll = document.getElementById('btnLedgerToggleAll');
+
+  if (paginationBar) {
+    if (totalFiltered > pageSize && !query) {
+      paginationBar.style.display = 'flex';
+      if (paginationInfo) {
+        paginationInfo.textContent = `Showing ${startIdx + 1}–${endIdx} of ${totalFiltered} members`;
+      }
+      if (btnPrev) btnPrev.disabled = state.ledgerShowAll || state.ledgerPage <= 1;
+      if (btnNext) btnNext.disabled = state.ledgerShowAll || state.ledgerPage >= totalPages;
+      if (btnToggleAll) {
+        btnToggleAll.textContent = state.ledgerShowAll ? `Show Top ${pageSize}` : `Show All (${totalFiltered})`;
+      }
+    } else {
+      paginationBar.style.display = 'none';
+    }
+  }
+
+  if (thLeaderboardActions) {
+    thLeaderboardActions.style.display = isOfficer ? 'table-cell' : 'none';
+    thLeaderboardActions.textContent = `Actions (+${defaultAward} / -${defaultDeduct})`;
+  }
+
+  const colSpanCount = isOfficer ? 9 : 8;
+
+  if (!filtered.length) {
+    let emptyMsg = 'No members match the current search or filters.';
+    const hasFilter = Boolean(query) || roleFilter !== 'all' || classFilter !== 'all';
+    if (!hasFilter) {
+      if (!isOfficer && !activeCount) {
+        emptyMsg = 'Season standings are awaiting first awards! Complete bounties or attend guild raids to claim #1 on the Ledger.';
+      } else if (isOfficer && state.officerLeaderboardFilter === 'active' && !activeCount) {
+        emptyMsg = 'All members currently have 0 Bones. Use "0-Bones" or "All Guild" filter tab above to view the roster and award Bones.';
+      }
+    }
+    const resetBtnHtml = hasFilter
+      ? `<div style="margin-top:0.75rem;"><button type="button" class="btn-secondary btn-sm" id="btnResetLedgerFilters">Clear Search &amp; Filters</button></div>`
+      : '';
+    leaderboardTbody.innerHTML = `<tr><td colspan="${colSpanCount}" style="text-align: center; color: var(--gold-200); padding: 2.5rem 1.25rem; font-family: var(--font-serif);">${emptyMsg}${resetBtnHtml}</td></tr>`;
+    if (mobileLeaderboardList) {
+      mobileLeaderboardList.innerHTML = `<div style="text-align: center; color: var(--gold-200); padding: 2.5rem 1rem; font-family: var(--font-serif);">${emptyMsg}${resetBtnHtml}</div>`;
+    }
+    document.querySelectorAll('#btnResetLedgerFilters').forEach(btn => {
+      btn.addEventListener('click', () => {
+        state.ledgerRoleFilter = 'all';
+        state.ledgerClassFilter = 'all';
+        state.ledgerPage = 1;
+        if (searchLeaderboard) searchLeaderboard.value = '';
+        if (clearBtn) clearBtn.style.display = 'none';
+        const roleFiltersEl = document.getElementById('ledgerRoleFilters');
+        if (roleFiltersEl) {
+          roleFiltersEl.querySelectorAll('.seg-pill').forEach(p => {
+            p.classList.toggle('active', p.getAttribute('data-role') === 'all');
+          });
+        }
+        const classSel = document.getElementById('filterLeaderboardClass');
+        if (classSel) classSel.value = 'all';
+        renderLeaderboard();
+      });
+    });
+    return;
+  }
+
   // 1. Render Desktop Table (>= 768px)
-  leaderboardTbody.innerHTML = rankedRows.map(({ w, isHidden, isZero, rankNumber }) => {
+  leaderboardTbody.innerHTML = displayedRows.map(({ w, isHidden, isZero, rankNumber }) => {
     const rankDisplay = rankNumber !== null ? `#${rankNumber}` : '—';
+    const rankTopCls = (rankNumber !== null && rankNumber <= 3) ? ` rank-top-${rankNumber}` : '';
 
     const name = w.serverNickname || w.globalName || w.username || 'Guild Member';
     const handle = w.username ? `@${w.username}` : '';
     const avatarUrl = getDiscordAvatarUrl(w.discordId, w.avatarHash, 64);
 
-    const rankTitle = resolveRankTitle(w.boneScore);
+    const rankTitle = resolveRankTitle(w.rankTier || 0);
 
     // Resolve character and class info
-    const chars = w.characters || [];
-    const primChar = chars.find(c => c.isPrimary) || (w.primaryCharacter ? chars.find(c => c.name === w.primaryCharacter) : chars[0]);
-    const charName = primChar ? primChar.name : (w.primaryCharacter || null);
-    const charClass = primChar ? (primChar.class || 'Warrior') : 'Warrior';
-    const charRole = primChar ? (primChar.role || 'DPS') : 'DPS';
+    const prim = resolveMemberPrimaryChar(w);
+    const charName = prim.name;
+    const charClass = prim.charClass || 'Warrior';
+    const charRole = prim.charRole || 'DPS';
     const classCss = `class-${charClass.toLowerCase().replace(/\s+/g, '-')}`;
 
     const charDisplay = charName
-      ? `<span class="class-badge ${classCss}">${charName}</span>`
+      ? `<span class="class-badge ${classCss}">${escapeHtml(charName)}</span>`
       : `<span style="color:var(--text-dim); font-size:0.8rem;">—</span>`;
 
     const roleCss = (charRole || 'dps').toLowerCase();
     const roleDisplay = charName
-      ? `<span class="role-pill ${roleCss}">${charRole}</span>`
+      ? `<span class="role-pill ${roleCss}">${escapeHtml(charRole)}</span>`
       : `<span style="color:var(--text-dim); font-size:0.8rem;">—</span>`;
 
     const officerActionsCell = isOfficer ? `
       <td style="text-align: center;" onclick="event.stopPropagation()">
         <div class="officer-inline-actions">
-          <button class="btn-officer-award" title="Award ${defaultAward} Bones" onclick="event.stopPropagation(); openBonesAdjustModal('${w.discordId}', '${escapeAttr(name)}', 'award')">+${defaultAward}</button>
-          <button class="btn-officer-deduct" title="Deduct ${defaultDeduct} Bones" onclick="event.stopPropagation(); openBonesAdjustModal('${w.discordId}', '${escapeAttr(name)}', 'deduct')">-${defaultDeduct}</button>
+          <button type="button" class="btn-officer-award" title="Award ${defaultAward} Bones" onclick="event.stopPropagation(); openBonesAdjustModal('${w.discordId}', '${escapeAttr(name)}', 'award')">+${defaultAward}</button>
+          <button type="button" class="btn-officer-deduct" title="Deduct ${defaultDeduct} Bones" onclick="event.stopPropagation(); openBonesAdjustModal('${w.discordId}', '${escapeAttr(name)}', 'deduct')">-${defaultDeduct}</button>
         </div>
       </td>
     ` : '';
@@ -668,53 +960,55 @@ function renderLeaderboard() {
       ? `<span class="badge-officer-hidden">Hidden</span>`
       : (isZero ? `<span class="badge-zero-bones">0 Bones</span>` : '');
 
-    const rowClass = isHidden ? 'class="officer-hidden-row"' : '';
+    const isSelf = Boolean(state.user?.id && w.discordId === state.user.id);
+    const rowClasses = [isHidden ? 'officer-hidden-row' : '', isSelf ? 'is-self-row' : ''].filter(Boolean).join(' ');
+    const rowClassAttr = rowClasses ? `class="${rowClasses}"` : '';
 
     return `
-      <tr ${rowClass} onclick="inspectMemberProfile('${w.discordId}')" title="Click to inspect ${name}'s WoW characters, roles, and guild note">
-        <td class="table-rank-cell">${rankDisplay}</td>
+      <tr ${rowClassAttr} onclick="inspectMemberProfile('${w.discordId}')" title="Click to inspect ${escapeAttr(name)}'s WoW characters, roles, and guild note">
+        <td class="table-rank-cell${rankTopCls}">${rankDisplay}</td>
         <td>
           <div class="member-cell">
             <img src="${avatarUrl}" class="table-avatar" alt="${escapeAttr(name)}" onerror="this.onerror=null;this.src='assets/favicon.svg';">
             <div>
               <div style="font-weight: 700; color: var(--gold-100); display: flex; align-items: center; flex-wrap: wrap;">
-                ${name} ${statusBadge}
+                ${escapeHtml(name)} ${statusBadge}
               </div>
-              <div style="font-size: 0.75rem; color: var(--text-muted);">${handle}</div>
+              <div style="font-size: 0.75rem; color: var(--text-muted);">${escapeHtml(handle)}</div>
             </div>
           </div>
         </td>
         <td>${charDisplay}</td>
         <td>${roleDisplay}</td>
-        <td><span class="card-badge economy">${rankTitle}</span></td>
+        <td><span class="card-badge economy">${escapeHtml(rankTitle)}</span></td>
         <td style="font-weight: 700; color: var(--gold-300);">${(w.spendableBones || 0).toLocaleString()}</td>
         <td style="font-weight: 700; color: var(--amber);">${(w.boneScore || 0).toLocaleString()}</td>
         ${officerActionsCell}
+        <td class="col-inspect-chevron" aria-hidden="true">›</td>
       </tr>
     `;
   }).join('');
 
   // 2. Render Mobile Roster Stream (< 768px)
   if (mobileLeaderboardList) {
-    mobileLeaderboardList.innerHTML = rankedRows.map(({ w, isHidden, isZero, rankNumber }) => {
+    mobileLeaderboardList.innerHTML = displayedRows.map(({ w, isHidden, isZero, rankNumber }) => {
       const rankNum = rankNumber !== null ? `#${rankNumber}` : '—';
       const rankHighlightClass = rankNumber !== null && rankNumber <= 3 ? ` rank-${rankNumber}` : '';
 
       const name = w.serverNickname || w.globalName || w.username || 'Guild Member';
       const avatarUrl = getDiscordAvatarUrl(w.discordId, w.avatarHash, 64);
 
-      const chars = w.characters || [];
-      const primChar = chars.find(c => c.isPrimary) || (w.primaryCharacter ? chars.find(c => c.name === w.primaryCharacter) : chars[0]);
-      const charName = primChar ? primChar.name : (w.primaryCharacter || null);
-      const charClass = primChar ? (primChar.class || 'Warrior') : 'Warrior';
-      const charRole = primChar ? (primChar.role || 'DPS') : 'DPS';
+      const prim = resolveMemberPrimaryChar(w);
+      const charName = prim.name;
+      const charClass = prim.charClass || 'Warrior';
+      const charRole = prim.charRole || 'DPS';
       const classCss = `class-${charClass.toLowerCase().replace(/\s+/g, '-')}`;
       const roleCss = (charRole || 'dps').toLowerCase();
 
       const mobileOfficerStrip = isOfficer ? `
         <div class="mobile-card-officer-strip" onclick="event.stopPropagation()">
-          <button class="btn-officer-award" onclick="event.stopPropagation(); openBonesAdjustModal('${w.discordId}', '${escapeAttr(name)}', 'award')">+${defaultAward}</button>
-          <button class="btn-officer-deduct" onclick="event.stopPropagation(); openBonesAdjustModal('${w.discordId}', '${escapeAttr(name)}', 'deduct')">-${defaultDeduct}</button>
+          <button type="button" class="btn-officer-award" onclick="event.stopPropagation(); openBonesAdjustModal('${w.discordId}', '${escapeAttr(name)}', 'award')">+${defaultAward}</button>
+          <button type="button" class="btn-officer-deduct" onclick="event.stopPropagation(); openBonesAdjustModal('${w.discordId}', '${escapeAttr(name)}', 'deduct')">-${defaultDeduct}</button>
         </div>
       ` : '';
 
@@ -722,19 +1016,24 @@ function renderLeaderboard() {
         ? `<span class="badge-officer-hidden">Hidden</span>`
         : (isZero ? `<span class="badge-zero-bones">0 Bones</span>` : '');
 
-      const cardClass = isHidden ? 'mobile-roster-card officer-hidden-card' : 'mobile-roster-card';
+      const isSelf = Boolean(state.user?.id && w.discordId === state.user.id);
+      const cardClass = [
+        'mobile-roster-card',
+        isHidden ? 'officer-hidden-card' : '',
+        isSelf ? 'is-self-row' : ''
+      ].filter(Boolean).join(' ');
 
       return `
-        <div class="${cardClass}" onclick="inspectMemberProfile('${w.discordId}')">
+        <div class="${cardClass}" data-discord-id="${escapeAttr(w.discordId)}" onclick="inspectMemberProfile('${w.discordId}')">
           <div style="display: flex; align-items: center; gap: 0.75rem;">
             <div class="mobile-roster-rank${rankHighlightClass}">${rankNum}</div>
             <img src="${avatarUrl}" class="mobile-roster-avatar" alt="${escapeAttr(name)}" onerror="this.onerror=null;this.src='assets/favicon.svg';">
             <div class="mobile-roster-info">
               <div class="mobile-roster-name" style="display: flex; align-items: center; flex-wrap: wrap;">
-                ${name} ${statusBadge}
+                ${escapeHtml(name)} ${statusBadge}
               </div>
               <div class="mobile-roster-meta">
-                ${charName ? `<span class="class-badge ${classCss}" style="padding:0.1rem 0.35rem; font-size:0.7rem;">${charName}</span> <span class="role-pill ${roleCss}">${charRole}</span>` : `<span style="color:var(--text-dim);">No character</span>`}
+                ${charName ? `<span class="class-badge ${classCss}" style="padding:0.1rem 0.35rem; font-size:0.7rem;">${escapeHtml(charName)}</span> <span class="role-pill ${roleCss}">${escapeHtml(charRole)}</span>` : `<span style="color:var(--text-dim);">No character</span>`}
               </div>
             </div>
             <div class="mobile-roster-score">
@@ -749,8 +1048,6 @@ function renderLeaderboard() {
     }).join('');
   }
 }
-
-searchLeaderboard.addEventListener('input', renderLeaderboard);
 
 /**
  * Inspect Member Profile & WoW Characters Modal (Click from Leaderboard)
@@ -926,10 +1223,149 @@ function deriveClientTithingPairFromConstant(kValue) {
 }
 
 /**
+ * Guest Onboarding Hero & Sidebar Guide Navigation
+ */
+function setupOnboardingAndGuide() {
+  document.getElementById('btnDismissOnboarding')?.addEventListener('click', () => {
+    state.onboardingDismissed = true;
+    try {
+      sessionStorage.setItem('bse_onboarding_dismissed', '1');
+    } catch (_) {}
+    if (guestOnboardingHero) guestOnboardingHero.style.display = 'none';
+  });
+
+  document.getElementById('btnHeroBrowseBounties')?.addEventListener('click', () => {
+    switchTab('bounties');
+  });
+
+  document.getElementById('btnHeroHowToSpend')?.addEventListener('click', () => {
+    switchTab('faq');
+  });
+
+  document.getElementById('btnSidebarQuickGuide')?.addEventListener('click', () => {
+    switchTab('faq');
+  });
+}
+
+function openRequestBountyModal() {
+  if (!state.user || !state.user.authenticated) {
+    showToast('Please sign in with Discord to post a contract.');
+    return;
+  }
+  const balEl = document.getElementById('reqBountyUserBalance');
+  if (balEl) balEl.textContent = (state.user.spendableBones || 0).toLocaleString();
+  const titleEl = document.getElementById('reqBountyTitle');
+  if (titleEl) titleEl.value = '';
+  const rewardEl = document.getElementById('reqBountyReward');
+  if (rewardEl) rewardEl.value = '10';
+  const descEl = document.getElementById('reqBountyDesc');
+  if (descEl) descEl.value = '';
+  const bonusDescEl = document.getElementById('reqBountyBonusDesc');
+  if (bonusDescEl) bonusDescEl.value = '';
+  const bonusAmtEl = document.getElementById('reqBountyBonusAmount');
+  if (bonusAmtEl) bonusAmtEl.value = '';
+  document.getElementById('modalRequestBounty')?.classList.add('active');
+}
+
+/**
+ * Update Interactive Action Footers on How to Spend Tab
+ */
+function updateFaqSpendActions() {
+  const hintEl = document.getElementById('faqPromoteStatusHint');
+  const btnPromote = document.getElementById('btnFaqPromoteRank');
+  const btnBrowse = document.getElementById('btnFaqBrowseBounties');
+  const btnContract = document.getElementById('btnFaqRequestContract');
+
+  if (btnBrowse) {
+    btnBrowse.onclick = () => switchTab('bounties');
+  }
+
+  if (btnContract) {
+    btnContract.onclick = () => openRequestBountyModal();
+  }
+
+  if (!hintEl || !btnPromote) return;
+
+  if (!state.user?.authenticated) {
+    hintEl.textContent = 'Sign in with Discord to view your rank eligibility.';
+    btnPromote.textContent = 'Sign In to Promote';
+    btnPromote.disabled = false;
+    btnPromote.onclick = () => {
+      window.location.href = '/api/auth/discord';
+    };
+    return;
+  }
+
+  const ranks = state.bseState?.ranks || [
+    { tier: 0, title: 'Initiate', costBones: 0 },
+    { tier: 1, title: 'Dune Scavenger', costBones: 25 },
+    { tier: 2, title: 'Wasteland Raider', costBones: 75 },
+    { tier: 3, title: 'Shadow Broker', costBones: 150 },
+    { tier: 4, title: 'Exalted Broker', costBones: 300 }
+  ];
+  const currentTier = state.user?.rankTier || 0;
+  const currentRank = ranks.find(r => r.tier === currentTier) || ranks[0];
+  const nextRank = ranks.find(r => r.tier === currentTier + 1) || null;
+  const currName = state.bseState?.branding?.currencyName || 'Bones';
+  const spendable = state.user?.spendableBones || 0;
+
+  if (!nextRank) {
+    hintEl.textContent = `Current Rank: ${currentRank.title} (Maximum tier reached)`;
+    btnPromote.textContent = 'Max Rank Reached';
+    btnPromote.disabled = true;
+    btnPromote.onclick = null;
+    return;
+  }
+
+  const needed = Math.max(0, (nextRank.costBones || 0) - spendable);
+  hintEl.textContent = needed === 0
+    ? `Ready! Next: ${nextRank.title} (${nextRank.costBones} ${currName})`
+    : `Current: ${currentRank.title} · Need ${needed} more ${currName} for ${nextRank.title}`;
+  btnPromote.textContent = `Promote to ${nextRank.title}`;
+  btnPromote.disabled = false;
+  btnPromote.onclick = () => openRankPromoteModal(nextRank);
+}
+
+/**
+ * Setup Bounty Board Search & Category Chip Filters
+ */
+function setupBountyBoardControls() {
+  const searchInput = document.getElementById('searchBounties');
+  const categoryBar = document.getElementById('bountiesCategoryFilters');
+
+  if (searchInput) {
+    searchInput.addEventListener('input', () => {
+      state.bountySearchQuery = searchInput.value;
+      renderBounties();
+    });
+  }
+
+  if (categoryBar) {
+    categoryBar.addEventListener('click', (e) => {
+      const chip = e.target.closest('.category-chip[data-category]');
+      if (!chip) return;
+      state.bountyCategoryFilter = chip.getAttribute('data-category') || 'all';
+      renderBounties();
+    });
+  }
+
+  if (bountiesGrid) {
+    bountiesGrid.addEventListener('click', (e) => {
+      if (e.target.closest('#btnResetBountyFilters')) {
+        state.bountyCategoryFilter = 'all';
+        state.bountySearchQuery = '';
+        if (searchInput) searchInput.value = '';
+        renderBounties();
+      }
+    });
+  }
+}
+
+/**
  * Render Bounty Board
  */
 function renderBounties() {
-  if (!state.bseState) return;
+  if (!state.bseState || !bountiesGrid) return;
   const bounties = (state.bseState.bounties || []).filter(b => (b.status || 'active') === 'active');
   const currName = state.bseState?.branding?.currencyName || 'Bones';
   const tithingCfg = resolveClientTithingConfig();
@@ -941,12 +1377,123 @@ function renderBounties() {
     reqBtn.style.display = state.user?.authenticated ? 'inline-flex' : 'none';
   }
 
-  if (!bounties.length) {
-    bountiesGrid.innerHTML = `<div style="grid-column: 1 / -1; text-align: center; color: var(--text-dim); padding: 3rem;">No active bounties posted right now.</div>`;
+  // Dynamic Category Filter Chips
+  const categoryBar = document.getElementById('bountiesCategoryFilters');
+  const searchQuery = (state.bountySearchQuery || document.getElementById('searchBounties')?.value || '').trim().toLowerCase();
+
+  const guildCount = bounties.filter(b => !b.creatorId).length;
+  const contractsCount = bounties.filter(b => Boolean(b.creatorId)).length;
+
+  const categoryCounts = new Map();
+  bounties.forEach(b => {
+    const cat = b.category || 'Guild';
+    categoryCounts.set(cat, (categoryCounts.get(cat) || 0) + 1);
+  });
+
+  const preferredOrder = ['Raid', 'Dungeon', 'Economy', 'Crafting', 'PvP', 'Guild', 'General'];
+  const orderedCategories = [
+    ...preferredOrder.filter(cat => categoryCounts.has(cat)),
+    ...Array.from(categoryCounts.keys()).filter(cat => !preferredOrder.includes(cat))
+  ];
+
+  const chips = [
+    { key: 'all', label: 'All', count: bounties.length },
+    { key: 'guild', label: 'Guild Bounties', count: guildCount },
+    ...(contractsCount > 0 ? [{ key: 'contracts', label: 'Player Contracts', count: contractsCount }] : []),
+    ...orderedCategories.map(cat => ({ key: `cat:${cat}`, label: cat, count: categoryCounts.get(cat) }))
+  ];
+
+  if (!chips.some(ch => ch.key === state.bountyCategoryFilter)) {
+    state.bountyCategoryFilter = 'all';
+  }
+
+  if (categoryBar) {
+    if (!bounties.length) {
+      categoryBar.innerHTML = '';
+    } else {
+      categoryBar.innerHTML = chips.map(ch => `
+        <button type="button" class="category-chip ${state.bountyCategoryFilter === ch.key ? 'active' : ''}" data-category="${escapeAttr(ch.key)}">
+          <span>${escapeHtml(ch.label)}</span>
+          <span class="category-chip-count">${ch.count}</span>
+        </button>
+      `).join('');
+    }
+  }
+
+  // Filter bounties by active chip and search query
+  const filteredBounties = bounties.filter(b => {
+    if (state.bountyCategoryFilter === 'guild' && b.creatorId) return false;
+    if (state.bountyCategoryFilter === 'contracts' && !b.creatorId) return false;
+    if (state.bountyCategoryFilter.startsWith('cat:')) {
+      const targetCat = state.bountyCategoryFilter.slice(4).toLowerCase();
+      if ((b.category || 'Guild').toLowerCase() !== targetCat) return false;
+    }
+
+    if (!searchQuery) return true;
+    const haystack = [
+      b.title,
+      b.description,
+      b.category,
+      b.creatorNickname,
+      b.creatorUsername
+    ].filter(Boolean).join(' ').toLowerCase();
+    return haystack.includes(searchQuery);
+  });
+
+  // Pin active Guild Tithing bounty in Spotlight when it matches filters
+  const spotlightTithing = filteredBounties.find(b => b.bountyType === 'tithing') || null;
+  const showSpotlight = Boolean(spotlightTithing);
+  const spotlightEl = document.getElementById('bountiesSpotlight');
+
+  if (spotlightEl) {
+    if (showSpotlight) {
+      const spotlightBonuses = (spotlightTithing.bonuses && spotlightTithing.bonuses.length)
+        ? `<div style="display: flex; flex-wrap: wrap; margin-top: 0.45rem;">${spotlightTithing.bonuses.map(bonus => `
+            <span class="bounty-bonus-pill">⭐ ${escapeHtml(bonus.description)} (<strong>+${bonus.bonusBones} ${escapeHtml(currName)}</strong>)</span>
+          `).join('')}</div>`
+        : '';
+
+      spotlightEl.style.display = 'block';
+      spotlightEl.innerHTML = `
+        <div class="bounty-spotlight-card">
+          <div class="spotlight-content">
+            <div class="spotlight-badges">
+              <span class="spotlight-kicker">Featured · Guild Vault Exchange</span>
+              <span class="card-badge ${(spotlightTithing.category || 'Economy').toLowerCase()}">${escapeHtml(spotlightTithing.category || 'Economy')}</span>
+            </div>
+            <h4>${escapeHtml(spotlightTithing.title || 'Guild Tithing')}</h4>
+            <p>${escapeHtml(spotlightTithing.description || `Donate Gold directly to the Guild Bank Vault and automatically calculate your ${currName} payout.`)}</p>
+            ${spotlightBonuses}
+          </div>
+          <div class="spotlight-cta-box">
+            <div class="tithing-rate-badge">${escapeHtml(tithingRateStr)}</div>
+            <button type="button" class="btn-primary" onclick="openClaimModal('${escapeAttr(spotlightTithing.id)}')">Donate &amp; Claim ${escapeHtml(currName)}</button>
+          </div>
+        </div>
+      `;
+    } else {
+      spotlightEl.style.display = 'none';
+      spotlightEl.innerHTML = '';
+    }
+  }
+
+  // Exclude pinned spotlight bounty from main grid so it never duplicates
+  const gridBounties = showSpotlight
+    ? filteredBounties.filter(b => b.id !== spotlightTithing.id)
+    : filteredBounties;
+
+  if (!showSpotlight && !gridBounties.length) {
+    const hasFilter = bounties.length > 0 && (state.bountyCategoryFilter !== 'all' || Boolean(searchQuery));
+    bountiesGrid.innerHTML = hasFilter
+      ? `<div class="bounty-empty-state">
+           <div>No active bounties or contracts match your current filter.</div>
+           <button type="button" class="btn-secondary btn-sm" id="btnResetBountyFilters" style="margin-top: 0.75rem;">Reset Filters</button>
+         </div>`
+      : `<div class="bounty-empty-state">No active bounties posted right now. Check back after the next raid notice or post a Player Contract!</div>`;
     return;
   }
 
-  bountiesGrid.innerHTML = bounties.map(b => {
+  bountiesGrid.innerHTML = gridBounties.map(b => {
     const badgeClass = (b.category || 'General').toLowerCase();
     const isPlayerSponsored = Boolean(b.creatorId);
     const isTithing = b.bountyType === 'tithing';
@@ -954,7 +1501,7 @@ function renderBounties() {
 
     const rewardBadgeHtml = isTithing
       ? `<div class="tithing-rate-badge">${escapeHtml(tithingRateStr)}</div>`
-      : `<div class="card-reward">+${(b.rewardBones || 0).toLocaleString()} ${currName}</div>`;
+      : `<div class="card-reward">+${(b.rewardBones || 0).toLocaleString()} ${escapeHtml(currName)}</div>`;
 
     const tithingBoardBoxHtml = isTithing ? `
       <div class="tithing-board-box">
@@ -970,18 +1517,23 @@ function renderBounties() {
         <div style="font-size: 0.7rem; color: var(--gold-300); font-weight: 700; text-transform: uppercase;">Optional Bonus Objectives:</div>
         <div style="display: flex; flex-wrap: wrap; margin-top: 0.2rem;">
           ${b.bonuses.map(bonus => `
-            <span class="bounty-bonus-pill">⭐ ${escapeHtml(bonus.description)} (<strong>+${bonus.bonusBones} ${currName}</strong>)</span>
+            <span class="bounty-bonus-pill">⭐ ${escapeHtml(bonus.description)} (<strong>+${bonus.bonusBones} ${escapeHtml(currName)}</strong>)</span>
           `).join('')}
         </div>
       </div>
     ` : '';
 
+    const bonusCount = Array.isArray(b.bonuses) ? b.bonuses.length : 0;
+    const footerHint = isPlayerSponsored
+      ? 'Escrow Protected Contract'
+      : (bonusCount > 0 ? `${bonusCount} Bonus Objective${bonusCount > 1 ? 's' : ''}` : 'Guild Bounty');
+
     return `
-      <div class="exchange-card">
+      <div class="exchange-card${isPlayerSponsored ? ' is-contract' : ''}">
         <div>
           ${isPlayerSponsored ? `<div class="bounty-sponsor-tag">Sponsored by: <strong>${escapeHtml(sponsorName)}</strong></div>` : ''}
           <div class="card-top">
-            <span class="card-badge ${badgeClass}">${b.category || 'Guild'}</span>
+            <span class="card-badge ${badgeClass}">${escapeHtml(b.category || 'Guild')}</span>
             ${rewardBadgeHtml}
           </div>
           <div class="card-title">${escapeHtml(b.title)}</div>
@@ -990,8 +1542,8 @@ function renderBounties() {
           ${bonusesHtml}
         </div>
         <div class="card-footer">
-          <span class="stock-indicator">ID: <code>${b.id}</code></span>
-          <button class="btn-primary" onclick="openClaimModal('${b.id}')">Claim Bounty</button>
+          <span class="bounty-meta-hint" title="Ref ID: ${escapeAttr(b.id)}">${escapeHtml(footerHint)}</span>
+          <button type="button" class="btn-primary" onclick="openClaimModal('${escapeAttr(b.id)}')">Claim Bounty</button>
         </div>
       </div>
     `;
@@ -1106,7 +1658,10 @@ function formatAuditBadge(action) {
 
 function renderMemberHistory() {
   if (!memberHistoryTbody) return;
+  const countBadge = document.getElementById('historyCountBadge');
+
   if (!state.user) {
+    if (countBadge) countBadge.style.display = 'none';
     memberHistoryTbody.innerHTML = `<tr><td colspan="6" style="text-align: center; color: var(--text-dim); padding: 2rem;">Please sign in with Discord to view your transaction history.</td></tr>`;
     if (mobileHistoryList) {
       mobileHistoryList.innerHTML = `<div style="text-align: center; color: var(--text-dim); padding: 2rem;">Please sign in with Discord to view your transaction history.</div>`;
@@ -1116,6 +1671,15 @@ function renderMemberHistory() {
 
   const allLogs = state.bseState?.auditLog || [];
   const myLogs = allLogs.filter(e => e.targetId === state.user.id).slice().reverse();
+
+  if (countBadge) {
+    if (myLogs.length > 0) {
+      countBadge.textContent = `${myLogs.length} ${myLogs.length === 1 ? 'Entry' : 'Entries'}`;
+      countBadge.style.display = 'inline-block';
+    } else {
+      countBadge.style.display = 'none';
+    }
+  }
 
   if (!myLogs.length) {
     memberHistoryTbody.innerHTML = `<tr><td colspan="6" style="text-align: center; color: var(--text-dim); padding: 2rem;">No transactions recorded yet. Complete guild bounties or attend events to see activity here.</td></tr>`;
@@ -1335,22 +1899,42 @@ window.quickDeductMember = function(userId, memberName) {
 };
 
 window.quickDeleteMember = async function(userId, memberName, spendableBones, boneScore) {
-  const confirmMsg = `WARNING: Are you sure you want to PERMANENTLY remove "${memberName}" from the guild roster?\n\nMember Current Ledger:\n- Spendable Bones: ${spendableBones}\n- Career Score: ${boneScore} Pts\n\nThis will purge their balance and record from the exchange and standings.`;
-  if (!confirm(confirmMsg)) return;
-
-  const finalCheck = prompt(`FINAL CONFIRMATION:\nType DELETE to permanently purge "${memberName}" with ${spendableBones} Bones from the roster:`);
-  if (!finalCheck || finalCheck.trim().toUpperCase() !== 'DELETE') {
-    showToast('Purge cancelled.');
+  const decision = await openOfficerDecisionModal({
+    title: `Purge Member: ${memberName}`,
+    lead: `Permanently remove "${memberName}" from the guild roster (${spendableBones} Spendable Bones · ${boneScore} Career Score). This purges their balance and standings record.`,
+    submitLabel: 'Purge Member',
+    submitVariant: 'danger',
+    fields: [
+      {
+        name: 'confirmWord',
+        label: 'Type DELETE to Confirm Permanent Purge',
+        type: 'text',
+        value: '',
+        placeholder: 'DELETE',
+        hint: 'Must match DELETE exactly before purge can execute.'
+      },
+      {
+        name: 'reason',
+        label: 'Audit Log Reason',
+        type: 'text',
+        value: 'Left guild / Inactive purge',
+        placeholder: 'Reason logged in audit trail...'
+      }
+    ]
+  });
+  if (!decision) return;
+  if (!decision.confirmWord || decision.confirmWord.trim().toUpperCase() !== 'DELETE') {
+    showToast('Purge cancelled (DELETE was not entered).');
     return;
   }
 
-  const reason = prompt(`Reason for purging ${memberName} from roster (logged in audit trail):`, 'Left guild / Inactive purge');
+  const reason = (decision.reason || '').trim();
 
   try {
     const res = await fetch('/api/exchange/member/delete', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ targetId: userId, reason: (reason || '').trim() })
+      body: JSON.stringify({ targetId: userId, reason })
     });
     if (res.ok) {
       showToast(`Purged ${memberName} from roster (${spendableBones} Bones logged).`);
@@ -1366,16 +1950,37 @@ window.quickDeleteMember = async function(userId, memberName, spendableBones, bo
 };
 
 window.quickAdjustLifetime = async function(userId, memberName, currentScore = 0) {
-  const input = prompt(`Enter new Lifetime Bones (Career Score) for ${memberName}:\n(Current Lifetime Score: ${currentScore})`, currentScore);
-  if (input === null) return;
-  const newScore = parseInt(input.trim(), 10);
+  const decision = await openOfficerDecisionModal({
+    title: `Adjust Lifetime Score: ${memberName}`,
+    lead: `Current Lifetime Bones (Career Score): ${(currentScore || 0).toLocaleString()} Pts`,
+    submitLabel: 'Update Lifetime Score',
+    submitVariant: 'primary',
+    fields: [
+      {
+        name: 'boneScore',
+        label: 'New Lifetime Bones (Career Score)',
+        type: 'number',
+        value: String(currentScore ?? 0),
+        min: 0
+      },
+      {
+        name: 'reason',
+        label: 'Audit Log Justification',
+        type: 'text',
+        value: 'Officer score calibration',
+        placeholder: 'Reason for adjusting lifetime bones...'
+      }
+    ]
+  });
+  if (!decision) return;
+
+  const newScore = parseInt(String(decision.boneScore ?? '').trim(), 10);
   if (isNaN(newScore) || newScore < 0) {
     showToast('Invalid lifetime score amount.');
     return;
   }
 
-  const reason = prompt(`Reason for adjusting ${memberName}'s lifetime bones:`, 'Officer score calibration');
-  if (reason === null) return;
+  const reason = (decision.reason || '').trim() || 'Officer lifetime score calibration';
 
   try {
     const res = await fetch('/api/exchange/member/adjust', {
@@ -1384,7 +1989,7 @@ window.quickAdjustLifetime = async function(userId, memberName, currentScore = 0
       body: JSON.stringify({
         targetId: userId,
         boneScore: newScore,
-        reason: reason.trim() || 'Officer lifetime score calibration'
+        reason
       })
     });
     if (res.ok) {
@@ -1403,23 +2008,50 @@ window.quickAdjustLifetime = async function(userId, memberName, currentScore = 0
 };
 
 window.quickAdjustBountyStats = async function(userId, memberName, curCompleted = 0, curPosted = 0) {
-  const compStr = prompt(`Override Bounties Completed for ${memberName}:\n(Current: ${curCompleted})`, curCompleted);
-  if (compStr === null) return;
-  const newCompleted = parseInt(compStr.trim(), 10);
+  const decision = await openOfficerDecisionModal({
+    title: `Override Bounty Stats: ${memberName}`,
+    lead: `Current totals: ${curCompleted} completed · ${curPosted} posted contracts`,
+    submitLabel: 'Save Bounty Stats',
+    submitVariant: 'primary',
+    fields: [
+      {
+        name: 'bountiesCompleted',
+        label: 'Bounties Completed',
+        type: 'number',
+        value: String(curCompleted ?? 0),
+        min: 0
+      },
+      {
+        name: 'postedBountiesCompleted',
+        label: 'Posted Contracts Completed',
+        type: 'number',
+        value: String(curPosted ?? 0),
+        min: 0
+      },
+      {
+        name: 'reason',
+        label: 'Audit Log Justification',
+        type: 'text',
+        value: 'Officer bounty stats calibration',
+        placeholder: 'Reason for overriding bounty stats...'
+      }
+    ]
+  });
+  if (!decision) return;
+
+  const newCompleted = parseInt(String(decision.bountiesCompleted ?? '').trim(), 10);
   if (isNaN(newCompleted) || newCompleted < 0) {
     showToast('Invalid completed count entered.');
     return;
   }
 
-  const postStr = prompt(`Override Posted Bounties Completed for ${memberName}:\n(Current: ${curPosted})`, curPosted);
-  if (postStr === null) return;
-  const newPosted = parseInt(postStr.trim(), 10);
+  const newPosted = parseInt(String(decision.postedBountiesCompleted ?? '').trim(), 10);
   if (isNaN(newPosted) || newPosted < 0) {
     showToast('Invalid posted count entered.');
     return;
   }
 
-  const reason = prompt(`Reason for overriding bounty stats for ${memberName}:`, 'Officer stats calibration');
+  const reason = (decision.reason || '').trim() || 'Officer bounty stats calibration';
 
   try {
     const res = await fetch('/api/exchange/member/adjust', {
@@ -1429,7 +2061,7 @@ window.quickAdjustBountyStats = async function(userId, memberName, curCompleted 
         targetId: userId,
         bountiesCompleted: newCompleted,
         postedBountiesCompleted: newPosted,
-        reason: (reason || '').trim() || 'Officer bounty stats calibration'
+        reason
       })
     });
     if (res.ok) {
@@ -1449,9 +2081,15 @@ window.quickAdjustBountyStats = async function(userId, memberName, curCompleted 
 
 window.quickToggleHideMember = async function(userId, memberName, isCurrentlyHidden) {
   const confirmMsg = isCurrentlyHidden
-    ? `Unhide ${memberName}? They will be restored to the public leaderboard (if they have > 0 bones).`
-    : `Hide ${memberName} from the leaderboard? They will be removed from the public leaderboard and placed at the bottom for officers.`;
-  if (!confirm(confirmMsg)) return;
+    ? `Unhide ${memberName}? They will be restored to the public ledger (if they have > 0 bones).`
+    : `Hide ${memberName} from the public ledger? They will be removed from public view and placed at the bottom for officers.`;
+  const confirmed = await openConfirmModal({
+    title: isCurrentlyHidden ? `Unhide ${memberName}` : `Hide ${memberName} from Ledger`,
+    message: confirmMsg,
+    confirmLabel: isCurrentlyHidden ? 'Unhide Member' : 'Hide Member',
+    variant: isCurrentlyHidden ? 'primary' : 'danger'
+  });
+  if (!confirmed) return;
 
   try {
     const res = await fetch('/api/exchange/member/toggle-hide', {
@@ -1601,10 +2239,14 @@ function renderOfficerQueues() {
   const memberRequests = (state.bseState.bounties || []).filter(b => b.status === 'pending_review');
   const cntRequestsEl = document.getElementById('cntMemberBountyRequests');
   if (cntRequestsEl) cntRequestsEl.textContent = memberRequests.length;
+  const requestsPanelEl = document.getElementById('memberRequestsPanel');
+  if (requestsPanelEl) {
+    requestsPanelEl.classList.toggle('has-pending', memberRequests.length > 0);
+  }
   const requestsListEl = document.getElementById('memberBountyRequestsList');
   if (requestsListEl) {
     if (!memberRequests.length) {
-      requestsListEl.innerHTML = `<p style="color: var(--text-dim); font-size: 0.85rem; padding: 1.5rem; text-align: center;">No member bounty requests pending review. All clear!</p>`;
+      requestsListEl.innerHTML = `<div style="color: var(--text-dim); font-size: 0.82rem; padding: 0.35rem 0;">No member contract requests awaiting review right now.</div>`;
     } else {
       requestsListEl.innerHTML = memberRequests.map(b => {
         const sponsorName = b.creatorNickname || b.creatorUsername || 'Guild Member';
@@ -1724,6 +2366,11 @@ function populateOfficerSettingsForms() {
   if (editCapAmount) editCapAmount.value = parseInt(weeklyCapCfg.cap, 10) || 50;
   const editResetDay = document.getElementById('editorWeeklyResetDay');
   if (editResetDay) editResetDay.value = String(Number.isInteger(parseInt(weeklyCapCfg.resetDay, 10)) ? parseInt(weeklyCapCfg.resetDay, 10) : 2);
+  const economyBadge = document.getElementById('accordionEconomyBadge');
+  if (economyBadge) {
+    const capVal = parseInt(weeklyCapCfg.cap, 10) || 50;
+    economyBadge.textContent = weeklyCapCfg.enabled !== false ? `Cap: ${capVal}/wk` : 'Cap: Off';
+  }
 
   // Guild Tithing Status & Ratio Inputs
   const tithingCfg = resolveClientTithingConfig();
@@ -1779,6 +2426,10 @@ function populateOfficerSettingsForms() {
  * Render Prestige Ranks Builder
  */
 function renderRanksBuilder() {
+  const ranksBadge = document.getElementById('accordionRanksBadge');
+  if (ranksBadge) {
+    ranksBadge.textContent = `${state.draftRanks.length} ${state.draftRanks.length === 1 ? 'Tier' : 'Tiers'}`;
+  }
   ranksBuilderContainer.innerHTML = state.draftRanks.map((r, idx) => `
     <div class="officer-review-card" style="display: grid; grid-template-columns: 60px 1fr 100px 140px auto; gap: 0.5rem; align-items: center;">
       <input type="text" class="form-control" value="${r.icon || ''}" placeholder="Icon" onchange="updateDraftRank(${idx}, 'icon', this.value)" style="text-align: center; font-size: 0.85rem;">
@@ -1816,6 +2467,10 @@ document.getElementById('btnAddRankTier').addEventListener('click', () => {
  * Render FAQ Builder
  */
 function renderFaqBuilder() {
+  const faqBadge = document.getElementById('accordionFaqBadge');
+  if (faqBadge) {
+    faqBadge.textContent = `${state.draftFaq.length} ${state.draftFaq.length === 1 ? 'Item' : 'Items'}`;
+  }
   if (!faqBuilderContainer) return;
   if (!state.draftFaq.length) {
     faqBuilderContainer.innerHTML = `<div style="font-size: 0.82rem; color: var(--text-dim); padding: 0.85rem; text-align: center;">No additional Q&amp;A items added. The How to Spend guide is shown on the tab automatically.</div>`;
@@ -2357,7 +3012,27 @@ function renderAuditTrail() {
     return;
   }
 
-  auditTrailTbody.innerHTML = auditEntries.map(e => {
+  const query = (state.auditSearchQuery || document.getElementById('searchAuditTrail')?.value || '').trim().toLowerCase();
+  const filteredEntries = query
+    ? auditEntries.filter(e => {
+        const { text: badgeText } = formatAuditBadge(e.action);
+        const hay = [
+          e.officerName,
+          e.targetName,
+          e.action,
+          badgeText,
+          e.reason
+        ].filter(Boolean).join(' ').toLowerCase();
+        return hay.includes(query);
+      })
+    : auditEntries;
+
+  if (!filteredEntries.length) {
+    auditTrailTbody.innerHTML = `<tr><td colspan="7" style="text-align: center; color: var(--text-dim); padding: 1.5rem;">No audit events match "${escapeHtml(query)}".</td></tr>`;
+    return;
+  }
+
+  auditTrailTbody.innerHTML = filteredEntries.map(e => {
     const timeStr = new Date(e.timestamp).toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' +
                     new Date(e.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
@@ -2511,18 +3186,179 @@ window.removeCharacter = function(index) {
 /**
  * Modals & Actions
  */
+let activeConfirmResolver = null;
+let activeDecisionResolver = null;
+
+function resolveActiveConfirm(val) {
+  const modal = document.getElementById('modalConfirmAction');
+  if (modal) modal.classList.remove('active');
+  if (activeConfirmResolver) {
+    const fn = activeConfirmResolver;
+    activeConfirmResolver = null;
+    fn(Boolean(val));
+  }
+}
+
+function resolveActiveDecision(val) {
+  const modal = document.getElementById('modalOfficerDecision');
+  if (modal) modal.classList.remove('active');
+  if (activeDecisionResolver) {
+    const fn = activeDecisionResolver;
+    activeDecisionResolver = null;
+    fn(val);
+  }
+}
+
+function closeModalById(modalId) {
+  if (modalId === 'modalConfirmAction') {
+    resolveActiveConfirm(false);
+    return;
+  }
+  if (modalId === 'modalOfficerDecision') {
+    resolveActiveDecision(null);
+    return;
+  }
+  document.getElementById(modalId)?.classList.remove('active');
+}
+
+function openConfirmModal({ title = 'Confirm Action', message = '', confirmLabel = 'Confirm', variant = 'primary' } = {}) {
+  if (activeConfirmResolver) resolveActiveConfirm(false);
+  const modal = document.getElementById('modalConfirmAction');
+  const titleEl = document.getElementById('confirmActionTitle');
+  const bodyEl = document.getElementById('confirmActionBody');
+  const cancelBtn = document.getElementById('btnConfirmActionCancel');
+  const submitBtn = document.getElementById('btnConfirmActionSubmit');
+
+  if (!modal || !submitBtn) {
+    return Promise.resolve(false);
+  }
+
+  if (titleEl) titleEl.textContent = title;
+  if (bodyEl) bodyEl.textContent = message;
+  submitBtn.textContent = confirmLabel;
+  submitBtn.className = variant === 'danger'
+    ? 'btn-danger'
+    : (variant === 'success' ? 'btn-success' : 'btn-primary');
+
+  modal.classList.add('active');
+  setTimeout(() => {
+    (variant === 'danger' ? cancelBtn : submitBtn)?.focus();
+  }, 20);
+
+  return new Promise(resolve => {
+    activeConfirmResolver = resolve;
+  });
+}
+
+function openOfficerDecisionModal({
+  title = 'Officer Action',
+  lead = '',
+  submitLabel = 'Confirm',
+  submitVariant = 'primary',
+  fields = []
+} = {}) {
+  if (activeDecisionResolver) resolveActiveDecision(null);
+  const modal = document.getElementById('modalOfficerDecision');
+  const titleEl = document.getElementById('officerDecisionTitle');
+  const leadEl = document.getElementById('officerDecisionLead');
+  const fieldsEl = document.getElementById('officerDecisionFields');
+  const submitBtn = document.getElementById('btnOfficerDecisionSubmit');
+
+  if (!modal || !fieldsEl || !submitBtn) {
+    return Promise.resolve(null);
+  }
+
+  if (titleEl) titleEl.textContent = title;
+  if (leadEl) {
+    leadEl.textContent = lead;
+    leadEl.style.display = lead ? 'block' : 'none';
+  }
+
+  fieldsEl.innerHTML = fields.map((f, idx) => {
+    const fieldId = `officerDecisionField_${idx}`;
+    const minAttr = f.min !== undefined ? ` min="${escapeAttr(String(f.min))}"` : '';
+    const maxAttr = f.max !== undefined ? ` max="${escapeAttr(String(f.max))}"` : '';
+    const stepAttr = f.step !== undefined ? ` step="${escapeAttr(String(f.step))}"` : '';
+    return `
+      <div class="form-group">
+        <label for="${fieldId}">${escapeHtml(f.label || f.name)}</label>
+        <input
+          type="${escapeAttr(f.type || 'text')}"
+          class="form-control"
+          id="${fieldId}"
+          data-field-name="${escapeAttr(f.name)}"
+          value="${escapeAttr(f.value !== undefined && f.value !== null ? String(f.value) : '')}"
+          placeholder="${escapeAttr(f.placeholder || '')}"${minAttr}${maxAttr}${stepAttr}>
+        ${f.hint ? `<small style="display: block; margin-top: 0.28rem; font-size: 0.72rem; color: var(--text-muted);">${escapeHtml(f.hint)}</small>` : ''}
+      </div>
+    `;
+  }).join('');
+
+  submitBtn.textContent = submitLabel;
+  submitBtn.className = submitVariant === 'danger'
+    ? 'btn-danger'
+    : (submitVariant === 'success' ? 'btn-success' : 'btn-primary');
+
+  modal.classList.add('active');
+  setTimeout(() => {
+    fieldsEl.querySelector('input')?.focus();
+  }, 20);
+
+  return new Promise(resolve => {
+    activeDecisionResolver = resolve;
+  });
+}
+
 function setupModals() {
   document.querySelectorAll('[data-close-modal]').forEach(btn => {
     btn.addEventListener('click', () => {
-      const modalId = btn.getAttribute('data-close-modal');
-      document.getElementById(modalId)?.classList.remove('active');
+      closeModalById(btn.getAttribute('data-close-modal'));
     });
   });
 
   document.querySelectorAll('.modal-overlay').forEach(modal => {
     modal.addEventListener('click', (e) => {
-      if (e.target === modal) modal.classList.remove('active');
+      if (e.target === modal) {
+        closeModalById(modal.id);
+      }
     });
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      const activeModals = Array.from(document.querySelectorAll('.modal-overlay.active'));
+      if (activeModals.length) {
+        closeModalById(activeModals[activeModals.length - 1].id);
+      }
+    }
+  });
+
+  document.getElementById('btnConfirmActionCancel')?.addEventListener('click', () => {
+    resolveActiveConfirm(false);
+  });
+
+  document.getElementById('btnConfirmActionSubmit')?.addEventListener('click', () => {
+    resolveActiveConfirm(true);
+  });
+
+  document.getElementById('btnOfficerDecisionCancel')?.addEventListener('click', () => {
+    resolveActiveDecision(null);
+  });
+
+  document.getElementById('btnOfficerDecisionSubmit')?.addEventListener('click', () => {
+    const result = {};
+    document.querySelectorAll('#officerDecisionFields [data-field-name]').forEach(input => {
+      const name = input.getAttribute('data-field-name');
+      if (name) result[name] = input.value;
+    });
+    resolveActiveDecision(result);
+  });
+
+  document.getElementById('officerDecisionFields')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      document.getElementById('btnOfficerDecisionSubmit')?.click();
+    }
   });
 
   // Bones Adjust Stone Modal Handlers
@@ -2591,20 +3427,7 @@ function setupModals() {
   });
 
   // Member Request Bounty Modal Handlers (Player Escrow)
-  document.getElementById('btnOpenRequestBountyModal')?.addEventListener('click', () => {
-    if (!state.user || !state.user.authenticated) {
-      showToast('Please sign in with Discord to request a bounty.');
-      return;
-    }
-    const balEl = document.getElementById('reqBountyUserBalance');
-    if (balEl) balEl.textContent = (state.user.spendableBones || 0).toLocaleString();
-    document.getElementById('reqBountyTitle').value = '';
-    document.getElementById('reqBountyReward').value = '10';
-    document.getElementById('reqBountyDesc').value = '';
-    if (document.getElementById('reqBountyBonusDesc')) document.getElementById('reqBountyBonusDesc').value = '';
-    if (document.getElementById('reqBountyBonusAmount')) document.getElementById('reqBountyBonusAmount').value = '';
-    document.getElementById('modalRequestBounty')?.classList.add('active');
-  });
+  document.getElementById('btnOpenRequestBountyModal')?.addEventListener('click', openRequestBountyModal);
 
   document.getElementById('btnSubmitRequestBountyExecute')?.addEventListener('click', async () => {
     const title = document.getElementById('reqBountyTitle').value.trim();
@@ -2946,6 +3769,10 @@ function updateClaimModalForBounty(bountyId) {
 window.openClaimModal = function(bountyId) {
   const select = document.getElementById('claimBountySelect');
   const bounties = (state.bseState?.bounties || []).filter(b => (b.status || 'active') === 'active');
+  if (!bounties.length) {
+    showToast('There are no active bounties to claim right now.');
+    return;
+  }
   const currName = state.bseState?.branding?.currencyName || 'Bones';
   const tithingCfg = resolveClientTithingConfig();
 
@@ -3203,6 +4030,60 @@ function setupOfficerTools() {
     }
   });
 
+  // Open Create Guild Bounty Modal
+  document.getElementById('btnOpenCreateBountyModal')?.addEventListener('click', () => {
+    const titleEl = document.getElementById('newBountyTitle');
+    const rewardEl = document.getElementById('newBountyReward');
+    const descEl = document.getElementById('newBountyDesc');
+    const typeEl = document.getElementById('newBountyType');
+    if (titleEl) titleEl.value = '';
+    if (rewardEl) rewardEl.value = '';
+    if (descEl) descEl.value = '';
+    if (typeEl) typeEl.value = 'fixed';
+
+    syncCreateBountyTypeFields();
+    resetCreateBountyBonusRows();
+
+    const announceChk = document.getElementById('bountyAnnounceToggle');
+    const announceFieldsBox = document.getElementById('bountyAnnounceFields');
+    if (announceChk) announceChk.checked = false;
+    if (announceFieldsBox) announceFieldsBox.style.display = 'none';
+
+    const selBountyFormAnnounce = document.getElementById('bountyAnnounceChannel');
+    if (selBountyFormAnnounce && cachedGuildChannels.length === 0) {
+      fetchGuildChannels().then(channels => {
+        const announceCh = state.bseState?.config?.channels?.announcementsChannelId;
+        populateChannelSelect(selBountyFormAnnounce, channels, announceCh, 'Default Announcements Channel');
+      });
+    }
+
+    document.getElementById('modalCreateBounty')?.classList.add('active');
+  });
+
+  // Toggle Collapsible Global Guild Tithing Exchange Rate Panel
+  const tithingSettingsCard = document.getElementById('tithingSettingsCard');
+  const btnToggleTithingEditor = document.getElementById('btnToggleTithingEditor');
+  const btnCloseTithingEditor = document.getElementById('btnCloseTithingEditor');
+
+  btnToggleTithingEditor?.addEventListener('click', () => {
+    if (!tithingSettingsCard) return;
+    const isHidden = tithingSettingsCard.style.display === 'none' || !tithingSettingsCard.style.display;
+    tithingSettingsCard.style.display = isHidden ? 'block' : 'none';
+    btnToggleTithingEditor.textContent = isHidden ? 'Close Rate Editor' : 'Adjust Rate';
+  });
+
+  btnCloseTithingEditor?.addEventListener('click', () => {
+    if (tithingSettingsCard) tithingSettingsCard.style.display = 'none';
+    if (btnToggleTithingEditor) btnToggleTithingEditor.textContent = 'Adjust Rate';
+  });
+
+  // Audit Trail Search Filter
+  const searchAuditTrailInput = document.getElementById('searchAuditTrail');
+  searchAuditTrailInput?.addEventListener('input', () => {
+    state.auditSearchQuery = searchAuditTrailInput.value;
+    renderAuditTrail();
+  });
+
   // Toggle Announcement & Discord Event Options
   const bountyAnnounceToggle = document.getElementById('bountyAnnounceToggle');
   const bountyAnnounceFields = document.getElementById('bountyAnnounceFields');
@@ -3221,7 +4102,7 @@ function setupOfficerTools() {
   }
 
   // Create Bounty
-  document.getElementById('btnCreateBounty').addEventListener('click', async () => {
+  document.getElementById('btnCreateBounty')?.addEventListener('click', async () => {
     const bountyType = document.getElementById('newBountyType')?.value === 'tithing' ? 'tithing' : 'fixed';
     const title = document.getElementById('newBountyTitle').value.trim();
     const rawRewardBones = document.getElementById('newBountyReward').value;
@@ -3301,6 +4182,7 @@ function setupOfficerTools() {
         document.getElementById('bountyAnnounceToggle').checked = false;
         document.getElementById('bountyAnnounceFields').style.display = 'none';
       }
+      document.getElementById('modalCreateBounty')?.classList.remove('active');
       await refreshBseState();
     } else {
       const err = await res.json().catch(() => ({}));
@@ -3309,7 +4191,7 @@ function setupOfficerTools() {
   });
 
   // Create Shop Item
-  document.getElementById('btnCreateShopItem').addEventListener('click', async () => {
+  document.getElementById('btnCreateShopItem')?.addEventListener('click', async () => {
     const title = document.getElementById('newItemTitle').value.trim();
     const costBones = document.getElementById('newItemCost').value;
     const category = document.getElementById('newItemCategory').value;
@@ -3361,7 +4243,14 @@ function setupOfficerTools() {
   // Sync Guild Roster from Discord
   if (btnSyncDiscordRoster) {
     btnSyncDiscordRoster.addEventListener('click', async () => {
-      if (!confirm('Synchronize the guild roster from the Discord server?\nThis will import newly joined members, remove members who left, and refresh nicknames/avatars.')) return;
+      const confirmed = await openConfirmModal({
+        title: 'Sync Discord Guild Roster',
+        message: 'Synchronize the guild roster from the Discord server?\nThis will import newly joined members, remove members who left, and refresh nicknames/avatars.',
+        confirmLabel: 'Sync Roster',
+        variant: 'primary'
+      });
+      if (!confirmed) return;
+
       const orig = btnSyncDiscordRoster.textContent;
       btnSyncDiscordRoster.textContent = 'Syncing...';
       btnSyncDiscordRoster.disabled = true;
@@ -3489,6 +4378,7 @@ function setupOfficerLeaderboardFilters() {
     if (!btn) return;
     btn.addEventListener('click', () => {
       state.officerLeaderboardFilter = filter;
+      state.ledgerPage = 1;
       document.querySelectorAll('.filter-pill').forEach(p => p.classList.remove('active'));
       btn.classList.add('active');
       renderLeaderboard();
@@ -3706,9 +4596,32 @@ window.approveClaim = async function(claimId) {
 };
 
 window.approveMemberBountyRequest = async function(bountyId) {
-  const bonusPrompt = prompt('Optional: Add extra Guild Treasury bonus Bones to this bounty (funded by guild treasury, 0 or blank for none):', '0');
-  if (bonusPrompt === null) return;
-  const officerBonusBones = parseInt(bonusPrompt.trim(), 10) || 0;
+  const bounty = (state.bseState?.bounties || []).find(b => b.id === bountyId);
+  const currName = state.bseState?.branding?.currencyName || 'Bones';
+  const sponsorName = bounty?.creatorNickname || bounty?.creatorUsername || 'Guild Member';
+  const escrowed = bounty ? (bounty.baseRewardBones !== undefined ? bounty.baseRewardBones : (bounty.rewardBones || 0)) : 0;
+
+  const decision = await openOfficerDecisionModal({
+    title: 'Approve Member Contract',
+    lead: bounty
+      ? `Post "${bounty.title}" by ${sponsorName} (${escrowed} escrowed ${currName}) to the active Bounty Board.`
+      : 'Approve and post this player-sponsored contract to the active Bounty Board.',
+    submitLabel: 'Approve & Post',
+    submitVariant: 'success',
+    fields: [
+      {
+        name: 'officerBonusBones',
+        label: `Guild Treasury Bonus ${currName} (Optional)`,
+        type: 'number',
+        value: '0',
+        min: 0,
+        placeholder: '0',
+        hint: 'Funded by the Guild Treasury on top of escrowed Bones.'
+      }
+    ]
+  });
+  if (!decision) return;
+  const officerBonusBones = Math.max(0, parseInt(decision.officerBonusBones, 10) || 0);
 
   try {
     const res = await fetch('/api/exchange/bounty/approve-request', {
@@ -3729,14 +4642,34 @@ window.approveMemberBountyRequest = async function(bountyId) {
 };
 
 window.rejectMemberBountyRequest = async function(bountyId) {
-  const reason = prompt('Reason for denying this member bounty request (will 100% refund escrowed Bones to member):', 'Does not meet guild guidelines');
-  if (reason === null) return;
+  const bounty = (state.bseState?.bounties || []).find(b => b.id === bountyId);
+  const currName = state.bseState?.branding?.currencyName || 'Bones';
+  const escrowed = bounty ? (bounty.baseRewardBones !== undefined ? bounty.baseRewardBones : (bounty.rewardBones || 0)) : 0;
+
+  const decision = await openOfficerDecisionModal({
+    title: 'Reject & Refund Contract',
+    lead: bounty
+      ? `Deny "${bounty.title}"? 100% of escrowed ${escrowed} ${currName} will be refunded to the sponsor.`
+      : 'Deny this player contract and refund 100% of escrowed Bones to the sponsor.',
+    submitLabel: 'Reject & Refund',
+    submitVariant: 'danger',
+    fields: [
+      {
+        name: 'rejectReason',
+        label: 'Rejection Reason',
+        type: 'text',
+        value: 'Does not meet guild guidelines',
+        placeholder: 'Reason shown in audit log...'
+      }
+    ]
+  });
+  if (!decision) return;
 
   try {
     const res = await fetch('/api/exchange/bounty/reject-request', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ bountyId, rejectReason: reason.trim() })
+      body: JSON.stringify({ bountyId, rejectReason: (decision.rejectReason || '').trim() })
     });
     const data = await res.json();
     if (res.ok) {
@@ -3751,9 +4684,26 @@ window.rejectMemberBountyRequest = async function(bountyId) {
 };
 
 window.approveClaimCustom = async function(claimId, currentReward) {
-  const custom = prompt(`Enter custom reward amount to award for this claim:`, currentReward);
-  if (custom === null) return;
-  const num = parseInt(custom, 10);
+  const currName = state.bseState?.branding?.currencyName || 'Bones';
+  const decision = await openOfficerDecisionModal({
+    title: 'Approve Claim (Custom Payout)',
+    lead: `Override the reward payout for claim ${claimId}.`,
+    submitLabel: 'Approve Payout',
+    submitVariant: 'success',
+    fields: [
+      {
+        name: 'customReward',
+        label: `Custom Reward (${currName})`,
+        type: 'number',
+        value: String(currentReward ?? 10),
+        min: 1,
+        required: true
+      }
+    ]
+  });
+  if (!decision) return;
+
+  const num = parseInt(decision.customReward, 10);
   if (isNaN(num) || num < 1) {
     showToast('Invalid amount entered.');
     return;
@@ -3767,21 +4717,41 @@ window.approveClaimCustom = async function(claimId, currentReward) {
   if (res.ok) {
     showToast(`Approved with custom reward of +${num}.`);
     await refreshBseState();
+  } else {
+    const err = await res.json().catch(() => ({}));
+    showToast(`Approval failed: ${err.error || 'Server error'}`);
   }
 };
 
 window.denyClaim = async function(claimId) {
-  const reason = prompt('Enter reason for denying this bounty claim (optional):', 'Requirements not satisfied');
-  if (reason === null) return;
+  const decision = await openOfficerDecisionModal({
+    title: 'Deny Bounty Claim',
+    lead: 'Reject this claim submission. No Bones will be awarded.',
+    submitLabel: 'Deny Claim',
+    submitVariant: 'danger',
+    fields: [
+      {
+        name: 'denyReason',
+        label: 'Denial Reason (Optional)',
+        type: 'text',
+        value: 'Requirements not satisfied',
+        placeholder: 'Reason for denying this claim...'
+      }
+    ]
+  });
+  if (!decision) return;
 
   const res = await fetch('/api/exchange/claim/deny', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ claimId, denyReason: reason })
+    body: JSON.stringify({ claimId, denyReason: (decision.denyReason || '').trim() })
   });
   if (res.ok) {
     showToast('Claim denied.');
     await refreshBseState();
+  } else {
+    const err = await res.json().catch(() => ({}));
+    showToast(`Failed: ${err.error || 'Server error'}`);
   }
 };
 
@@ -3798,8 +4768,14 @@ window.fulfillDelivery = async function(orderId) {
 };
 
 window.refundDelivery = async function(orderId) {
-  const confirmRefund = confirm('Refund this purchase? The spent currency will be returned to the member and stock will be restored.');
-  if (!confirmRefund) return;
+  const currName = state.bseState?.branding?.currencyName || 'Bones';
+  const confirmed = await openConfirmModal({
+    title: 'Refund Shop Purchase',
+    message: `Refund this purchase? The spent ${currName} will be returned to the member and stock will be restored.`,
+    confirmLabel: 'Refund Order',
+    variant: 'danger'
+  });
+  if (!confirmed) return;
 
   const res = await fetch('/api/exchange/deliver/refund', {
     method: 'POST',
@@ -3834,8 +4810,14 @@ window.deleteBounty = async function(bountyId) {
   );
   const confirmMsg = isRefundable
     ? `Delete player-sponsored bounty "${bounty.title}"?\n\n${escrowAmt} escrowed Bones will be refunded to the sponsor.`
-    : 'Are you sure you want to delete this bounty?';
-  if (!confirm(confirmMsg)) return;
+    : `Are you sure you want to delete "${bounty?.title || 'this bounty'}"?`;
+  const confirmed = await openConfirmModal({
+    title: isRefundable ? 'Delete & Refund Bounty' : 'Delete Bounty',
+    message: confirmMsg,
+    confirmLabel: isRefundable ? 'Delete & Refund' : 'Delete Bounty',
+    variant: 'danger'
+  });
+  if (!confirmed) return;
 
   try {
     const res = await fetch('/api/exchange/bounty/delete', {
@@ -3999,7 +4981,13 @@ window.adjustShopStock = async function(itemId, delta) {
 };
 
 window.deleteShopItem = async function(itemId) {
-  if (!confirm('Are you sure you want to remove this shop item?')) return;
+  const confirmed = await openConfirmModal({
+    title: 'Remove Shop Item',
+    message: 'Are you sure you want to remove this shop item from the catalog?',
+    confirmLabel: 'Remove Item',
+    variant: 'danger'
+  });
+  if (!confirmed) return;
   await fetch('/api/exchange/shop/delete', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -4052,21 +5040,39 @@ function switchTab(targetView) {
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
+function switchOfficerSubtab(target) {
+  const subtab = document.querySelector(`.officer-subtab[data-subtab="${target}"]`);
+  const subview = document.getElementById(`subview-${target}`);
+  if (!subtab || !subview) return;
+
+  document.querySelectorAll('.officer-subtab').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('.officer-subview').forEach(v => v.classList.remove('active'));
+
+  subtab.classList.add('active');
+  subview.classList.add('active');
+  state.activeOfficerSubtab = target;
+
+  if (target === 'discord-channels') {
+    renderDiscordChannelControls();
+  }
+}
+
 function setupOfficerSubtabs() {
   document.querySelectorAll('.officer-subtab').forEach(subtab => {
     subtab.addEventListener('click', () => {
-      const target = subtab.getAttribute('data-subtab');
-      document.querySelectorAll('.officer-subtab').forEach(s => s.classList.remove('active'));
-      document.querySelectorAll('.officer-subview').forEach(v => v.classList.remove('active'));
-
-      subtab.classList.add('active');
-      document.getElementById(`subview-${target}`)?.classList.add('active');
-      state.activeOfficerSubtab = target;
-
-      if (target === 'discord-channels') {
-        renderDiscordChannelControls();
-      }
+      switchOfficerSubtab(subtab.getAttribute('data-subtab'));
     });
+  });
+
+  document.getElementById('btnJumpToTithingFromModules')?.addEventListener('click', () => {
+    switchOfficerSubtab('manage-bounties');
+    const card = document.getElementById('tithingSettingsCard');
+    const toggleBtn = document.getElementById('btnToggleTithingEditor');
+    if (card) {
+      card.style.display = 'block';
+      if (toggleBtn) toggleBtn.textContent = 'Close Rate Editor';
+      card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
   });
 }
 
