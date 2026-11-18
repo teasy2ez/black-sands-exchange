@@ -32,28 +32,16 @@ const commands = [
     ]
   },
   {
+    name: 'ledger',
+    description: 'View the Top 25 Guild Ledger standings by Bone Score'
+  },
+  {
     name: 'leaderboard',
-    description: 'View the top 10 members by Bone Score'
+    description: 'View the Top 25 Guild Ledger standings by Bone Score'
   },
   {
     name: 'bounties',
     description: 'Browse currently active guild bounties'
-  },
-  {
-    name: 'shop',
-    description: 'Browse the Exchange Shop catalog and rank promotions'
-  },
-  {
-    name: 'buy',
-    description: 'Purchase an item or rank promotion with your Bones',
-    options: [
-      {
-        name: 'item_id',
-        description: 'The unique ID of the shop item to purchase (see /shop)',
-        type: 3, // STRING
-        required: true
-      }
-    ]
   },
   {
     name: 'claim',

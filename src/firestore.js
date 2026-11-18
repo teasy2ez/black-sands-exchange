@@ -321,9 +321,9 @@ export class FirestoreClient {
         }
       },
       siteModules: {
-        leaderboard: { enabled: true, title: 'Roster Standings', order: 1 },
+        leaderboard: { enabled: true, title: 'Ledger', order: 1 },
         bounties: { enabled: true, title: 'Bounty Board', order: 2 },
-        shop: { enabled: true, title: 'Exchange Shop', order: 3 },
+        shop: { enabled: false, title: 'Exchange Shop', order: 3 },
         faq: {
           enabled: true,
           title: 'Rules & FAQ',

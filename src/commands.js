@@ -74,6 +74,7 @@ export async function handleApplicationCommand(interaction, env, firestore) {
       return handleBonesCommand(interaction, opts, env, firestore);
 
     case 'leaderboard':
+    case 'ledger':
       return handleLeaderboardCommand(interaction, env, firestore);
 
     case 'bounties':
@@ -132,7 +133,7 @@ async function handleBonesCommand(interaction, opts, env, firestore) {
 }
 
 /**
- * /leaderboard
+ * /ledger or /leaderboard
  */
 async function handleLeaderboardCommand(interaction, env, firestore) {
   const state = await firestore.getBseState();
@@ -177,14 +178,15 @@ async function handleBountiesCommand(interaction, env, firestore) {
 }
 
 /**
- * /shop
+ * /shop (Hidden while Exchange Shop is closed)
  */
-async function handleShopCommand(interaction, env, firestore) {
-  const state = await firestore.getBseState();
-  const embed = buildShopEmbed(state.shop || []);
+async function handleShopCommand() {
   return {
     type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
-    data: { embeds: [embed] }
+    data: {
+      content: '⏳ The Exchange Shop is currently closed while we prepare the upcoming Soft Reservation system.',
+      flags: 64
+    }
   };
 }
 
@@ -250,99 +252,13 @@ async function handleClaimCommand(interaction, opts, env, firestore) {
 }
 
 /**
- * /buy <item_id>
+ * /buy <item_id> (Hidden while Exchange Shop is closed)
  */
-async function handleBuyCommand(interaction, opts, env, firestore) {
-  const caller = interaction.member?.user || interaction.user;
-  const itemId = opts.item_id;
-
-  const state = await firestore.getBseState();
-  const item = (state.shop || []).find(i => i.id.toLowerCase() === itemId.toLowerCase());
-
-  if (!item || item.enabled === false) {
-    return {
-      type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
-      data: { content: `❌ Item \`${itemId}\` was not found in the Exchange Shop.`, flags: 64 }
-    };
-  }
-
-  // Stock check
-  if (!item.unlimitedStock && (item.stock <= 0)) {
-    return {
-      type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
-      data: { content: `❌ **Sold Out:** ${item.title} has no remaining inventory.`, flags: 64 }
-    };
-  }
-
-  // Balance check
-  const wallet = state.wallets?.[caller.id] || { spendableBones: 0, boneScore: 0 };
-  if ((wallet.spendableBones || 0) < item.costBones) {
-    return {
-      type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
-      data: {
-        content: `❌ **Insufficient Bones:** You have **${wallet.spendableBones || 0}** Bones, but **${item.title}** costs **${item.costBones}** Bones.`,
-        flags: 64
-      }
-    };
-  }
-
-  // Deduct spendable bones (Bone Score remains untouched)
-  wallet.spendableBones -= item.costBones;
-  wallet.discordId = caller.id;
-  wallet.username = caller.username;
-  wallet.serverNickname = interaction.member?.nick || caller.global_name || caller.username;
-  wallet.updatedAt = new Date().toISOString();
-  state.wallets = state.wallets || {};
-  state.wallets[caller.id] = wallet;
-
-  // Reduce stock if limited
-  if (!item.unlimitedStock) {
-    item.stock = Math.max(0, item.stock - 1);
-  }
-
-  // Create pending delivery order
-  const orderId = `order_${Date.now()}_${caller.id.slice(-4)}`;
-  const delivery = {
-    id: orderId,
-    itemId: item.id,
-    itemTitle: item.title,
-    costBones: item.costBones,
-    discordId: caller.id,
-    discordUsername: caller.username,
-    serverNickname: wallet.serverNickname,
-    characterName: wallet.primaryCharacter || null,
-    status: 'pending',
-    createdAt: new Date().toISOString()
-  };
-  state.deliveries = state.deliveries || {};
-  state.deliveries[orderId] = delivery;
-
-  await firestore.saveBseState(state);
-
-  // Audit log
-  await firestore.logAuditEvent({
-    action: 'SHOP_PURCHASE',
-    targetId: caller.id,
-    targetName: wallet.serverNickname || caller.username,
-    amount: -item.costBones,
-    reason: `Purchased ${item.title} (Order: ${orderId})`,
-    timestamp: new Date().toISOString()
-  });
-
-  // Post to #officer-exchange for fulfillment
-  if (env.DISCORD_OFFICER_CHANNEL_ID && env.DISCORD_BOT_TOKEN) {
-    try {
-      const ticket = buildShopDeliveryReviewMessage(delivery, item, wallet);
-      await sendChannelMessage(env.DISCORD_OFFICER_CHANNEL_ID, ticket, env.DISCORD_BOT_TOKEN);
-    } catch (err) {
-      console.error('Failed to notify #officer-exchange of purchase:', err);
-    }
-  }
-
+async function handleBuyCommand() {
   return {
     type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
     data: {
-      content: `🎉 **Purchase Successful!** You bought **${item.title}** for **${item.costBones}** Bones. Remaining balance: **${wallet.spendableBones}** Bones. Officers have received your delivery ticket!`,
+      content: '⏳ The Exchange Shop is currently closed while we prepare the upcoming Soft Reservation system.',
       flags: 64
     }
   };
@@ -494,9 +410,8 @@ async function handleSyncStandingsCommand(interaction, env, firestore) {
     }
 
     const channelList = [
-      `🏆 Leaderboard: <#${routing.leaderboardChannelId}>`,
-      routing.bountiesChannelId !== routing.leaderboardChannelId ? `📜 Bounties: <#${routing.bountiesChannelId}>` : null,
-      routing.shopChannelId !== routing.leaderboardChannelId ? `🛒 Shop: <#${routing.shopChannelId}>` : null
+      `🏆 Ledger: <#${routing.leaderboardChannelId}>`,
+      routing.bountiesChannelId !== routing.leaderboardChannelId ? `📜 Bounties: <#${routing.bountiesChannelId}>` : null
     ].filter(Boolean).join(' • ');
 
     return {

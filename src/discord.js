@@ -308,10 +308,10 @@ export function buildLeaderboardEmbed(topMembers = []) {
   }
 
   return {
-    title: '🏆 Black Sands Exchange — Top 25 Standings',
+    title: '🏆 Black Sands Ledger — Top 25 Standings',
     description,
     color: Colors.GOLD,
-    footer: { text: 'Top 25 Standings • Live updates • bse.teasy2ez.win' },
+    footer: { text: 'Black Sands Ledger • Live updates • bse.teasy2ez.win' },
     timestamp: new Date().toISOString()
   };
 }
@@ -560,6 +560,19 @@ export async function syncLeaderboardEmbed(env, firestore, state) {
       config.standingsMessageId = msg.id;
     }
 
+    const shopMsgId = config.messages?.shopMessageId || config.shopMessageId;
+    if (shopMsgId && routing.shopChannelId) {
+      try {
+        await deleteChannelMessage(routing.shopChannelId, shopMsgId, token);
+      } catch (err) {
+        console.warn('Could not delete legacy shop embed message:', err.message);
+      }
+      if (config.messages) {
+        delete config.messages.shopMessageId;
+      }
+      delete config.shopMessageId;
+    }
+
     state.config = config;
     if (firestore) {
       await firestore.saveBseState(state);
@@ -660,16 +673,35 @@ export async function syncShopEmbed(env, firestore, state) {
 }
 
 /**
- * Update all 3 embeds (Leaderboard, Bounties, Shop) across designated channels
+ * Update active embeds (Ledger & Bounties) across designated channels and remove any legacy Shop embed
  */
 export async function pushStandingsToDiscord(env, firestore, state) {
   const ok1 = await syncLeaderboardEmbed(env, null, state);
   const ok2 = await syncBountiesEmbed(env, null, state);
-  const ok3 = await syncShopEmbed(env, null, state);
+
+  // Clean up any existing Exchange Shop embed in Discord while the shop is hidden
+  const config = state.config || {};
+  const shopMsgId = config.messages?.shopMessageId || config.shopMessageId;
+  if (shopMsgId && env.DISCORD_BOT_TOKEN) {
+    const routing = getChannelRouting(env, state);
+    if (routing.shopChannelId) {
+      try {
+        await deleteChannelMessage(routing.shopChannelId, shopMsgId, env.DISCORD_BOT_TOKEN);
+      } catch (err) {
+        console.warn('Could not delete legacy shop embed message (may already be removed):', err.message);
+      }
+    }
+    if (config.messages) {
+      delete config.messages.shopMessageId;
+    }
+    delete config.shopMessageId;
+    state.config = config;
+  }
+
   if (firestore) {
     await firestore.saveBseState(state);
   }
-  return ok1 || ok2 || ok3;
+  return ok1 || ok2;
 }
 
 /**

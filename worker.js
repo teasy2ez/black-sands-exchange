@@ -1616,12 +1616,6 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
     state.shop.push(item);
     await firestore.saveBseState(state);
 
-    try {
-      await syncShopEmbed(env, firestore, state);
-    } catch (err) {
-      console.error('Auto-sync shop embed error:', err);
-    }
-
     return jsonResponse({ success: true, item });
   }
 
@@ -1643,12 +1637,6 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
     item.updatedAt = new Date().toISOString();
 
     await firestore.saveBseState(state);
-
-    try {
-      await syncShopEmbed(env, firestore, state);
-    } catch (err) {
-      console.error('Auto-sync shop embed error:', err);
-    }
 
     return jsonResponse({ success: true, item });
   }

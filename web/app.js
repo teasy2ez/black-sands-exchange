@@ -406,16 +406,25 @@ function applySiteCustomization(bse) {
   };
 
   if (modules.leaderboard && tabNavLeaderboard) {
-    tabNavLeaderboard.textContent = cleanTitle(modules.leaderboard.title, 'Leaderboard');
+    const rawLbTitle = cleanTitle(modules.leaderboard.title, 'Ledger');
+    const lbTitle = (rawLbTitle === 'Leaderboard' || rawLbTitle === 'Roster Standings') ? 'Ledger' : rawLbTitle;
+    tabNavLeaderboard.textContent = lbTitle;
     tabNavLeaderboard.style.display = modules.leaderboard.enabled === false ? 'none' : 'inline-flex';
   }
   if (modules.bounties && tabNavBounties) {
     tabNavBounties.textContent = cleanTitle(modules.bounties.title, 'Bounty Board');
     tabNavBounties.style.display = modules.bounties.enabled === false ? 'none' : 'inline-flex';
   }
-  if (modules.shop && tabNavShop) {
-    tabNavShop.textContent = cleanTitle(modules.shop.title, 'Exchange Shop');
-    tabNavShop.style.display = modules.shop.enabled === false ? 'none' : 'inline-flex';
+  // Hide Exchange Shop tab on desktop and mobile while feature is reserved for future soft-res system
+  if (tabNavShop) {
+    tabNavShop.style.display = 'none';
+  }
+  const mobileTabShop = document.getElementById('mobileTabShop');
+  if (mobileTabShop) {
+    mobileTabShop.style.display = 'none';
+  }
+  if (state.activeTab === 'shop') {
+    switchTab('leaderboard');
   }
   if (modules.faq && tabNavFaq) {
     tabNavFaq.textContent = cleanTitle(modules.faq.title, 'Rules & FAQ');
@@ -986,9 +995,9 @@ function renderMemberHistory() {
   const myLogs = allLogs.filter(e => e.targetId === state.user.id).slice().reverse();
 
   if (!myLogs.length) {
-    memberHistoryTbody.innerHTML = `<tr><td colspan="6" style="text-align: center; color: var(--text-dim); padding: 2rem;">No transactions recorded yet. Complete bounties or redeem items in the Exchange Shop to see activity here.</td></tr>`;
+    memberHistoryTbody.innerHTML = `<tr><td colspan="6" style="text-align: center; color: var(--text-dim); padding: 2rem;">No transactions recorded yet. Complete guild bounties or attend events to see activity here.</td></tr>`;
     if (mobileHistoryList) {
-      mobileHistoryList.innerHTML = `<div style="text-align: center; color: var(--text-dim); padding: 2rem;">No transactions recorded yet. Complete bounties or redeem items in the Exchange Shop to see activity here.</div>`;
+      mobileHistoryList.innerHTML = `<div style="text-align: center; color: var(--text-dim); padding: 2rem;">No transactions recorded yet. Complete guild bounties or attend events to see activity here.</div>`;
     }
     return;
   }
@@ -1524,9 +1533,8 @@ function renderOfficerQueues() {
 
 function updateOfficerBadge() {
   const pendingClaims = Object.values(state.bseState?.claims || {}).filter(c => c.status === 'pending').length;
-  const pendingDeliveries = Object.values(state.bseState?.deliveries || {}).filter(d => d.status === 'pending').length;
   const pendingBounties = (state.bseState?.bounties || []).filter(b => b.status === 'pending_review').length;
-  const total = pendingClaims + pendingDeliveries + pendingBounties;
+  const total = pendingClaims + pendingBounties;
 
   if (total > 0) {
     officerActionBadge.textContent = total;
@@ -1568,7 +1576,7 @@ function populateOfficerSettingsForms() {
   const modBounties = document.getElementById('modToggleBounties');
   if (modBounties) modBounties.checked = modules.bounties?.enabled !== false;
   const modShop = document.getElementById('modToggleShop');
-  if (modShop) modShop.checked = modules.shop?.enabled !== false;
+  if (modShop) modShop.checked = false;
   const modFaq = document.getElementById('modToggleFaq');
   if (modFaq) modFaq.checked = modules.faq?.enabled !== false;
 
@@ -1691,7 +1699,7 @@ function setupDataEditor() {
       const siteModules = {
         leaderboard: {
           enabled: document.getElementById('modToggleLeaderboard')?.checked !== false,
-          title: 'Leaderboard',
+          title: 'Ledger',
           order: 1
         },
         bounties: {
@@ -1700,7 +1708,7 @@ function setupDataEditor() {
           order: 2
         },
         shop: {
-          enabled: document.getElementById('modToggleShop')?.checked !== false,
+          enabled: false,
           title: 'Exchange Shop',
           order: 3
         },
@@ -3495,7 +3503,7 @@ function populateChannelSelect(selectEl, channels, selectedValue, defaultLabel =
 
 async function renderDiscordChannelControls(forceFetch = false) {
   const channels = await fetchGuildChannels(forceFetch);
-  const cfg = state.bse?.config || {};
+  const cfg = state.bseState?.config || {};
   const currentChannels = cfg.channels || {};
   const messages = cfg.messages || {};
 
@@ -3506,8 +3514,8 @@ async function renderDiscordChannelControls(forceFetch = false) {
   const selBountyFormAnnounce = document.getElementById('bountyAnnounceChannel');
 
   populateChannelSelect(selLb, channels, currentChannels.leaderboardChannelId || '1569275856415625257', null);
-  populateChannelSelect(selBounties, channels, currentChannels.bountiesChannelId || currentChannels.leaderboardChannelId || '1569275856415625257', 'Same as Leaderboard Channel');
-  populateChannelSelect(selShop, channels, currentChannels.shopChannelId || currentChannels.leaderboardChannelId || '1569275856415625257', 'Same as Leaderboard Channel');
+  populateChannelSelect(selBounties, channels, currentChannels.bountiesChannelId || currentChannels.leaderboardChannelId || '1569275856415625257', 'Same as Ledger Channel');
+  populateChannelSelect(selShop, channels, currentChannels.shopChannelId || currentChannels.leaderboardChannelId || '1569275856415625257', 'Same as Ledger Channel');
   populateChannelSelect(selAnnounce, channels, currentChannels.announcementsChannelId, 'None / Unassigned');
 
   if (selBountyFormAnnounce) {
@@ -3525,12 +3533,11 @@ async function renderDiscordChannelControls(forceFetch = false) {
 
     const lbCh = currentChannels.leaderboardChannelId || '1569275856415625257';
     const bountiesCh = currentChannels.bountiesChannelId || lbCh;
-    const shopCh = currentChannels.shopChannelId || lbCh;
     const announceCh = currentChannels.announcementsChannelId;
 
     statusList.innerHTML = `
       <div class="wow-inner-box" style="padding: 0.65rem;">
-        <div style="color: var(--gold-300); font-weight: 700;">🏆 Leaderboard Standings Embed</div>
+        <div style="color: var(--gold-300); font-weight: 700;">🏆 Ledger Standings Embed</div>
         <div>Channel: ${getChName(lbCh)}</div>
         <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.2rem;">Message ID: <code>${messages.leaderboardMessageId || cfg.standingsMessageId || 'Pending deployment'}</code></div>
       </div>
@@ -3540,14 +3547,9 @@ async function renderDiscordChannelControls(forceFetch = false) {
         <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.2rem;">Message ID: <code>${messages.bountiesMessageId || cfg.bountiesMessageId || 'Pending deployment'}</code></div>
       </div>
       <div class="wow-inner-box" style="padding: 0.65rem;">
-        <div style="color: var(--gold-300); font-weight: 700;">🛒 Exchange Shop Embed</div>
-        <div>Channel: ${getChName(shopCh)}</div>
-        <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.2rem;">Message ID: <code>${messages.shopMessageId || cfg.shopMessageId || 'Pending deployment'}</code></div>
-      </div>
-      <div class="wow-inner-box" style="padding: 0.65rem;">
         <div style="color: var(--gold-300); font-weight: 700;">📢 Announcements Channel</div>
         <div>Channel: ${getChName(announceCh)}</div>
-        <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.2rem;">${announceCh ? 'Active: Bounties with announcement toggle will broadcast here with @everyone ping' : 'Not set: Bounties will broadcast to Leaderboard channel'}</div>
+        <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.2rem;">${announceCh ? 'Active: Bounties with announcement toggle will broadcast here with @everyone ping' : 'Not set: Bounties will broadcast to Ledger channel'}</div>
       </div>
     `;
   }
