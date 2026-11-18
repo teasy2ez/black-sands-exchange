@@ -177,11 +177,12 @@ async function checkAuthSession() {
     const res = await fetch('/api/auth/discord/me');
     const data = await res.json();
     if (data.authenticated && data.user) {
-      state.user = data.user;
+      state.user = { ...data.user, authenticated: true };
       state.userCharacters = data.user.characters || [];
-      renderAuthenticatedUser(data.user);
+      renderAuthenticatedUser(state.user);
       if (state.bseState) {
         renderLeaderboard();
+        renderBounties();
       }
     } else {
       renderUnauthenticatedUser();
@@ -249,6 +250,8 @@ function renderUnauthenticatedUser() {
   walletSpendable.textContent = '0';
   walletScore.textContent = '0';
   walletCharContainer.style.display = 'none';
+  const reqBtn = document.getElementById('btnOpenRequestBountyModal');
+  if (reqBtn) reqBtn.style.display = 'none';
   if (tabHistory) tabHistory.style.display = 'none';
   if (mobileTabHistory) mobileTabHistory.style.display = 'none';
   tabOfficer.style.display = 'none';
@@ -427,7 +430,9 @@ function applySiteCustomization(bse) {
     switchTab('leaderboard');
   }
   if (modules.faq && tabNavFaq) {
-    tabNavFaq.textContent = cleanTitle(modules.faq.title, 'Rules & FAQ');
+    const rawFaqTitle = cleanTitle(modules.faq.title, 'How to Spend');
+    const faqTitle = (rawFaqTitle === 'Rules & FAQ' || rawFaqTitle === 'FAQ') ? 'How to Spend' : rawFaqTitle;
+    tabNavFaq.textContent = faqTitle;
     tabNavFaq.style.display = modules.faq.enabled === false ? 'none' : 'inline-flex';
   }
 }
@@ -855,7 +860,7 @@ function resolveRankTitle(rankTier = 0) {
  */
 function renderBounties() {
   if (!state.bseState) return;
-  const bounties = (state.bseState.bounties || []).filter(b => b.status === 'active');
+  const bounties = (state.bseState.bounties || []).filter(b => (b.status || 'active') === 'active');
   const currName = state.bseState?.branding?.currencyName || 'Bones';
 
   // Toggle Request a Bounty button for logged-in members
@@ -947,23 +952,39 @@ function renderShop() {
 }
 
 /**
- * Render Rules & FAQ Accordion
+ * Render Optional Additional Guild Q&A Accordion below How to Spend
  */
+const LEGACY_DEFAULT_FAQ_QUESTIONS = new Set([
+  'What are Bones?',
+  'How does Bone Score work?',
+  'How do I claim a bounty?',
+  'How do shop deliveries work?'
+]);
+
 function renderFaq() {
-  const faqItems = state.bseState?.siteModules?.faq?.items || [];
-  if (!faqItems.length) {
-    faqAccordionContainer.innerHTML = `<p style="color: var(--text-dim); text-align: center; padding: 2rem;">No FAQ items posted yet.</p>`;
+  if (!faqAccordionContainer) return;
+  const rawItems = state.bseState?.siteModules?.faq?.items || [];
+  const customItems = rawItems.filter(item => {
+    const q = String(item?.q || '').trim();
+    return q.length > 0 && !LEGACY_DEFAULT_FAQ_QUESTIONS.has(q);
+  });
+
+  const additionalSection = document.getElementById('additionalFaqSection');
+  if (!customItems.length) {
+    if (additionalSection) additionalSection.style.display = 'none';
+    faqAccordionContainer.innerHTML = '';
     return;
   }
 
-  faqAccordionContainer.innerHTML = faqItems.map((item, idx) => `
+  if (additionalSection) additionalSection.style.display = 'block';
+  faqAccordionContainer.innerHTML = customItems.map((item, idx) => `
     <div class="faq-item ${idx === 0 ? 'active' : ''}">
       <div class="faq-question" onclick="toggleFaqAccordion(this)">
-        <span>${item.q}</span>
+        <span>${escapeHtml(item.q)}</span>
         <span class="faq-arrow">▼</span>
       </div>
       <div class="faq-answer">
-        ${item.a}
+        ${escapeHtml(item.a)}
       </div>
     </div>
   `).join('');
@@ -979,6 +1000,21 @@ window.toggleFaqAccordion = function(element) {
  */
 function setupHistory() {
   // Personal history listeners if needed
+}
+
+function formatAuditBadge(action) {
+  if (action === 'AWARD') return { cls: 'award', text: 'Award' };
+  if (action === 'DEDUCT') return { cls: 'deduct', text: 'Deduct' };
+  if (action === 'BOUNTY_REWARD') return { cls: 'bounty', text: 'Bounty' };
+  if (action === 'SHOP_PURCHASE') return { cls: 'purchase', text: 'Purchase' };
+  if (action === 'SHOP_REFUND') return { cls: 'award', text: 'Refund' };
+  if (action === 'RANK_PROMOTE') return { cls: 'purchase', text: 'Promote' };
+  if (action === 'BOUNTY_REQUEST_ESCROW') return { cls: 'deduct', text: 'Escrow' };
+  if (action === 'BOUNTY_REQUEST_APPROVED') return { cls: 'bounty', text: 'Sponsored' };
+  if (action === 'BOUNTY_REQUEST_REFUND' || action === 'BOUNTY_ESCROW_REFUND') return { cls: 'award', text: 'Escrow Refund' };
+  if (action === 'LEDGER_CORRECTION') return { cls: 'adjust', text: 'Correction' };
+  if (action === 'MEMBER_DELETE') return { cls: 'purge', text: 'Purged' };
+  return { cls: 'adjust', text: action || 'Event' };
 }
 
 function renderMemberHistory() {
@@ -1007,15 +1043,7 @@ function renderMemberHistory() {
     const timeStr = new Date(e.timestamp).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }) + ' ' +
                     new Date(e.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
-    let badgeClass = 'adjust';
-    let badgeText = e.action;
-    if (e.action === 'AWARD') { badgeClass = 'award'; badgeText = 'Award'; }
-    else if (e.action === 'DEDUCT') { badgeClass = 'deduct'; badgeText = 'Deduct'; }
-    else if (e.action === 'BOUNTY_REWARD') { badgeClass = 'bounty'; badgeText = 'Bounty'; }
-    else if (e.action === 'SHOP_PURCHASE') { badgeClass = 'purchase'; badgeText = 'Purchase'; }
-    else if (e.action === 'SHOP_REFUND') { badgeClass = 'award'; badgeText = 'Refund'; }
-    else if (e.action === 'LEDGER_CORRECTION') { badgeClass = 'adjust'; badgeText = 'Correction'; }
-    else if (e.action === 'MEMBER_DELETE') { badgeClass = 'purge'; badgeText = 'Purged'; }
+    const { cls: badgeClass, text: badgeText } = formatAuditBadge(e.action);
 
     let amountHtml = '—';
     if (e.amount > 0) {
@@ -1046,15 +1074,7 @@ function renderMemberHistory() {
       const timeStr = new Date(e.timestamp).toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' +
                       new Date(e.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
-      let badgeClass = 'adjust';
-      let badgeText = e.action;
-      if (e.action === 'AWARD') { badgeClass = 'award'; badgeText = 'Award'; }
-      else if (e.action === 'DEDUCT') { badgeClass = 'deduct'; badgeText = 'Deduct'; }
-      else if (e.action === 'BOUNTY_REWARD') { badgeClass = 'bounty'; badgeText = 'Bounty'; }
-      else if (e.action === 'SHOP_PURCHASE') { badgeClass = 'purchase'; badgeText = 'Purchase'; }
-      else if (e.action === 'SHOP_REFUND') { badgeClass = 'award'; badgeText = 'Refund'; }
-      else if (e.action === 'LEDGER_CORRECTION') { badgeClass = 'adjust'; badgeText = 'Correction'; }
-      else if (e.action === 'MEMBER_DELETE') { badgeClass = 'purge'; badgeText = 'Purged'; }
+      const { cls: badgeClass, text: badgeText } = formatAuditBadge(e.action);
 
       let amountHtml = '—';
       if (e.amount > 0) {
@@ -1584,8 +1604,11 @@ function populateOfficerSettingsForms() {
   state.draftRanks = [...ranks];
   renderRanksBuilder();
 
-  // Render FAQ Builder
-  state.draftFaq = [...(modules.faq?.items || [])];
+  // Render Additional Q&A Builder (exclude untouched legacy defaults)
+  state.draftFaq = (modules.faq?.items || []).filter(item => {
+    const q = String(item?.q || '').trim();
+    return q.length > 0 && !LEGACY_DEFAULT_FAQ_QUESTIONS.has(q);
+  });
   renderFaqBuilder();
 
   // Leaderboard Defaults Editor
@@ -1650,6 +1673,11 @@ document.getElementById('btnAddRankTier').addEventListener('click', () => {
  * Render FAQ Builder
  */
 function renderFaqBuilder() {
+  if (!faqBuilderContainer) return;
+  if (!state.draftFaq.length) {
+    faqBuilderContainer.innerHTML = `<div style="font-size: 0.82rem; color: var(--text-dim); padding: 0.85rem; text-align: center;">No additional Q&amp;A items added. The How to Spend guide is shown on the tab automatically.</div>`;
+    return;
+  }
   faqBuilderContainer.innerHTML = state.draftFaq.map((item, idx) => `
     <div class="officer-review-card">
       <div style="display: flex; justify-content: space-between; margin-bottom: 0.4rem;">
@@ -1658,11 +1686,11 @@ function renderFaqBuilder() {
       </div>
       <div class="form-group">
         <label>Question</label>
-        <input type="text" class="form-control" value="${item.q}" onchange="updateDraftFaq(${idx}, 'q', this.value)">
+        <input type="text" class="form-control" value="${escapeHtml(item.q || '')}" onchange="updateDraftFaq(${idx}, 'q', this.value)">
       </div>
       <div class="form-group">
         <label>Answer / Description</label>
-        <textarea class="form-control" rows="2" onchange="updateDraftFaq(${idx}, 'a', this.value)">${item.a}</textarea>
+        <textarea class="form-control" rows="2" onchange="updateDraftFaq(${idx}, 'a', this.value)">${escapeHtml(item.a || '')}</textarea>
       </div>
     </div>
   `).join('');
@@ -1714,7 +1742,7 @@ function setupDataEditor() {
         },
         faq: {
           enabled: document.getElementById('modToggleFaq')?.checked !== false,
-          title: 'Rules & FAQ',
+          title: 'How to Spend',
           order: 4,
           items: state.draftFaq || []
         }
@@ -1767,16 +1795,21 @@ function setupDataEditor() {
     });
   }
 
-  // 3. Save FAQ Content
+  // 3. Save Additional Q&A Content
   const btnSaveFaq = document.getElementById('btnSaveFaqItems');
   if (btnSaveFaq) {
     btnSaveFaq.addEventListener('click', async () => {
       try {
         const currentModules = state.bseState?.siteModules || {};
+        const prevFaq = currentModules.faq || { enabled: true, title: 'How to Spend', order: 4 };
+        const normalizedTitle = (!prevFaq.title || prevFaq.title === 'Rules & FAQ' || prevFaq.title === 'FAQ')
+          ? 'How to Spend'
+          : prevFaq.title;
         const updatedModules = {
           ...currentModules,
           faq: {
-            ...(currentModules.faq || { enabled: true, title: 'Rules & FAQ', order: 4 }),
+            ...prevFaq,
+            title: normalizedTitle,
             items: state.draftFaq
           }
         };
@@ -1790,7 +1823,7 @@ function setupDataEditor() {
         });
         const data = await res.json();
         if (res.ok) {
-          showToast('Rules & FAQ content updated.');
+          showToast('How to Spend Q&A updated.');
           await refreshBseState();
         } else {
           showToast(`Failed: ${data.error || 'Server error'}`);
@@ -1861,6 +1894,16 @@ function renderOfficerBountiesList() {
     const bonusCount = Array.isArray(b.bonuses) ? b.bonuses.length : 0;
     const bonusLabel = bonusCount > 0 ? ` &bull; <span style="color:var(--gold-200);">${bonusCount} Bonus${bonusCount > 1 ? 'es' : ''}</span>` : '';
     const eventBadge = b.discordEventId ? ` &bull; <a href="${b.discordEventUrl || '#'}" target="_blank" style="color:var(--gold-300); text-decoration: underline;">Discord Event</a>` : '';
+    const statusVal = b.status || 'active';
+    const statusColor = statusVal === 'active'
+      ? 'var(--success)'
+      : (statusVal === 'paused' || statusVal === 'pending_review'
+        ? 'var(--amber)'
+        : (statusVal === 'completed' ? 'var(--gold-300)' : 'var(--danger)'));
+    const sponsorName = b.creatorNickname || b.creatorUsername || 'Guild Member';
+    const sponsorBadge = b.creatorId
+      ? `<span style="font-size: 0.68rem; padding: 0.1rem 0.45rem; border-radius: 3px; background: rgba(74, 222, 128, 0.12); border: 1px solid rgba(74, 222, 128, 0.35); color: #86efac;">Sponsored by ${escapeHtml(sponsorName)}</span>`
+      : '';
 
     return `
     <div class="officer-review-card" style="display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap;">
@@ -1868,18 +1911,19 @@ function renderOfficerBountiesList() {
         <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
           <strong style="color: var(--gold-100); font-size: 0.95rem;">${escapeHtml(b.title)}</strong>
           <span style="font-size: 0.7rem; padding: 0.1rem 0.4rem; border-radius: 3px; background: rgba(198, 155, 109, 0.15); border: 1px solid rgba(198, 155, 109, 0.3); color: var(--gold-300);">${escapeHtml(b.category || 'General')}</span>
+          ${sponsorBadge}
         </div>
         <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.25rem;">
-          ID: <code>${b.id}</code> &bull; Status: <strong style="color:${b.status === 'active' ? 'var(--success)' : (b.status === 'paused' ? 'var(--amber)' : 'var(--danger)')};">${b.status || 'active'}</strong>${bonusLabel}${eventBadge}
+          ID: <code>${b.id}</code> &bull; Status: <strong style="color:${statusColor};">${statusVal}</strong>${bonusLabel}${eventBadge}
         </div>
         ${b.description ? `<div style="font-size: 0.8rem; color: var(--text-dim); margin-top: 0.35rem; line-height: 1.3;">${escapeHtml(b.description)}</div>` : ''}
       </div>
       <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
         <span style="color: var(--gold-300); font-weight: 700; font-size: 1rem; margin-right: 0.5rem;">+${b.rewardBones} Bones</span>
         <button class="btn-primary" style="padding: 0.35rem 0.75rem; font-size: 0.75rem;" onclick="openEditBountyModal('${b.id}')">Edit</button>
-        <button class="btn-secondary" style="padding: 0.35rem 0.65rem; font-size: 0.75rem;" onclick="toggleBountyStatus('${b.id}', '${b.status === 'active' ? 'paused' : 'active'}')">
-          ${b.status === 'active' ? 'Pause' : 'Activate'}
-        </button>
+        ${statusVal === 'pending_review'
+          ? `<button class="btn-success" style="padding: 0.35rem 0.65rem; font-size: 0.75rem;" onclick="approveMemberBountyRequest('${b.id}')">Approve Request</button>`
+          : `<button class="btn-secondary" style="padding: 0.35rem 0.65rem; font-size: 0.75rem;" onclick="toggleBountyStatus('${b.id}', '${statusVal === 'active' ? 'paused' : 'active'}')">${statusVal === 'active' ? 'Pause' : 'Activate'}</button>`}
         <button class="btn-danger" style="padding: 0.35rem 0.65rem; font-size: 0.75rem;" onclick="deleteBounty('${b.id}')">Delete</button>
       </div>
     </div>
@@ -1924,15 +1968,7 @@ function renderAuditTrail() {
     const timeStr = new Date(e.timestamp).toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' +
                     new Date(e.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
-    let badgeClass = 'adjust';
-    let badgeText = e.action;
-    if (e.action === 'AWARD') { badgeClass = 'award'; badgeText = 'Award'; }
-    else if (e.action === 'DEDUCT') { badgeClass = 'deduct'; badgeText = 'Deduct'; }
-    else if (e.action === 'BOUNTY_REWARD') { badgeClass = 'bounty'; badgeText = 'Bounty'; }
-    else if (e.action === 'SHOP_PURCHASE') { badgeClass = 'purchase'; badgeText = 'Purchase'; }
-    else if (e.action === 'SHOP_REFUND') { badgeClass = 'award'; badgeText = 'Refund'; }
-    else if (e.action === 'LEDGER_CORRECTION') { badgeClass = 'adjust'; badgeText = 'Correction'; }
-    else if (e.action === 'MEMBER_DELETE') { badgeClass = 'purge'; badgeText = 'Purge'; }
+    const { cls: badgeClass, text: badgeText } = formatAuditBadge(e.action);
 
     let amountHtml = '—';
     if (e.amount > 0) {
@@ -2170,7 +2206,7 @@ function setupModals() {
     const balEl = document.getElementById('reqBountyUserBalance');
     if (balEl) balEl.textContent = (state.user.spendableBones || 0).toLocaleString();
     document.getElementById('reqBountyTitle').value = '';
-    document.getElementById('reqBountyReward').value = '25';
+    document.getElementById('reqBountyReward').value = '10';
     document.getElementById('reqBountyDesc').value = '';
     if (document.getElementById('reqBountyBonusDesc')) document.getElementById('reqBountyBonusDesc').value = '';
     if (document.getElementById('reqBountyBonusAmount')) document.getElementById('reqBountyBonusAmount').value = '';
@@ -2189,8 +2225,8 @@ function setupModals() {
       showToast('Please enter a bounty title.');
       return;
     }
-    if (isNaN(rewardBones) || rewardBones < 5) {
-      showToast('Minimum reward is 5 Bones.');
+    if (isNaN(rewardBones) || rewardBones < 0) {
+      showToast('Please enter a valid Bones amount (0 or higher).');
       return;
     }
     const userSpendable = state.user?.spendableBones || 0;
@@ -2226,7 +2262,9 @@ function setupModals() {
       });
       const data = await res.json();
       if (res.ok) {
-        showToast(`Bounty request submitted! ${rewardBones} Bones placed in escrow awaiting officer review.`);
+        showToast(rewardBones > 0
+          ? `Bounty request submitted! ${rewardBones} Bones placed in escrow awaiting officer review.`
+          : 'Bounty request submitted (0 Bones escrowed) awaiting officer review.');
         document.getElementById('modalRequestBounty')?.classList.remove('active');
         await refreshBseState();
       } else {
@@ -2321,8 +2359,8 @@ function setupModals() {
     const status = document.getElementById('editBountyStatus').value;
     const description = document.getElementById('editBountyDesc').value.trim();
 
-    if (!title || !rewardBones) {
-      showToast('Please enter title and reward amount.');
+    if (!title || isNaN(rewardBones) || rewardBones < 0) {
+      showToast('Please enter a title and valid reward amount (0 or higher).');
       return;
     }
 
@@ -2414,12 +2452,12 @@ function renderClaimBonusesForBounty(bountyId) {
 
 window.openClaimModal = function(bountyId) {
   const select = document.getElementById('claimBountySelect');
-  const bounties = (state.bseState?.bounties || []).filter(b => b.status === 'active');
+  const bounties = (state.bseState?.bounties || []).filter(b => (b.status || 'active') === 'active');
   const currName = state.bseState?.branding?.currencyName || 'Bones';
 
   select.innerHTML = bounties.map(b => `
     <option value="${b.id}" ${b.id === bountyId ? 'selected' : ''}>
-      ${b.title} (+${b.rewardBones} ${currName})
+      ${escapeHtml(b.title)} (+${b.rewardBones} ${escapeHtml(currName)})
     </option>
   `).join('');
 
@@ -3260,14 +3298,38 @@ window.toggleBountyStatus = async function(bountyId, newStatus) {
 };
 
 window.deleteBounty = async function(bountyId) {
-  if (!confirm('Are you sure you want to delete this bounty?')) return;
-  await fetch('/api/exchange/bounty/delete', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ bountyId })
-  });
-  showToast('Bounty deleted.');
-  await refreshBseState();
+  const bounty = (state.bseState?.bounties || []).find(b => b.id === bountyId);
+  const hasApprovedClaim = Object.values(state.bseState?.claims || {}).some(c => c.bountyId === bountyId && c.status === 'approved');
+  const escrowAmt = bounty ? (bounty.baseRewardBones !== undefined ? bounty.baseRewardBones : (bounty.rewardBones || 0)) : 0;
+  const isRefundable = Boolean(
+    bounty?.creatorId
+    && ['pending_review', 'active', 'paused'].includes(bounty.status || 'active')
+    && !hasApprovedClaim
+    && escrowAmt > 0
+  );
+  const confirmMsg = isRefundable
+    ? `Delete player-sponsored bounty "${bounty.title}"?\n\n${escrowAmt} escrowed Bones will be refunded to the sponsor.`
+    : 'Are you sure you want to delete this bounty?';
+  if (!confirm(confirmMsg)) return;
+
+  try {
+    const res = await fetch('/api/exchange/bounty/delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ bountyId })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      showToast(`Failed: ${data.error || 'Server error'}`);
+      return;
+    }
+    showToast(data.refundedBones > 0
+      ? `Bounty deleted. ${data.refundedBones} escrowed Bones refunded.`
+      : 'Bounty deleted.');
+    await refreshBseState();
+  } catch (err) {
+    showToast(`Error: ${err.message}`);
+  }
 };
 
 window.openEditBountyModal = function(bountyId) {
@@ -3275,7 +3337,7 @@ window.openEditBountyModal = function(bountyId) {
   if (!bounty) { showToast('Bounty not found.'); return; }
   document.getElementById('editBountyId').value = bounty.id;
   document.getElementById('editBountyTitle').value = bounty.title || '';
-  document.getElementById('editBountyReward').value = bounty.rewardBones || 10;
+  document.getElementById('editBountyReward').value = bounty.rewardBones ?? 10;
   document.getElementById('editBountyCategory').value = bounty.category || 'General';
   document.getElementById('editBountyStatus').value = bounty.status || 'active';
   document.getElementById('editBountyDesc').value = bounty.description || '';

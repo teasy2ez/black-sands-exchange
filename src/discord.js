@@ -320,7 +320,7 @@ export function buildLeaderboardEmbed(topMembers = []) {
  * Build Active Bounties embed
  */
 export function buildBountiesEmbed(bounties = []) {
-  const active = bounties.filter(b => b.status !== 'archived' && b.status !== 'completed');
+  const active = bounties.filter(b => (b.status || 'active') === 'active');
   let description = '';
 
   if (!active.length) {
@@ -328,8 +328,9 @@ export function buildBountiesEmbed(bounties = []) {
   } else {
     description = active.map(b => {
       const reward = (b.rewardBones || 0).toLocaleString();
+      const sponsor = b.creatorId ? ` • *Sponsored by ${b.creatorNickname || b.creatorUsername || 'Guild Member'}*` : '';
       const desc = b.description ? `\n> ${b.description}` : '';
-      return `📜 **${b.title}** (ID: \`${b.id}\`)\n💰 **+${reward} Bones**${desc}`;
+      return `📜 **${b.title}** (ID: \`${b.id}\`)\n💰 **+${reward} Bones**${sponsor}${desc}`;
     }).join('\n\n');
   }
 

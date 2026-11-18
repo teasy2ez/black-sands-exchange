@@ -2000,3 +2000,256 @@ textarea.form-control {
   margin-bottom: 0.35rem;
 }
 
+/* ==========================================================================
+   HOW TO SPEND GUIDE
+   ========================================================================== */
+.spend-intro-banner {
+  background: rgba(229, 169, 59, 0.08);
+  border: 1px solid var(--border-gold);
+  border-radius: var(--radius-sm);
+  padding: 0.85rem 1.1rem;
+  color: var(--gold-100);
+  font-size: 0.9rem;
+  line-height: 1.5;
+  margin-bottom: 1.25rem;
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+}
+
+.spend-guide-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr));
+  gap: 1.25rem;
+  margin-bottom: 1.25rem;
+}
+
+.spend-card {
+  background: radial-gradient(circle at 50% 0%, #1a1e2b 0%, #11131a 100%);
+  border: 1px solid var(--border-gold);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-frame);
+  padding: 1.35rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+.spend-card.full-span {
+  grid-column: 1 / -1;
+}
+
+.spend-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.spend-card-title {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.spend-step-num {
+  font-family: var(--font-serif);
+  font-size: 0.72rem;
+  font-weight: 800;
+  color: var(--gold-300);
+  background: rgba(255, 209, 0, 0.1);
+  border: 1px solid var(--border-gold);
+  border-radius: var(--radius-sm);
+  padding: 0.2rem 0.5rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.spend-card-header h4 {
+  font-family: var(--font-serif);
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--gold-100);
+  margin: 0;
+  letter-spacing: 0.03em;
+}
+
+.spend-price-pill {
+  font-family: var(--font-serif);
+  font-size: 0.9rem;
+  font-weight: 800;
+  color: var(--gold-300);
+  background: linear-gradient(180deg, #352b17 0%, #1f190d 100%);
+  border: 1px solid var(--border-gold);
+  border-radius: var(--radius-sm);
+  padding: 0.28rem 0.7rem;
+  white-space: nowrap;
+  text-shadow: 1px 1px 0 #000;
+}
+
+.spend-lead {
+  font-size: 0.9rem;
+  color: var(--text-main);
+  line-height: 1.5;
+  margin: 0;
+}
+
+.spend-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.spend-list li {
+  position: relative;
+  padding-left: 1.1rem;
+  font-size: 0.86rem;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.spend-list li::before {
+  content: '•';
+  position: absolute;
+  left: 0.15rem;
+  color: var(--gold-300);
+  font-weight: 800;
+}
+
+.spend-list li strong {
+  color: var(--gold-100);
+}
+
+.contracts-kinds-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
+  gap: 1rem;
+}
+
+.contract-kind-card {
+  background: var(--bg-inner);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 1rem 1.1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.contract-kind-card.help {
+  border-left: 3px solid var(--blue);
+}
+
+.contract-kind-card.kill {
+  border-left: 3px solid var(--danger);
+}
+
+.contract-kind-title {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.contract-kind-title strong {
+  font-family: var(--font-serif);
+  font-size: 0.95rem;
+  color: var(--gold-100);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.contract-payout-tag {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--gold-300);
+  background: rgba(255, 209, 0, 0.09);
+  border: 1px solid rgba(255, 209, 0, 0.28);
+  padding: 0.15rem 0.5rem;
+  border-radius: 3px;
+}
+
+.contract-kind-card p {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.rank-cost-section {
+  background: var(--bg-inner);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 1rem 1.1rem;
+}
+
+.rank-cost-heading {
+  font-family: var(--font-serif);
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--gold-200);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 0.75rem;
+}
+
+.rank-cost-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(115px, 1fr));
+  gap: 0.6rem;
+}
+
+.rank-cost-tile {
+  background: #131620;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 0.65rem 0.75rem;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.rank-cost-tile .rank-label {
+  font-size: 0.75rem;
+  font-family: var(--font-serif);
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.rank-cost-tile .rank-fee {
+  font-size: 0.95rem;
+  font-weight: 800;
+  color: var(--gold-300);
+}
+
+.rank-cost-tile.is-free {
+  border-color: rgba(74, 222, 128, 0.45);
+  background: rgba(34, 197, 94, 0.08);
+}
+
+.rank-cost-tile.is-free .rank-fee {
+  color: #4ade80;
+}
+
+.escrow-notice-banner {
+  background: rgba(56, 189, 248, 0.07);
+  border: 1px solid rgba(56, 189, 248, 0.3);
+  border-radius: var(--radius-sm);
+  padding: 0.8rem 1rem;
+  font-size: 0.85rem;
+  color: var(--text-main);
+  line-height: 1.5;
+}
+
+.escrow-notice-banner strong {
+  color: var(--gold-200);
+}

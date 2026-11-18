@@ -202,10 +202,10 @@ async function handleClaimCommand(interaction, opts, env, firestore) {
   const state = await firestore.getBseState();
   const bounty = (state.bounties || []).find(b => b.id.toLowerCase() === bountyId.toLowerCase());
 
-  if (!bounty || bounty.status === 'archived') {
+  if (!bounty || (bounty.status || 'active') !== 'active') {
     return {
       type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
-      data: { content: `❌ Bounty with ID \`${bountyId}\` was not found or is no longer active.`, flags: 64 }
+      data: { content: `❌ Bounty with ID \`${bountyId}\` was not found or is not currently active.`, flags: 64 }
     };
   }
 
@@ -485,8 +485,41 @@ async function handleBountySubcommands(interaction, subOptions, env, firestore) 
 
   if (sub.name === 'delete') {
     const targetId = subOpts.bounty_id;
-    state.bounties = (state.bounties || []).filter(b => b.id.toLowerCase() !== targetId.toLowerCase());
-    await firestore.saveBseState(state);
+    const bounty = (state.bounties || []).find(b => b.id.toLowerCase() === targetId.toLowerCase());
+    if (!bounty) {
+      return {
+        type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+        data: { content: `❌ Bounty \`${targetId}\` was not found.`, flags: 64 }
+      };
+    }
+
+    const officer = interaction.member?.user || interaction.user;
+    const officerName = interaction.member?.nick || officer.global_name || officer.username;
+    const hasApprovedClaim = Object.values(state.claims || {}).some(c => c.bountyId === bounty.id && c.status === 'approved');
+    const isRefundableStatus = ['pending_review', 'active', 'paused'].includes(bounty.status || 'active');
+    const refundAmount = bounty.baseRewardBones !== undefined ? bounty.baseRewardBones : (bounty.rewardBones || 0);
+    let refundedMsg = '';
+
+    state.bounties = (state.bounties || []).filter(b => b.id !== bounty.id);
+
+    if (bounty.creatorId && isRefundableStatus && !hasApprovedClaim && refundAmount > 0 && state.wallets?.[bounty.creatorId]) {
+      const creatorWallet = state.wallets[bounty.creatorId];
+      creatorWallet.spendableBones = (creatorWallet.spendableBones || 0) + refundAmount;
+      creatorWallet.updatedAt = new Date().toISOString();
+      await recordAuditLogAndSync(state, env, firestore, {
+        action: 'BOUNTY_ESCROW_REFUND',
+        officerId: officer?.id || null,
+        officerName: officerName || 'Officer',
+        targetId: bounty.creatorId,
+        targetName: bounty.creatorNickname || bounty.creatorUsername,
+        amount: refundAmount,
+        spendableBones: creatorWallet.spendableBones,
+        reason: `Cancelled player-sponsored bounty "${bounty.title}" (${refundAmount} escrowed Bones refunded to creator)`
+      });
+      refundedMsg = ` (Refunded **${refundAmount} Bones** in escrow to <@${bounty.creatorId}>)`;
+    } else {
+      await firestore.saveBseState(state);
+    }
 
     try {
       await syncBountiesEmbed(env, firestore, state);
@@ -496,7 +529,7 @@ async function handleBountySubcommands(interaction, subOptions, env, firestore) 
 
     return {
       type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
-      data: { content: `🗑️ Bounty \`${targetId}\` removed.`, flags: 64 }
+      data: { content: `🗑️ Bounty \`${bounty.id}\` removed.${refundedMsg}`, flags: 64 }
     };
   }
 

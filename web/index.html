@@ -114,7 +114,7 @@
       <button class="nav-tab active" data-tab="leaderboard" id="tabNavLeaderboard">Ledger</button>
       <button class="nav-tab" data-tab="bounties" id="tabNavBounties">Bounty Board</button>
       <button class="nav-tab" data-tab="shop" id="tabNavShop" style="display: none;">Exchange Shop</button>
-      <button class="nav-tab" data-tab="faq" id="tabNavFaq">Rules &amp; FAQ</button>
+      <button class="nav-tab" data-tab="faq" id="tabNavFaq">How to Spend</button>
       <!-- Logged-in Member Transaction History -->
       <button class="nav-tab" data-tab="history" id="tabHistory" style="display: none;">
         History
@@ -219,17 +219,125 @@
       </div>
     </section>
 
-    <!-- 4. Rules & FAQ View -->
+    <!-- 4. How to Spend View -->
     <section class="tab-view" id="view-faq">
       <div class="section-header">
         <div>
-          <h3 id="headingFaq">Community Rules &amp; FAQ</h3>
-          <p class="section-subtitle" id="subheadingFaq">Guidelines, bounty verification requirements, and guild economy information.</p>
+          <h3 id="headingFaq">🦴 Bones: How to Spend</h3>
+          <p class="section-subtitle" id="subheadingFaq">Three ways to spend Bones — everything comes out of your current Spendable Bones balance.</p>
         </div>
       </div>
 
-      <div class="faq-accordion" id="faqAccordionContainer">
-        <!-- Dynamically populated -->
+      <div class="spend-intro-banner">
+        <span style="font-size: 1.2rem; line-height: 1;">🦴</span>
+        <span>Spendable Bones are deducted when used and <strong>never lower your Career Score</strong> on the Ledger.</span>
+      </div>
+
+      <div class="spend-guide-grid">
+        <!-- 1. Rank Promotion -->
+        <div class="spend-card">
+          <div class="spend-card-header">
+            <div class="spend-card-title">
+              <span class="spend-step-num">Option 1</span>
+              <h4>⭐ Rank Promotion</h4>
+            </div>
+            <span class="spend-price-pill">50 Bones</span>
+          </div>
+          <p class="spend-lead">Climb the Black Sands hierarchy to unlock guild bank privileges and lower contract fees.</p>
+          <ul class="spend-list">
+            <li><strong>Perks Unlocked:</strong> Each rank unlocks expanded guild bank access and cheaper contracts.</li>
+            <li><strong>Cost &amp; Timing:</strong> Bones are spent immediately when you promote.</li>
+            <li><strong>How to Promote:</strong> Upgrade your rank directly from your wallet card at the top of the website.</li>
+          </ul>
+        </div>
+
+        <!-- 2. Soft Reserves -->
+        <div class="spend-card">
+          <div class="spend-card-header">
+            <div class="spend-card-title">
+              <span class="spend-step-num">Option 2</span>
+              <h4>🎲 Soft Reserves</h4>
+            </div>
+            <span class="spend-price-pill">20 Bones / SR</span>
+          </div>
+          <p class="spend-lead">Put your Bones to work on extra Soft Reserve rolls in official guild raids.</p>
+          <ul class="spend-list">
+            <li><strong>SR Roll Cost:</strong> Spend <strong>20 Bones per SR</strong> roll during guild raids.</li>
+            <li><strong>Drop Protection:</strong> If your reserved item doesn't drop, <strong>10 Bones are refunded</strong>.</li>
+            <li><strong>Guild Raids Only:</strong> Applies exclusively to Black Sands guild raids — PUGs are never affected.</li>
+          </ul>
+        </div>
+
+        <!-- 3. Contracts (The Bounty Board) -->
+        <div class="spend-card full-span">
+          <div class="spend-card-header">
+            <div class="spend-card-title">
+              <span class="spend-step-num">Option 3</span>
+              <h4>📜 Contracts (The Bounty Board)</h4>
+            </div>
+            <span class="spend-price-pill">Post on Website</span>
+          </div>
+          <p class="spend-lead">Commission guildmates from the <strong>Bounty Board</strong> tab. There are two kinds of contracts:</p>
+
+          <div class="contracts-kinds-grid">
+            <div class="contract-kind-card help">
+              <div class="contract-kind-title">
+                <strong>🛡️ Help Contracts</strong>
+                <span class="contract-payout-tag">Helpers earn 5 Bones</span>
+              </div>
+              <p>Need a hand with a class quest, gold farm, alt leveling, or dungeon run? Every member who helps earns <strong>5 Bones</strong>.</p>
+            </div>
+
+            <div class="contract-kind-card kill">
+              <div class="contract-kind-title">
+                <strong>⚔️ Kill Contracts</strong>
+                <span class="contract-payout-tag">1 Bone / Kill (Max 10)</span>
+              </div>
+              <p>Name a player or group you want dead. For <strong>24 hours</strong>, any guild member who claims it earns <strong>1 Bone per kill</strong>, up to <strong>10 Bones</strong> each per contract.</p>
+            </div>
+          </div>
+
+          <div class="rank-cost-section">
+            <div class="rank-cost-heading">Contract Cost by Rank (Applies to Both Kinds)</div>
+            <div class="rank-cost-grid">
+              <div class="rank-cost-tile">
+                <span class="rank-label">Rank 1</span>
+                <span class="rank-fee">10 Bones</span>
+              </div>
+              <div class="rank-cost-tile">
+                <span class="rank-label">Rank 2</span>
+                <span class="rank-fee">8 Bones</span>
+              </div>
+              <div class="rank-cost-tile">
+                <span class="rank-label">Rank 3</span>
+                <span class="rank-fee">6 Bones</span>
+              </div>
+              <div class="rank-cost-tile">
+                <span class="rank-label">Rank 4</span>
+                <span class="rank-fee">4 Bones</span>
+              </div>
+              <div class="rank-cost-tile">
+                <span class="rank-label">Rank 5</span>
+                <span class="rank-fee">2 Bones</span>
+              </div>
+              <div class="rank-cost-tile is-free">
+                <span class="rank-label">Rank 6</span>
+                <span class="rank-fee">Free</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="escrow-notice-banner">
+            🔒 <strong>Escrow Protection:</strong> Your Bones are held safely in escrow until an Officer approves your contract. If it's denied or cancelled, you receive a <strong>100% full refund</strong>.
+          </div>
+        </div>
+      </div>
+
+      <div id="additionalFaqSection" style="display: none;">
+        <h4 style="font-family: var(--font-serif); color: var(--gold-200); margin-bottom: 0.75rem; font-size: 1rem;">Additional Guild Notes &amp; Q&amp;A</h4>
+        <div class="faq-accordion" id="faqAccordionContainer">
+          <!-- Dynamically populated if officers add extra items -->
+        </div>
       </div>
     </section>
 
@@ -576,7 +684,7 @@
                   <input type="checkbox" id="modToggleShop"> Exchange Shop Module
                 </label>
                 <label style="display: flex; align-items: center; gap: 0.4rem; text-transform: none; font-size: 0.8rem; cursor: pointer;">
-                  <input type="checkbox" id="modToggleFaq" checked> Rules &amp; FAQ Module
+                  <input type="checkbox" id="modToggleFaq" checked> How to Spend Tab
                 </label>
               </div>
             </div>
@@ -596,17 +704,17 @@
             <button class="btn-primary" id="btnSaveRanksHierarchy" style="width: 100%; margin-top: 1rem;">Save Prestige Tiers</button>
           </div>
 
-          <!-- 3. FAQ Builder -->
+          <!-- 3. Additional Q&A Builder -->
           <div class="officer-box" style="grid-column: 1 / -1;">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
-              <h4>FAQ Questions &amp; Answers</h4>
+              <h4>Additional Q&amp;A Items</h4>
               <button class="btn-secondary" id="btnAddFaqItem">+ Add Question</button>
             </div>
             <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.85rem;">
-              Manage the collapsible questions and answers displayed in the Rules &amp; FAQ tab.
+              Optional collapsible notes and Q&amp;A items displayed below the How to Spend guide.
             </p>
             <div id="faqBuilderContainer" class="officer-cards-list"></div>
-            <button class="btn-primary" id="btnSaveFaqItems" style="max-width: 200px; margin-top: 1rem;">Save FAQ Content</button>
+            <button class="btn-primary" id="btnSaveFaqItems" style="max-width: 220px; margin-top: 1rem;">Save Additional Q&amp;A</button>
           </div>
 
           <!-- 4. Ledger Quick Adjust Defaults -->
@@ -805,7 +913,7 @@
         <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
         <line x1="12" y1="17" x2="12.01" y2="17"/>
       </svg>
-      <span>Rules</span>
+      <span>Spend</span>
     </button>
     <button class="mobile-nav-btn" data-tab="history" id="mobileTabHistory" style="display: none;">
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -1019,8 +1127,8 @@
 
       <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem;">
         <div class="form-group">
-          <label>Reward (Bones from Wallet) *</label>
-          <input type="number" class="form-control" id="reqBountyReward" min="1" placeholder="e.g. 30">
+          <label>Escrow / Cost (Bones from Wallet) *</label>
+          <input type="number" class="form-control" id="reqBountyReward" min="0" placeholder="e.g. 10 (or 0 if Rank 6 Free)">
           <div style="font-size: 0.7rem; color: var(--gold-200); margin-top: 0.25rem;">
             Your Spendable: <strong id="reqBountyUserBalance">0</strong> Bones
           </div>
@@ -1168,7 +1276,7 @@
         </div>
         <div class="form-group" style="margin-bottom: 0.5rem;">
           <label>Base Reward (Bones)</label>
-          <input type="number" class="form-control" id="editBountyReward" min="1" placeholder="10">
+          <input type="number" class="form-control" id="editBountyReward" min="0" placeholder="10">
         </div>
         <div class="form-group" style="margin-bottom: 0.5rem;">
           <label>Category</label>
@@ -1187,6 +1295,8 @@
             <option value="active">Active</option>
             <option value="paused">Paused</option>
             <option value="completed">Completed</option>
+            <option value="pending_review">Pending Review</option>
+            <option value="rejected">Rejected</option>
           </select>
         </div>
       </div>

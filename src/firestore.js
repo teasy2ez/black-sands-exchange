@@ -326,26 +326,9 @@ export class FirestoreClient {
         shop: { enabled: false, title: 'Exchange Shop', order: 3 },
         faq: {
           enabled: true,
-          title: 'Rules & FAQ',
+          title: 'How to Spend',
           order: 4,
-          items: [
-            {
-              q: 'What are Bones?',
-              a: 'Bones are our guild economy currency earned by completing bounties, attending raids, and contributing to guild events.'
-            },
-            {
-              q: 'How does Bone Score work?',
-              a: 'Bone Score reflects verified lifetime career earnings. Spending Bones in the shop never lowers your Bone Score! Bone Score only increases from officer awards and verified bounty claims.'
-            },
-            {
-              q: 'How do I claim a bounty?',
-              a: 'Complete the objective in-game, grab a screenshot or combat log link, and submit via the Bounty Board on this website or using /claim in Discord.'
-            },
-            {
-              q: 'How do shop deliveries work?',
-              a: 'When you purchase an item or perk, Bones are deducted immediately and a delivery order is dispatched to Officers with your in-game character name for fulfillment.'
-            }
-          ]
+          items: []
         }
       },
       theme: {
