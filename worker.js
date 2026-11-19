@@ -471,7 +471,9 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
     const wallet = state.wallets[session.id] || {
       discordId: session.id,
       username: session.username,
-      serverNickname: session.serverNickname,
+      globalName: session.globalName || session.username,
+      serverNickname: session.serverNickname || session.globalName || session.username,
+      avatarHash: session.avatar || null,
       spendableBones: 0,
       boneScore: 0
     };
@@ -3028,6 +3030,9 @@ function isValidArmoryIngestAuth(request, env, isAuthorizedOfficer) {
  */
 function jsonResponse(data, status = 200, customHeaders = new Headers()) {
   customHeaders.set('Content-Type', 'application/json');
+  if (!customHeaders.has('Cache-Control')) {
+    customHeaders.set('Cache-Control', 'no-store');
+  }
   customHeaders.set('Access-Control-Allow-Origin', '*');
   customHeaders.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   customHeaders.set('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Armory-Ingest-Secret');

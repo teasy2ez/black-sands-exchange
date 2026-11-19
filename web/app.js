@@ -214,8 +214,14 @@ async function checkAuthSession() {
     const res = await fetch('/api/auth/discord/me');
     const data = await res.json();
     if (data.authenticated && data.user) {
-      state.user = { ...data.user, authenticated: true };
-      state.userCharacters = data.user.characters || [];
+      state.user = {
+        ...data.user,
+        characters: (data.user.characters || []).map(c => ({ ...c })),
+        authenticated: true
+      };
+      if (!document.getElementById('modalCharacters')?.classList.contains('active')) {
+        state.userCharacters = (state.user.characters || []).map(c => ({ ...c }));
+      }
       renderAuthenticatedUser(state.user);
       if (state.bseState) {
         syncAuthenticatedWalletFromBseState(state.bseState);
@@ -328,8 +334,11 @@ function syncAuthenticatedWalletFromBseState(bse) {
     state.user.guildNote = w.guildNote;
   }
   state.user.primaryCharacter = w.primaryCharacter || state.user.primaryCharacter;
-  state.user.characters = w.characters || state.user.characters || [];
-  state.userCharacters = state.user.characters;
+  state.user.characters = (w.characters || state.user.characters || []).map(c => ({ ...c }));
+  const isCharModalOpen = Boolean(document.getElementById('modalCharacters')?.classList.contains('active'));
+  if (!isCharModalOpen) {
+    state.userCharacters = state.user.characters.map(c => ({ ...c }));
+  }
 
   walletSpendable.textContent = state.user.spendableBones.toLocaleString();
   walletScore.textContent = state.user.boneScore.toLocaleString();
@@ -433,14 +442,18 @@ function renderBseDependentViews() {
   }
 }
 
+let bseFetchSeq = 0;
+
 /**
  * Fetch and Render Central BSE State
  */
 async function refreshBseState() {
+  const mySeq = ++bseFetchSeq;
   try {
     const res = await fetch('/api/exchange/state');
     if (!res.ok) return;
     const bse = await res.json();
+    if (mySeq !== bseFetchSeq) return;
     state.bseState = bse;
 
     // Apply modular customizations
@@ -3501,22 +3514,33 @@ function renderAuditTrail() {
  * Character Management Modal Logic
  */
 function setupCharacterManagement() {
-  btnOpenCharModal.addEventListener('click', () => {
+  btnOpenCharModal?.addEventListener('click', () => {
     openCharacterModal();
   });
 
-  document.getElementById('btnAddCharacter').addEventListener('click', () => {
-    const rawName = document.getElementById('newCharName').value.trim();
+  const clearDraftInputs = () => {
+    const nEl = document.getElementById('newCharName');
+    const sEl = document.getElementById('newCharSurname');
+    const lEl = document.getElementById('newCharLevel');
+    const pEl = document.getElementById('newCharProfessions');
+    if (nEl) nEl.value = '';
+    if (sEl) sEl.value = '';
+    if (lEl) lEl.value = '';
+    if (pEl) pEl.value = '';
+  };
+
+  const addDraftCharacterToRoster = ({ quietIfEmpty = false } = {}) => {
+    const rawName = (document.getElementById('newCharName')?.value || '').trim();
     const rawSurname = document.getElementById('newCharSurname')?.value.trim() || '';
-    const charClass = document.getElementById('newCharClass').value;
+    const charClass = document.getElementById('newCharClass')?.value || 'Warrior';
     const rawLevel = document.getElementById('newCharLevel')?.value.trim() || '';
     const charRole = document.getElementById('newCharRole')?.value || 'DPS';
     const charRuleset = document.getElementById('newCharRuleset')?.value || 'PvP';
     const professions = document.getElementById('newCharProfessions')?.value.trim() || '';
 
     if (!rawName) {
-      showToast('Please enter a character name.');
-      return;
+      if (!quietIfEmpty) showToast('Please enter a character name.');
+      return { ok: quietIfEmpty, added: false };
     }
 
     let manualLevel = null;
@@ -3524,7 +3548,7 @@ function setupCharacterManagement() {
       const parsedLevel = parseInt(rawLevel, 10);
       if (!Number.isFinite(parsedLevel) || parsedLevel < 1 || parsedLevel > 60) {
         showToast('Character level must be between 1 and 60.');
-        return;
+        return { ok: false, added: false };
       }
       manualLevel = parsedLevel;
     }
@@ -3547,7 +3571,15 @@ function setupCharacterManagement() {
       ? `${name.toLowerCase().replace(/\s+/g, '')}-${surname.toLowerCase().replace(/\s+/g, '')}`
       : name.toLowerCase().replace(/\s+/g, ''));
 
+    const existingIdx = slug
+      ? state.userCharacters.findIndex(c => {
+          const cSlug = c.slug || buildCharKeyClient(c);
+          return cSlug === slug;
+        })
+      : -1;
+    const existingEntry = existingIdx >= 0 ? state.userCharacters[existingIdx] : null;
     const isFirst = state.userCharacters.length === 0;
+
     const entry = {
       name,
       surname,
@@ -3556,9 +3588,9 @@ function setupCharacterManagement() {
       role: charRole,
       ruleset: verifiedMeta?.ruleset || charRuleset,
       professions,
-      isPrimary: isFirst
+      isPrimary: existingEntry ? Boolean(existingEntry.isPrimary) : isFirst
     };
-    const resolvedLevel = manualLevel || verifiedMeta?.level || null;
+    const resolvedLevel = manualLevel || verifiedMeta?.level || existingEntry?.level || null;
     if (resolvedLevel) entry.level = resolvedLevel;
 
     if (verifiedMeta) {
@@ -3568,22 +3600,46 @@ function setupCharacterManagement() {
       if (verifiedMeta.avatarThumbUrl) entry.avatarThumbUrl = verifiedMeta.avatarThumbUrl;
       entry.armoryVerified = true;
       entry.lastArmorySyncAt = verifiedMeta.lastArmorySyncAt;
+    } else if (existingEntry) {
+      if (existingEntry.race) entry.race = existingEntry.race;
+      if (existingEntry.avgItemLevel) entry.avgItemLevel = existingEntry.avgItemLevel;
+      if (existingEntry.guildName) entry.guildName = existingEntry.guildName;
+      if (existingEntry.avatarThumbUrl) entry.avatarThumbUrl = existingEntry.avatarThumbUrl;
+      if (existingEntry.armoryVerified) entry.armoryVerified = true;
+      if (existingEntry.lastArmorySyncAt) entry.lastArmorySyncAt = existingEntry.lastArmorySyncAt;
     }
 
-    state.userCharacters.push(entry);
+    if (existingIdx >= 0) {
+      state.userCharacters[existingIdx] = entry;
+    } else {
+      state.userCharacters.push(entry);
+    }
 
-    document.getElementById('newCharName').value = '';
-    if (document.getElementById('newCharSurname')) document.getElementById('newCharSurname').value = '';
-    if (document.getElementById('newCharLevel')) document.getElementById('newCharLevel').value = '';
-    if (document.getElementById('newCharProfessions')) document.getElementById('newCharProfessions').value = '';
+    clearDraftInputs();
     renderCharacterModalList();
-    const displayFull = surname ? `${name} ${surname}` : name;
-    showToast(`Added ${displayFull} (${charClass} ${charRole}). Click "Save Changes" to store.`);
+    return { ok: true, added: true, entry };
+  };
+
+  document.getElementById('btnAddCharacter')?.addEventListener('click', () => {
+    const res = addDraftCharacterToRoster({ quietIfEmpty: false });
+    if (res.ok && res.added && res.entry) {
+      const displayFull = res.entry.surname ? `${res.entry.name} ${res.entry.surname}` : res.entry.name;
+      showToast(`Added ${displayFull} (${res.entry.class} ${res.entry.role}). Click "Save Changes" to store.`);
+    }
   });
 
-  document.getElementById('btnSaveCharacters').addEventListener('click', async () => {
+  const saveBtn = document.getElementById('btnSaveCharacters');
+  saveBtn?.addEventListener('click', async () => {
+    // If user typed or verified a character without clicking "Add to Roster" first, stage it cleanly before saving
+    const draftRes = addDraftCharacterToRoster({ quietIfEmpty: true });
+    if (!draftRes.ok) return;
+
     const primary = state.userCharacters.find(c => c.isPrimary)?.name || state.userCharacters[0]?.name || null;
     const guildNote = (document.getElementById('modalGuildNoteInput')?.value || document.getElementById('memberGuildNoteInput')?.value || '').trim();
+
+    saveBtn.disabled = true;
+    const prevLabel = saveBtn.textContent;
+    saveBtn.textContent = 'Saving...';
 
     try {
       const res = await fetch('/api/exchange/characters', {
@@ -3597,28 +3653,62 @@ function setupCharacterManagement() {
       });
       const data = await res.json();
       if (res.ok) {
+        const savedChars = (data.characters || []).map(c => ({ ...c }));
+        bseFetchSeq++;
+        if (state.user) {
+          state.user.characters = savedChars.map(c => ({ ...c }));
+          state.user.primaryCharacter = data.primaryCharacter || null;
+          state.user.guildNote = data.guildNote || '';
+        }
+        state.userCharacters = savedChars.map(c => ({ ...c }));
+        if (state.user?.id && state.bseState?.wallets) {
+          const curWallet = state.bseState.wallets[state.user.id] || {
+            discordId: state.user.id,
+            username: state.user.username,
+            globalName: state.user.globalName,
+            serverNickname: state.user.serverNickname,
+            spendableBones: state.user.spendableBones || 0,
+            boneScore: state.user.boneScore || 0
+          };
+          curWallet.characters = savedChars.map(c => ({ ...c }));
+          curWallet.primaryCharacter = data.primaryCharacter || null;
+          curWallet.guildNote = data.guildNote || '';
+          state.bseState.wallets[state.user.id] = curWallet;
+        }
+        if (walletPrimaryCharName) {
+          walletPrimaryCharName.textContent = data.primaryCharacter || 'None';
+        }
+        if (document.getElementById('modalGuildNoteInput')) {
+          document.getElementById('modalGuildNoteInput').value = data.guildNote || '';
+        }
+        document.getElementById('modalCharacters')?.classList.remove('active');
         showToast('Characters & Public Guild Note saved.');
-        state.user.characters = data.characters;
-        state.user.primaryCharacter = data.primaryCharacter;
-        state.user.guildNote = data.guildNote || '';
-        walletPrimaryCharName.textContent = data.primaryCharacter || 'None (Click to link)';
-        if (document.getElementById('modalGuildNoteInput')) document.getElementById('modalGuildNoteInput').value = data.guildNote || '';
-        document.getElementById('modalCharacters').classList.remove('active');
         await refreshBseState();
       } else {
         showToast(data.error || 'Failed to save characters');
       }
     } catch (err) {
       showToast(`Error: ${err.message}`);
+    } finally {
+      saveBtn.disabled = false;
+      saveBtn.textContent = prevLabel || 'Save Changes';
     }
   });
 }
 
 function openCharacterModal() {
-  state.userCharacters = [...(state.user?.characters || [])];
+  const walletChars = (state.user?.id && state.bseState?.wallets?.[state.user.id]?.characters) || state.user?.characters || [];
+  state.userCharacters = walletChars.map(c => ({ ...c }));
   window.BSEArmory?.consumePendingVerifiedCharacter?.();
+  ['newCharName', 'newCharSurname', 'newCharLevel', 'newCharProfessions'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+  const savedNote = (state.user?.id && typeof state.bseState?.wallets?.[state.user.id]?.guildNote === 'string')
+    ? state.bseState.wallets[state.user.id].guildNote
+    : (state.user?.guildNote || '');
   if (document.getElementById('modalGuildNoteInput')) {
-    document.getElementById('modalGuildNoteInput').value = state.user?.guildNote || '';
+    document.getElementById('modalGuildNoteInput').value = savedNote;
   }
   renderCharacterModalList();
   document.getElementById('modalCharacters').classList.add('active');
