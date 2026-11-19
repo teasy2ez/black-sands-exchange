@@ -1,5 +1,5 @@
 /**
- * Black Sands Exchange — WoW: Forever US Armory, Paperdoll & Item Database Client
+ * Black Sands Exchange — WoW: Forever US Character Armory & Paperdoll Client
  *
  * Self-contained frontend module exposed on `window.BSEArmory` and initialized
  * by `web/app.js` on DOMContentLoaded.
@@ -58,41 +58,19 @@
     { key: 'RANGED', label: 'Ranged / Relic', glyph: 'Rg' }
   ];
 
-  const RULESET_NAMES = {
-    1: 'PvP',
-    2: 'Normal',
-    3: 'Roleplay',
-    15: 'Roleplay PvP'
-  };
-
   let hostCtx = {
     getState: () => ({}),
     showToast: () => {},
     refreshBseState: async () => {},
     getDiscordAvatarUrl: () => 'assets/favicon.svg',
     resolveRankTitle: () => 'Initiate',
-    switchTab: () => {},
     openCharacterModal: () => {}
   };
 
   // Module UI state
   const uiState = {
     initialized: false,
-    activeDbSubtab: 'items',
-    itemQuery: '',
-    itemPage: 1,
-    itemResults: [],
-    itemSelected: null,
-    itemPickerCallback: null,
-    craftingData: null,
-    craftingQuery: '',
-    craftingProf: 'all',
-    rosterData: null,
-    rosterQuery: '',
-    rosterFilter: 'all',
-    ahData: null,
-    ahQuery: '',
-    lookupLastSlug: '',
+    modalMemberId: null,
     modalSelectedCharSlug: null,
     modalActiveInnerTab: 'paperdoll',
     pendingVerifiedChar: null
@@ -489,7 +467,82 @@
     `;
   }
 
-  function renderPaperdollTab(snapshot) {
+  function parseStoredProfessions(rawStr) {
+    return String(rawStr || '')
+      .split(/[,;|\n•]+|\s+\/\s+|(?<=[a-zA-Z])\s*\/\s*(?=[a-zA-Z])/)
+      .map(s => s.trim())
+      .filter(Boolean);
+  }
+
+  function renderInlineProfessionsStrip(snapshot, memberCharMeta = null, { hasViewAllHandler = false } = {}) {
+    const primaries = (snapshot?.professions?.primaries || []).map(p => ({ ...p, kind: 'Primary' }));
+    const secondaries = (snapshot?.professions?.secondaries || []).map(p => ({ ...p, kind: 'Secondary' }));
+    const profs = [...primaries, ...secondaries];
+    const storedTags = parseStoredProfessions(memberCharMeta?.professions);
+
+    let bodyHtml = '';
+    if (profs.length) {
+      const totalExtraRecipes = profs.reduce((sum, p) => {
+        const recLen = Array.isArray(p.knownRecipes) ? p.knownRecipes.length : 0;
+        return sum + Math.max(0, recLen - 6);
+      }, 0);
+      bodyHtml = `
+        <div class="armory-inline-profs-grid">
+          ${profs.map(p => {
+            const pct = p.maxSkillPoints > 0 ? Math.min(100, Math.round((p.skillPoints / p.maxSkillPoints) * 100)) : 0;
+            const recipes = Array.isArray(p.knownRecipes) ? p.knownRecipes : [];
+            return `
+              <div class="armory-inline-prof-card">
+                <div class="armory-inline-prof-head">
+                  <div>
+                    <strong>${escHtml(p.name)}</strong>
+                    <span class="armory-inline-prof-kind">${escHtml(p.kind)}${p.tierName ? ` &bull; ${escHtml(p.tierName)}` : ''}</span>
+                  </div>
+                  <span class="gold armory-inline-prof-pts">${escHtml(String(p.skillPoints))} / ${escHtml(String(p.maxSkillPoints))}</span>
+                </div>
+                <div class="progress-bar-bg" style="height:5px; margin: 0.35rem 0 0.45rem;">
+                  <div class="progress-bar-fill" style="width:${pct}%;"></div>
+                </div>
+                ${recipes.length
+                  ? `<div class="armory-recipe-chips">
+                       ${recipes.slice(0, 6).map(r => `<span class="armory-talent-pill">${escHtml(r.name)}</span>`).join('')}
+                       ${recipes.length > 6 ? `<span class="subview-hint">+${recipes.length - 6} more</span>` : ''}
+                     </div>`
+                  : `<span class="subview-hint">Recorded on Blizzard Armory</span>`
+                }
+              </div>
+            `;
+          }).join('')}
+        </div>
+        ${(totalExtraRecipes > 0 || (snapshot?.reputations || []).length > 0) && hasViewAllHandler
+          ? `<div class="armory-inline-profs-footer">
+               <button type="button" class="btn-link-subtle armory-view-all-profs-btn">View All Recipes &amp; Reputations &rarr;</button>
+             </div>`
+          : ''
+        }
+      `;
+    } else if (storedTags.length) {
+      bodyHtml = `
+        <div class="armory-inline-prof-chips">
+          ${storedTags.map(tag => `<span class="armory-prof-chip">${escHtml(tag)}</span>`).join('')}
+        </div>
+      `;
+    } else {
+      bodyHtml = `<div class="armory-empty-note" style="padding:0.65rem;">No professions recorded for this character yet.</div>`;
+    }
+
+    return `
+      <div class="armory-inline-profs-section">
+        <div class="armory-inline-profs-title-row">
+          <h6 class="armory-section-label" style="margin:0;">Professions &amp; Skills</h6>
+          ${profs.length ? `<span class="subview-hint">${primaries.length} Primary &bull; ${secondaries.length} Secondary</span>` : ''}
+        </div>
+        ${bodyHtml}
+      </div>
+    `;
+  }
+
+  function renderPaperdollTab(snapshot, memberCharMeta = null, { hasViewAllHandler = false } = {}) {
     const equipmentBySlot = new Map();
     for (const eq of snapshot.equipment || []) {
       if (eq.slotType) {
@@ -497,7 +550,7 @@
       }
     }
 
-    const className = snapshot.className || 'Warrior';
+    const className = snapshot.className || memberCharMeta?.class || 'Warrior';
     const classColor = CLASS_COLORS[className] || '#ffd100';
     const mainRaw = sanitizeUrl(snapshot.media?.mainRaw || snapshot.media?.inset || '');
     const leftHtml = SLOT_LEFT.map(s => renderSlotBox(s, equipmentBySlot.get(s.key), false)).join('');
@@ -526,6 +579,7 @@
             }
           </div>
           <div class="armory-stage-pills">
+            ${snapshot.level ? `<span class="armory-stat-chip">Level <strong>${escHtml(String(snapshot.level))}</strong></span>` : ''}
             ${snapshot.avgItemLevel ? `<span class="armory-stat-chip">Avg iLvl <strong>${escHtml(String(snapshot.avgItemLevel))}</strong></span>` : ''}
             ${snapshot.activeSpec ? `<span class="armory-stat-chip">${escHtml(snapshot.activeSpec)}</span>` : ''}
             <span class="armory-stat-chip">${escHtml(String((snapshot.equipment || []).length))} Equipped</span>
@@ -541,6 +595,8 @@
       <div class="armory-weapons-row">
         ${weaponsHtml}
       </div>
+
+      ${renderInlineProfessionsStrip(snapshot, memberCharMeta, { hasViewAllHandler })}
     `;
   }
 
@@ -634,39 +690,52 @@
     `;
   }
 
-  function renderProfessionsAndRepsTab(snapshot) {
+  function renderProfessionsAndRepsTab(snapshot, memberCharMeta = null) {
     const profs = [
       ...(snapshot.professions?.primaries || []).map(p => ({ ...p, kind: 'Primary' })),
       ...(snapshot.professions?.secondaries || []).map(p => ({ ...p, kind: 'Secondary' }))
     ];
+    const storedTags = parseStoredProfessions(memberCharMeta?.professions);
 
-    const profsHtml = profs.length
-      ? profs.map(p => {
-          const pct = p.maxSkillPoints > 0 ? Math.min(100, Math.round((p.skillPoints / p.maxSkillPoints) * 100)) : 0;
-          const recipes = Array.isArray(p.knownRecipes) ? p.knownRecipes : [];
-          return `
-            <div class="armory-prof-card">
-              <div class="armory-prof-header">
-                <div>
-                  <strong>${escHtml(p.name)}</strong>
-                  <span class="armory-prof-kind">${escHtml(p.kind)}${p.tierName ? ` &bull; ${escHtml(p.tierName)}` : ''}</span>
-                </div>
-                <span class="gold" style="font-weight:700;">${escHtml(String(p.skillPoints))} / ${escHtml(String(p.maxSkillPoints))}</span>
+    let profsHtml = '';
+    if (profs.length) {
+      profsHtml = profs.map(p => {
+        const pct = p.maxSkillPoints > 0 ? Math.min(100, Math.round((p.skillPoints / p.maxSkillPoints) * 100)) : 0;
+        const recipes = Array.isArray(p.knownRecipes) ? p.knownRecipes : [];
+        return `
+          <div class="armory-prof-card">
+            <div class="armory-prof-header">
+              <div>
+                <strong>${escHtml(p.name)}</strong>
+                <span class="armory-prof-kind">${escHtml(p.kind)}${p.tierName ? ` &bull; ${escHtml(p.tierName)}` : ''}</span>
               </div>
-              <div class="progress-bar-bg" style="height:6px; margin: 0.4rem 0 0.6rem;">
-                <div class="progress-bar-fill" style="width:${pct}%;"></div>
-              </div>
-              ${recipes.length
-                ? `<div class="armory-recipe-chips">
-                     ${recipes.slice(0, 18).map(r => `<span class="armory-talent-pill">${escHtml(r.name)}</span>`).join('')}
-                     ${recipes.length > 18 ? `<span class="subview-hint">+${recipes.length - 18} more indexed in Guild Crafters</span>` : ''}
-                   </div>`
-                : `<span class="subview-hint">No recipes synced yet for ${escHtml(p.name)}.</span>`
-              }
+              <span class="gold" style="font-weight:700;">${escHtml(String(p.skillPoints))} / ${escHtml(String(p.maxSkillPoints))}</span>
             </div>
-          `;
-        }).join('')
-      : `<div class="armory-empty-note">No professions recorded on Battle.net Armory yet.</div>`;
+            <div class="progress-bar-bg" style="height:6px; margin: 0.4rem 0 0.6rem;">
+              <div class="progress-bar-fill" style="width:${pct}%;"></div>
+            </div>
+            ${recipes.length
+              ? `<div class="armory-recipe-chips">
+                   ${recipes.slice(0, 24).map(r => `<span class="armory-talent-pill">${escHtml(r.name)}</span>`).join('')}
+                   ${recipes.length > 24 ? `<span class="subview-hint">+${recipes.length - 24} more recipes recorded</span>` : ''}
+                 </div>`
+              : `<span class="subview-hint">No recipes synced yet for ${escHtml(p.name)}.</span>`
+            }
+          </div>
+        `;
+      }).join('');
+    } else if (storedTags.length) {
+      profsHtml = `
+        <div class="armory-prof-card">
+          <div class="armory-prof-header"><strong>Recorded Professions</strong></div>
+          <div class="armory-inline-prof-chips" style="margin-top:0.5rem;">
+            ${storedTags.map(tag => `<span class="armory-prof-chip">${escHtml(tag)}</span>`).join('')}
+          </div>
+        </div>
+      `;
+    } else {
+      profsHtml = `<div class="armory-empty-note">No professions recorded on Battle.net Armory yet.</div>`;
+    }
 
     const reps = [...(snapshot.reputations || [])].sort((a, b) => (b.tier - a.tier) || (b.raw - a.raw));
     const standingClass = (standing) => {
@@ -709,6 +778,78 @@
     `;
   }
 
+  function renderFallbackArmorySheet(containerEl, { memberChar = null, snapshot = null, isSelf = false, statusTitle = '', statusMessage = '', onRefresh = null } = {}) {
+    if (!containerEl) return;
+    const ch = memberChar || {};
+    const className = snapshot?.className || ch.class || 'Warrior';
+    const classColor = CLASS_COLORS[className] || '#ffd100';
+    const dispName = snapshot?.displayName || (ch.surname ? `${ch.name} ${ch.surname}` : ch.name) || 'Character';
+    const level = snapshot?.level || ch.level || null;
+    const race = snapshot?.race || ch.race || '';
+    const role = ch.role || '';
+    const ruleset = snapshot?.ruleset?.name || ch.ruleset || '';
+    const guildName = snapshot?.guild?.name || ch.guildName || '';
+    const armoryHref = sanitizeUrl(snapshot?.armoryUrl || '');
+    const avatarUrl = sanitizeUrl(snapshot?.media?.avatar || ch.avatarThumbUrl || '');
+    const profTags = parseStoredProfessions(ch.professions);
+
+    containerEl.innerHTML = `
+      <div class="armory-sheet-card armory-sheet-fallback">
+        <div class="armory-sheet-banner">
+          <div class="armory-sheet-identity">
+            ${avatarUrl
+              ? `<img src="${escAttr(avatarUrl)}" alt="" class="armory-sheet-avatar" onerror="this.style.display='none';">`
+              : `<div class="armory-fallback-mini-crest">${buildClassCrestSvg(className)}</div>`
+            }
+            <div>
+              <div class="armory-sheet-name-row">
+                <strong style="color:${classColor};">${escHtml(dispName)}</strong>
+                ${level ? `<span class="armory-level-pill">Level ${escHtml(String(level))}</span>` : `<span class="armory-level-pill is-unset">Level Unverified</span>`}
+                ${role ? `<span class="role-pill ${escAttr(role.toLowerCase())}">${escHtml(role)}</span>` : ''}
+              </div>
+              <div class="armory-sheet-meta">
+                <span>${race ? `${escHtml(race)} ` : ''}${escHtml(className)}</span>
+                ${guildName ? `<span>&bull; &lt;${escHtml(guildName)}&gt;</span>` : ''}
+                ${ruleset ? `<span>&bull; ${escHtml(ruleset)}</span>` : ''}
+              </div>
+            </div>
+          </div>
+
+          <div class="armory-sheet-actions">
+            ${onRefresh ? `<button type="button" class="btn-secondary btn-xs armory-retry-btn">Retry Sync</button>` : ''}
+            ${armoryHref ? `<a href="${escAttr(armoryHref)}" target="_blank" rel="noopener noreferrer" class="btn-secondary btn-xs">Blizzard Armory &nearr;</a>` : ''}
+            ${isSelf && !ch.surname ? `<button type="button" class="btn-primary btn-xs armory-open-manage-btn">Add Surname &amp; Verify</button>` : ''}
+          </div>
+        </div>
+
+        <div class="armory-inner-body">
+          <div class="armory-fallback-grid">
+            <div class="armory-fallback-panel">
+              <h6 class="armory-section-label">Professions</h6>
+              ${profTags.length
+                ? `<div class="armory-inline-prof-chips">
+                     ${profTags.map(tag => `<span class="armory-prof-chip">${escHtml(tag)}</span>`).join('')}
+                   </div>`
+                : `<p class="armory-fallback-empty">No professions listed on this character yet.</p>`
+              }
+            </div>
+
+            <div class="armory-fallback-panel">
+              <h6 class="armory-section-label">${escHtml(statusTitle || 'Equipped Gear Snapshot')}</h6>
+              <p class="armory-fallback-note">${escHtml(statusMessage || 'Equipped slot gear will appear once synced with Blizzard WoW: Forever US Armory.')}</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+
+    containerEl.querySelector('.armory-retry-btn')?.addEventListener('click', () => onRefresh?.());
+    containerEl.querySelector('.armory-open-manage-btn')?.addEventListener('click', () => {
+      document.getElementById('modalMemberProfile')?.classList.remove('active');
+      hostCtx.openCharacterModal();
+    });
+  }
+
   async function fetchCharacterArmoryClient({ slug = '', name = '', surname = '', forceRefresh = false } = {}) {
     const cacheKey = slug || buildCharSlugClient(name, surname);
     if (!forceRefresh && cacheKey && characterCache.has(cacheKey)) {
@@ -732,29 +873,22 @@
     return data;
   }
 
-  function renderSnapshotIntoContainer(containerEl, snapshot, { innerTab = 'paperdoll', onTabChange = null, onRefresh = null } = {}) {
+  function renderSnapshotIntoContainer(containerEl, snapshot, { innerTab = 'paperdoll', memberCharMeta = null, isSelf = false, onTabChange = null, onRefresh = null } = {}) {
     if (!containerEl) return;
 
     if (!snapshot || !snapshot.found) {
-      const armoryHref = sanitizeUrl(snapshot?.armoryUrl || '');
       const msg = snapshot?.configured === false
         ? 'Battle.net API credentials are not yet configured on the Worker.'
-        : (snapshot?.message || 'Character was not found on WoW: Forever US Armory. Note: characters appear once Level 10+ and after at least 1 logout.');
+        : (snapshot?.message || 'Character was not found on WoW: Forever US Armory yet. Characters appear once they reach Level 10+ and log out once.');
 
-      containerEl.innerHTML = `
-        <div class="armory-unavailable-card">
-          <div style="margin-bottom:0.5rem;">
-            ${buildClassCrestSvg(snapshot?.className || 'Warrior')}
-          </div>
-          <h5>Armory Snapshot Unavailable</h5>
-          <p>${escHtml(msg)}</p>
-          <div style="display:flex; gap:0.5rem; justify-content:center; flex-wrap:wrap; margin-top:0.75rem;">
-            ${onRefresh ? `<button type="button" class="btn-secondary btn-sm armory-retry-btn">Retry Lookup</button>` : ''}
-            ${armoryHref ? `<a href="${escAttr(armoryHref)}" target="_blank" rel="noopener noreferrer" class="btn-secondary btn-sm">Open Blizzard Forever Armory &nearr;</a>` : ''}
-          </div>
-        </div>
-      `;
-      containerEl.querySelector('.armory-retry-btn')?.addEventListener('click', () => onRefresh?.());
+      renderFallbackArmorySheet(containerEl, {
+        memberChar: memberCharMeta,
+        snapshot,
+        isSelf,
+        statusTitle: 'Equipped Gear Snapshot',
+        statusMessage: msg,
+        onRefresh
+      });
       return;
     }
 
@@ -763,10 +897,22 @@
     const avatarUrl = sanitizeUrl(snapshot.media?.avatar || '');
     const activeTab = ['paperdoll', 'stats', 'profs'].includes(innerTab) ? innerTab : 'paperdoll';
 
+    const bannerProfs = [
+      ...(snapshot.professions?.primaries || []),
+      ...(snapshot.professions?.secondaries || [])
+    ];
+    const bannerProfHtml = bannerProfs.length
+      ? bannerProfs.map(p => `<span class="armory-banner-prof-chip">${escHtml(p.name)} <b>${escHtml(String(p.skillPoints))}/${escHtml(String(p.maxSkillPoints))}</b></span>`).join('')
+      : parseStoredProfessions(memberCharMeta?.professions).map(t => `<span class="armory-banner-prof-chip">${escHtml(t)}</span>`).join('');
+
     let bodyHtml = '';
-    if (activeTab === 'paperdoll') bodyHtml = renderPaperdollTab(snapshot);
-    else if (activeTab === 'stats') bodyHtml = renderStatsAndTalentsTab(snapshot);
-    else bodyHtml = renderProfessionsAndRepsTab(snapshot);
+    if (activeTab === 'paperdoll') {
+      bodyHtml = renderPaperdollTab(snapshot, memberCharMeta, { hasViewAllHandler: Boolean(onTabChange) });
+    } else if (activeTab === 'stats') {
+      bodyHtml = renderStatsAndTalentsTab(snapshot);
+    } else {
+      bodyHtml = renderProfessionsAndRepsTab(snapshot, memberCharMeta);
+    }
 
     containerEl.innerHTML = `
       <div class="armory-sheet-card">
@@ -779,15 +925,17 @@
             <div>
               <div class="armory-sheet-name-row">
                 <strong style="color:${classColor};">${escHtml(snapshot.displayName || snapshot.name)}</strong>
+                ${snapshot.level ? `<span class="armory-level-pill">Level ${escHtml(String(snapshot.level))}</span>` : ''}
                 ${snapshot.title ? `<span class="armory-title-pill">${escHtml(snapshot.title)}</span>` : ''}
                 ${snapshot.avgItemLevel ? `<span class="armory-ilvl-pill">iLvl ${escHtml(String(snapshot.avgItemLevel))}</span>` : ''}
               </div>
               <div class="armory-sheet-meta">
-                <span>Level ${escHtml(String(snapshot.level || '?'))} ${escHtml(snapshot.race || '')} ${escHtml(snapshot.className || '')}</span>
+                <span>${escHtml(snapshot.race || '')} ${escHtml(snapshot.className || '')}</span>
                 ${snapshot.guild?.name ? `<span>&bull; &lt;${escHtml(snapshot.guild.name)}&gt;</span>` : ''}
                 ${snapshot.ruleset?.name ? `<span>&bull; ${escHtml(snapshot.ruleset.name)}</span>` : ''}
                 <span>&bull; Synced ${escHtml(formatRelativeTime(snapshot.syncedAt))}</span>
               </div>
+              ${bannerProfHtml ? `<div class="armory-banner-profs">${bannerProfHtml}</div>` : ''}
             </div>
           </div>
 
@@ -798,9 +946,9 @@
         </div>
 
         <div class="armory-inner-tabs" role="tablist">
-          <button type="button" class="armory-inner-tab ${activeTab === 'paperdoll' ? 'active' : ''}" data-armory-tab="paperdoll">Paperdoll &amp; Gear</button>
+          <button type="button" class="armory-inner-tab ${activeTab === 'paperdoll' ? 'active' : ''}" data-armory-tab="paperdoll">Gear &amp; Professions</button>
           <button type="button" class="armory-inner-tab ${activeTab === 'stats' ? 'active' : ''}" data-armory-tab="stats">Stats &amp; Talents</button>
-          <button type="button" class="armory-inner-tab ${activeTab === 'profs' ? 'active' : ''}" data-armory-tab="profs">Professions &amp; Reps</button>
+          <button type="button" class="armory-inner-tab ${activeTab === 'profs' ? 'active' : ''}" data-armory-tab="profs">Recipes &amp; Reps</button>
         </div>
 
         <div class="armory-inner-body">
@@ -816,9 +964,18 @@
         if (onTabChange) {
           onTabChange(next);
         } else {
-          renderSnapshotIntoContainer(containerEl, snapshot, { innerTab: next, onRefresh });
+          renderSnapshotIntoContainer(containerEl, snapshot, { innerTab: next, memberCharMeta, isSelf, onRefresh });
         }
       });
+    });
+
+    containerEl.querySelector('.armory-view-all-profs-btn')?.addEventListener('click', () => {
+      hideTooltip(true);
+      if (onTabChange) {
+        onTabChange('profs');
+      } else {
+        renderSnapshotIntoContainer(containerEl, snapshot, { innerTab: 'profs', memberCharMeta, isSelf, onRefresh });
+      }
     });
 
     containerEl.querySelector('.armory-refresh-btn')?.addEventListener('click', () => onRefresh?.());
@@ -828,7 +985,7 @@
   // MEMBER PROFILE MODAL (#modalMemberProfile)
   // =========================================================================
 
-  function renderMemberProfileModal(discordId, providedWallet = null) {
+  function renderMemberProfileModal(discordId, providedWallet = null, preferredCharKey = null) {
     const appState = hostCtx.getState() || {};
     const w = providedWallet || appState.bseState?.wallets?.[discordId];
     if (!w) return;
@@ -836,6 +993,13 @@
     const modalBody = document.getElementById('memberProfileModalBody');
     const modalOverlay = document.getElementById('modalMemberProfile');
     if (!modalBody || !modalOverlay) return;
+
+    const isSwitchingMember = uiState.modalMemberId !== discordId;
+    uiState.modalMemberId = discordId;
+    if (isSwitchingMember) {
+      uiState.modalActiveInnerTab = 'paperdoll';
+      uiState.modalSelectedCharSlug = null;
+    }
 
     const name = w.serverNickname || w.globalName || w.username || 'Guild Member';
     const handle = w.username ? `@${w.username}` : '';
@@ -853,7 +1017,10 @@
       _key: c.slug || buildCharSlugClient(c.name, c.surname || '') || `char_${idx}`
     }));
 
-    if (!uiState.modalSelectedCharSlug || !charKeys.some(c => c._key === uiState.modalSelectedCharSlug)) {
+    if (preferredCharKey && charKeys.some(c => c._key === preferredCharKey)) {
+      uiState.modalSelectedCharSlug = preferredCharKey;
+      uiState.modalActiveInnerTab = 'paperdoll';
+    } else if (!uiState.modalSelectedCharSlug || !charKeys.some(c => c._key === uiState.modalSelectedCharSlug)) {
       const def = charKeys.find(c => c.isPrimary) || charKeys[0];
       uiState.modalSelectedCharSlug = def ? def._key : null;
     }
@@ -868,7 +1035,7 @@
              return `
                <button type="button" class="armory-char-pill ${active ? 'active' : ''}" data-switch-char="${escAttr(c._key)}">
                  <span class="class-badge ${classBadgeCss(c.class)}">${escHtml(disp)}</span>
-                 ${c.level ? `<span class="armory-char-lv">Lv${escHtml(String(c.level))}</span>` : ''}
+                 ${c.level ? `<span class="armory-char-lv">Lv ${escHtml(String(c.level))}</span>` : ''}
                  ${c.armoryVerified ? `<span class="armory-verified-dot" title="Verified on WoW: Forever Armory">&#10003;</span>` : ''}
                  ${c.isPrimary ? `<span class="char-pill" style="font-size:0.62rem;">MAIN</span>` : ''}
                </button>
@@ -930,7 +1097,7 @@
 
       <div style="margin-bottom: 0.9rem;">
         <div style="display:flex; justify-content:space-between; align-items:center; gap:0.5rem; margin-bottom:0.45rem; flex-wrap:wrap;">
-          <h5 class="armory-section-label" style="margin:0;">WoW: Forever Characters &amp; Paperdoll</h5>
+          <h5 class="armory-section-label" style="margin:0;">Character Armory (Level, Gear &amp; Professions)</h5>
           ${isSelf ? `<button type="button" class="btn-secondary btn-xs" id="btnProfileEditChars">Manage Characters</button>` : ''}
         </div>
         ${switcherHtml}
@@ -951,6 +1118,7 @@
       btn.addEventListener('click', () => {
         hideTooltip(true);
         uiState.modalSelectedCharSlug = btn.getAttribute('data-switch-char');
+        uiState.modalActiveInnerTab = 'paperdoll';
         renderMemberProfileModal(discordId, w);
       });
     });
@@ -977,7 +1145,7 @@
     appState.inspectedMemberId = discordId;
     modalOverlay.classList.add('active');
 
-    // Load Paperdoll for activeChar
+    // Load Character Armory for activeChar
     const stage = modalBody.querySelector('#memberArmoryPaperdollStage');
     if (stage && activeChar) {
       loadArmoryForMemberCharacter(stage, activeChar, isSelf, false);
@@ -989,23 +1157,16 @@
     const hasSurname = Boolean(ch.surname || (slug && slug.includes('-')));
 
     if (!hasSurname && !ch.armoryVerified) {
-      const profTags = String(ch.professions || '').split(',').map(s => s.trim()).filter(Boolean);
-      stageEl.innerHTML = `
-        <div class="armory-unavailable-card">
-          <h5>${escHtml(ch.name)} &mdash; Forever Surname Not Linked Yet</h5>
-          <p>WoW: Forever identifies characters as <strong>Name-Surname</strong>. ${ch.role ? `Role: <strong>${escHtml(ch.role)}</strong>.` : ''} ${profTags.length ? `Professions: <strong>${escHtml(profTags.join(', '))}</strong>.` : ''}</p>
-          <p style="font-size:0.78rem; color:var(--text-dim);">Link this character's Surname in Manage Characters to display their live gear Paperdoll, stats, talents, and recipes.</p>
-          ${isSelf ? `<button type="button" class="btn-primary btn-sm armory-open-manage-btn" style="margin-top:0.5rem;">Add Surname &amp; Verify</button>` : ''}
-        </div>
-      `;
-      stageEl.querySelector('.armory-open-manage-btn')?.addEventListener('click', () => {
-        document.getElementById('modalMemberProfile')?.classList.remove('active');
-        hostCtx.openCharacterModal();
+      renderFallbackArmorySheet(stageEl, {
+        memberChar: ch,
+        isSelf,
+        statusTitle: 'Equipped Gear (Surname Needed)',
+        statusMessage: 'WoW: Forever Armory looks up gear by Name-Surname. Add a Surname in Manage Characters to load equipped gear slots, enchants, and live Battle.net recipes.'
       });
       return;
     }
 
-    stageEl.innerHTML = `<div class="armory-loading-box">Querying WoW: Forever Armory for <strong>${escHtml(slug)}</strong>...</div>`;
+    stageEl.innerHTML = `<div class="armory-loading-box">Loading Character Armory for <strong>${escHtml(ch.surname ? `${ch.name} ${ch.surname}` : ch.name)}</strong>...</div>`;
 
     try {
       const snapshot = await fetchCharacterArmoryClient({
@@ -1019,6 +1180,8 @@
         uiState.modalActiveInnerTab = nextTab;
         renderSnapshotIntoContainer(stageEl, snapshot, {
           innerTab: nextTab,
+          memberCharMeta: ch,
+          isSelf,
           onTabChange: handleRender,
           onRefresh: () => loadArmoryForMemberCharacter(stageEl, ch, isSelf, true)
         });
@@ -1026,637 +1189,13 @@
 
       handleRender(uiState.modalActiveInnerTab);
     } catch (err) {
-      stageEl.innerHTML = `
-        <div class="armory-unavailable-card">
-          <h5>Armory Lookup Failed</h5>
-          <p>${escHtml(err.message)}</p>
-          <button type="button" class="btn-secondary btn-sm armory-retry-fetch" style="margin-top:0.5rem;">Retry</button>
-        </div>
-      `;
-      stageEl.querySelector('.armory-retry-fetch')?.addEventListener('click', () => loadArmoryForMemberCharacter(stageEl, ch, isSelf, true));
-    }
-  }
-
-  // =========================================================================
-  // DATABASE & ARMORY TAB (#view-database)
-  // =========================================================================
-
-  function switchDbSubtab(subtab) {
-    uiState.activeDbSubtab = subtab;
-    document.querySelectorAll('.db-subtab').forEach(btn => {
-      const active = btn.getAttribute('data-db-subtab') === subtab;
-      btn.classList.toggle('active', active);
-      btn.setAttribute('aria-selected', active ? 'true' : 'false');
-    });
-    document.querySelectorAll('.db-subview').forEach(v => v.classList.remove('active'));
-    document.getElementById(`db-subview-${subtab}`)?.classList.add('active');
-
-    hideTooltip(true);
-
-    if (subtab === 'items' && !uiState.itemResults.length) {
-      searchItems('');
-    } else if (subtab === 'crafting') {
-      loadCraftingDirectory();
-    } else if (subtab === 'roster') {
-      loadForeverRoster();
-    } else if (subtab === 'ah') {
-      loadAhWatchlist();
-    }
-  }
-
-  function updateConnectionBadge() {
-    const badge = document.getElementById('armoryConnectionBadge');
-    if (!badge) return;
-    const armoryCfg = hostCtx.getState()?.bseState?.config?.armory || {};
-    const rulesetLabel = RULESET_NAMES[armoryCfg.guildRulesetId] || 'Forever US';
-    const configured = hostCtx.getState()?.bseState?.armoryStatus?.configured !== false;
-    badge.textContent = configured ? `Forever US · ${rulesetLabel}` : 'Forever US · Offline Stub';
-    badge.classList.toggle('is-online', configured);
-  }
-
-  // ---- 1. Items & Loot DB -------------------------------------------------
-
-  async function searchItems(query, page = 1) {
-    const cleanQ = String(query ?? '').trim();
-    uiState.itemQuery = cleanQ;
-    uiState.itemPage = page;
-
-    const input = document.getElementById('dbItemSearchInput');
-    if (input && input.value !== cleanQ && cleanQ) input.value = cleanQ;
-    const clearBtn = document.getElementById('btnClearDbItemSearch');
-    if (clearBtn) clearBtn.style.display = cleanQ ? 'inline-flex' : 'none';
-
-    const grid = document.getElementById('dbItemsGrid');
-    const hdr = document.getElementById('dbItemsHeaderLabel');
-    if (grid) grid.innerHTML = `<div class="table-loading-cell">Searching WoW: Forever items...</div>`;
-
-    try {
-      const params = new URLSearchParams({ page: String(page), pageSize: '24' });
-      if (cleanQ) params.set('q', cleanQ);
-      const res = await fetch(`/api/exchange/armory/items/search?${params.toString()}`);
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || `Search failed [${res.status}]`);
-
-      uiState.itemResults = Array.isArray(data.results) ? data.results : [];
-      if (hdr) {
-        hdr.textContent = data.featured
-          ? 'Featured WoW: Forever Items & Raid Classics'
-          : (uiState.itemResults.length
-            ? `Showing ${uiState.itemResults.length} results for "${cleanQ}" (Page ${data.page || 1})`
-            : `No items found matching "${cleanQ}"`);
-      }
-
-      renderItemsGrid(data);
-    } catch (err) {
-      if (grid) {
-        grid.innerHTML = `<div class="bounty-empty-state">Unable to search items: ${escHtml(err.message)}</div>`;
-      }
-    }
-  }
-
-  function renderItemsGrid(searchPayload) {
-    const grid = document.getElementById('dbItemsGrid');
-    const pagination = document.getElementById('dbItemPagination');
-    if (!grid) return;
-
-    if (!uiState.itemResults.length) {
-      grid.innerHTML = `<div class="bounty-empty-state">No matching WoW: Forever items found. Try an item name like <strong>Thunderfury</strong> or a numeric Item ID like <strong>19019</strong>.</div>`;
-      if (pagination) pagination.innerHTML = '';
-      return;
-    }
-
-    grid.innerHTML = uiState.itemResults.map(item => {
-      const q = qualityInfo(item.quality);
-      const tipKey = registerTooltipItem(item);
-      const icon = sanitizeUrl(item.iconUrl);
-      const subtitle = [
-        item.itemSubclass || item.itemClass || item.category || '',
-        item.level ? `iLvl ${item.level}` : ''
-      ].filter(Boolean).join(' · ');
-
-      return `
-        <article class="db-item-card ${q.cls}" data-item-id="${escAttr(String(item.id))}" data-wow-tip="${escAttr(tipKey)}">
-          <div class="db-item-card-top">
-            <div class="db-item-icon-wrap" style="border-color:${q.color};">
-              ${icon
-                ? `<img src="${escAttr(icon)}" alt="" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">
-                   <span class="armory-slot-glyph" style="display:none;">#</span>`
-                : `<span class="armory-slot-glyph">#</span>`
-              }
-            </div>
-            <div class="db-item-meta">
-              <div class="db-item-name" style="color:${q.color};">${escHtml(item.name)}</div>
-              <div class="db-item-sub">${escHtml(subtitle || `Item #${item.id}`)}</div>
-            </div>
-          </div>
-
-          <div class="db-item-card-footer">
-            ${item.ahPrice?.min > 0
-              ? `<span class="db-ah-mini-badge" title="Lowest active Forever AH buyout">AH Min: ${formatWowCoinsHtml(item.ahPrice.min)}</span>`
-              : `<span class="db-id-tag">#${escHtml(String(item.id))}</span>`
-            }
-            <div style="display:flex; gap:0.35rem; align-items:center;">
-              ${uiState.itemPickerCallback
-                ? `<button type="button" class="btn-primary btn-xs db-pick-item-btn" data-pick-item-id="${escAttr(String(item.id))}">Select</button>`
-                : ''
-              }
-              <button type="button" class="btn-secondary btn-xs db-inspect-item-btn" data-inspect-item-id="${escAttr(String(item.id))}">Inspect</button>
-            </div>
-          </div>
-        </article>
-      `;
-    }).join('');
-
-    grid.querySelectorAll('.db-inspect-item-btn').forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        hideTooltip(true);
-        openItemDetail(Number(btn.getAttribute('data-inspect-item-id')));
+      renderFallbackArmorySheet(stageEl, {
+        memberChar: ch,
+        isSelf,
+        statusTitle: 'Equipped Gear Unavailable',
+        statusMessage: err.message || 'Unable to reach Battle.net Armory right now.',
+        onRefresh: () => loadArmoryForMemberCharacter(stageEl, ch, isSelf, true)
       });
-    });
-
-    grid.querySelectorAll('.db-pick-item-btn').forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const itemId = Number(btn.getAttribute('data-pick-item-id'));
-        const item = uiState.itemResults.find(it => Number(it.id) === itemId);
-        if (item && uiState.itemPickerCallback) {
-          const cb = uiState.itemPickerCallback;
-          uiState.itemPickerCallback = null;
-          cb(item);
-        }
-      });
-    });
-
-    if (pagination) {
-      const page = Number(searchPayload?.page || 1);
-      const pageCount = Number(searchPayload?.pageCount || 1);
-      if (pageCount > 1) {
-        pagination.innerHTML = `
-          <button type="button" class="btn-secondary btn-xs" id="btnDbItemPrev" ${page <= 1 ? 'disabled' : ''}>&larr; Prev</button>
-          <span class="pagination-info">Page ${page} / ${pageCount}</span>
-          <button type="button" class="btn-secondary btn-xs" id="btnDbItemNext" ${page >= pageCount ? 'disabled' : ''}>Next &rarr;</button>
-        `;
-        pagination.querySelector('#btnDbItemPrev')?.addEventListener('click', () => searchItems(uiState.itemQuery, page - 1));
-        pagination.querySelector('#btnDbItemNext')?.addEventListener('click', () => searchItems(uiState.itemQuery, page + 1));
-      } else {
-        pagination.innerHTML = '';
-      }
-    }
-  }
-
-  async function openItemDetail(itemId) {
-    const panel = document.getElementById('dbItemDetailPanel');
-    if (!panel || !itemId) return;
-    panel.style.display = 'block';
-    panel.innerHTML = `<div class="armory-loading-box">Loading full Forever item data for #${escHtml(String(itemId))}...</div>`;
-
-    try {
-      const res = await fetch(`/api/exchange/armory/item/${encodeURIComponent(String(itemId))}`);
-      const item = await res.json();
-      if (!res.ok) throw new Error(item.error || 'Failed to load item details');
-
-      uiState.itemSelected = item;
-      const q = qualityInfo(item.quality);
-      const icon = sanitizeUrl(item.iconUrl);
-      const wowhead = sanitizeUrl(item.wowheadUrl || `https://www.wowhead.com/forever/item=${item.id}`);
-
-      panel.innerHTML = `
-        <div class="db-detail-drawer">
-          <div class="db-detail-header">
-            <div style="display:flex; align-items:center; gap:0.75rem; min-width:0;">
-              <div class="db-item-icon-wrap" style="border-color:${q.color}; width:44px; height:44px;">
-                ${icon ? `<img src="${escAttr(icon)}" alt="">` : `<span class="armory-slot-glyph">#</span>`}
-              </div>
-              <div style="min-width:0;">
-                <h4 style="color:${q.color}; margin:0;">${escHtml(item.name)}</h4>
-                <span class="subview-hint">Item ID #${escHtml(String(item.id))}${item.itemSubclass ? ` &bull; ${escHtml(item.itemSubclass)}` : ''}</span>
-              </div>
-            </div>
-            <div style="display:flex; gap:0.45rem; flex-wrap:wrap;">
-              <button type="button" class="btn-secondary btn-xs" id="btnCopyDetailItemId">Copy ID</button>
-              ${wowhead ? `<a href="${escAttr(wowhead)}" target="_blank" rel="noopener noreferrer" class="btn-secondary btn-xs">Wowhead Forever &nearr;</a>` : ''}
-              <button type="button" class="btn-secondary btn-xs" id="btnCloseItemDetailPanel">Close</button>
-            </div>
-          </div>
-
-          <div class="db-detail-body">
-            <div class="wow-tooltip-inline-card">
-              ${buildTooltipInnerHtml(item, { includeActions: false })}
-            </div>
-            <div class="db-detail-market-box">
-              <h6>Forever US Market &amp; Utility</h6>
-              <div class="armory-stat-line"><span>Min Buyout</span><strong>${formatWowCoinsHtml(item.ahPrice?.min)}</strong></div>
-              <div class="armory-stat-line"><span>Weighted Median</span><strong>${formatWowCoinsHtml(item.ahPrice?.median)}</strong></div>
-              <div class="armory-stat-line"><span>Auction Quantity</span><strong>${item.ahPrice?.qty ? escHtml(String(item.ahPrice.qty)) : '&mdash;'}</strong></div>
-              ${item.ahPrice?.updatedAt ? `<div class="subview-hint" style="margin-top:0.35rem;">AH snapshot updated ${escHtml(formatRelativeTime(item.ahPrice.updatedAt))}</div>` : ''}
-              <button type="button" class="btn-secondary btn-sm" id="btnFindCraftersForItem" style="margin-top:0.65rem; width:100%;">Search Guild Crafters for This Item</button>
-            </div>
-          </div>
-        </div>
-      `;
-
-      panel.querySelector('#btnCopyDetailItemId')?.addEventListener('click', () => copyToClipboard(item.id, `Copied Item ID #${item.id}`));
-      panel.querySelector('#btnCloseItemDetailPanel')?.addEventListener('click', () => { panel.style.display = 'none'; });
-      panel.querySelector('#btnFindCraftersForItem')?.addEventListener('click', () => {
-        const searchWord = String(item.name || '').split(':')[0].trim();
-        uiState.craftingQuery = searchWord;
-        const cSearch = document.getElementById('dbCraftingSearch');
-        if (cSearch) cSearch.value = searchWord;
-        switchDbSubtab('crafting');
-      });
-    } catch (err) {
-      panel.innerHTML = `<div class="bounty-empty-state">Could not load Item #${escHtml(String(itemId))}: ${escHtml(err.message)}</div>`;
-    }
-  }
-
-  // ---- 2. Guild Crafters Directory ----------------------------------------
-
-  async function loadCraftingDirectory(force = false) {
-    const recipesList = document.getElementById('dbCraftingRecipesList');
-    if (recipesList && !uiState.craftingData) {
-      recipesList.innerHTML = `<div class="table-loading-cell">Loading Guild Crafting Directory...</div>`;
-    }
-
-    try {
-      const params = new URLSearchParams();
-      if (uiState.craftingQuery) params.set('q', uiState.craftingQuery);
-      if (uiState.craftingProf && uiState.craftingProf !== 'all') params.set('profession', uiState.craftingProf);
-      const res = await fetch(`/api/exchange/armory/crafting?${params.toString()}`);
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to load crafting directory');
-
-      uiState.craftingData = data;
-      renderCraftingDirectory(data);
-    } catch (err) {
-      if (recipesList) {
-        recipesList.innerHTML = `<div class="bounty-empty-state">Unable to load Guild Crafters: ${escHtml(err.message)}</div>`;
-      }
-    }
-  }
-
-  function renderCraftingDirectory(data) {
-    const statsBadge = document.getElementById('dbCraftingStatsBadge');
-    const chipsBar = document.getElementById('dbCraftingProfChips');
-    const craftersBar = document.getElementById('dbCraftingCraftersBar');
-    const recipesList = document.getElementById('dbCraftingRecipesList');
-
-    if (statsBadge) {
-      statsBadge.textContent = `${data.totalRecipes || 0} Recipes · ${data.totalCrafters || 0} Crafters`;
-    }
-
-    if (chipsBar) {
-      const profs = ['all', ...(data.professions || [])];
-      chipsBar.innerHTML = profs.map(p => {
-        const active = (uiState.craftingProf || 'all').toLowerCase() === String(p).toLowerCase();
-        return `<button type="button" class="category-chip ${active ? 'active' : ''}" data-prof="${escAttr(p)}">${p === 'all' ? 'All Professions' : escHtml(p)}</button>`;
-      }).join('');
-
-      chipsBar.querySelectorAll('[data-prof]').forEach(btn => {
-        btn.addEventListener('click', () => {
-          uiState.craftingProf = btn.getAttribute('data-prof');
-          loadCraftingDirectory();
-        });
-      });
-    }
-
-    if (craftersBar) {
-      const crafters = Array.isArray(data.crafters) ? data.crafters : [];
-      craftersBar.innerHTML = crafters.length
-        ? crafters.map(c => `
-            <button type="button" class="db-crafter-card" data-inspect-char-slug="${escAttr(c.slug)}">
-              <div class="db-crafter-head">
-                <span class="class-badge ${classBadgeCss(c.className)}">${escHtml(c.displayName)}</span>
-                ${c.discordName ? `<span class="subview-hint">@${escHtml(c.discordName)}</span>` : ''}
-              </div>
-              <div class="db-crafter-profs">
-                ${(c.professions || []).map(pr => `<span class="armory-talent-pill">${escHtml(pr.name)} <b>${pr.skill}/${pr.maxSkill}</b></span>`).join('')}
-              </div>
-            </button>
-          `).join('')
-        : '';
-
-      craftersBar.querySelectorAll('[data-inspect-char-slug]').forEach(btn => {
-        btn.addEventListener('click', () => inspectCharFromDatabase(btn.getAttribute('data-inspect-char-slug')));
-      });
-    }
-
-    if (recipesList) {
-      const recipes = Array.isArray(data.recipes) ? data.recipes : [];
-      if (!recipes.length) {
-        recipesList.innerHTML = `
-          <div class="bounty-empty-state">
-            No indexed recipes match your filter yet. Once guild members verify their Forever characters, their known professions and recipes populate automatically.
-          </div>
-        `;
-        return;
-      }
-
-      recipesList.innerHTML = recipes.map(rec => `
-        <div class="db-recipe-row">
-          <div class="db-recipe-title">
-            <strong>${escHtml(rec.name)}</strong>
-            <span class="card-badge crafting">${escHtml(rec.profession)}</span>
-          </div>
-          <div class="db-recipe-crafters">
-            ${(rec.crafters || []).map(cr => `
-              <button type="button" class="db-recipe-crafter-pill" data-inspect-char-slug="${escAttr(cr.slug)}" title="Click to inspect Armory">
-                <span style="color:${CLASS_COLORS[cr.className] || '#fff'}; font-weight:700;">${escHtml(cr.displayName)}</span>
-                <span class="subview-hint">${escHtml(String(cr.skill || 0))}${cr.discordName ? ` · ${escHtml(cr.discordName)}` : ''}</span>
-              </button>
-            `).join('')}
-          </div>
-        </div>
-      `).join('');
-
-      recipesList.querySelectorAll('[data-inspect-char-slug]').forEach(btn => {
-        btn.addEventListener('click', () => inspectCharFromDatabase(btn.getAttribute('data-inspect-char-slug')));
-      });
-    }
-  }
-
-  // ---- 3. Forever Guild Roster --------------------------------------------
-
-  async function loadForeverRoster(forceRefresh = false) {
-    const tbody = document.getElementById('dbRosterTableBody');
-    const mobileList = document.getElementById('dbRosterMobileList');
-    if (tbody && !uiState.rosterData) {
-      tbody.innerHTML = `<tr><td colspan="6" class="table-loading-cell">Loading WoW: Forever guild roster...</td></tr>`;
-    }
-
-    const isOfficer = Boolean(hostCtx.getState()?.user?.isOfficer);
-    const syncBtn = document.getElementById('btnDbSyncRoster');
-    if (syncBtn) syncBtn.style.display = isOfficer ? 'inline-flex' : 'none';
-
-    try {
-      const qs = forceRefresh ? '?refresh=1' : '';
-      const res = await fetch(`/api/exchange/armory/guild-roster${qs}`);
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to load guild roster');
-
-      uiState.rosterData = data;
-      renderForeverRoster(data);
-    } catch (err) {
-      const errMsg = `Unable to load Forever guild roster: ${escHtml(err.message)}`;
-      if (tbody) tbody.innerHTML = `<tr><td colspan="6" class="table-loading-cell">${errMsg}</td></tr>`;
-      if (mobileList) mobileList.innerHTML = `<div class="table-loading-cell">${errMsg}</div>`;
-    }
-  }
-
-  function renderForeverRoster(data) {
-    const banner = document.getElementById('dbRosterBanner');
-    const tbody = document.getElementById('dbRosterTableBody');
-    const mobileList = document.getElementById('dbRosterMobileList');
-
-    const members = Array.isArray(data?.members) ? data.members : [];
-    const linkedCount = members.filter(m => Boolean(m.matchedDiscordId)).length;
-
-    if (banner) {
-      banner.innerHTML = `
-        <div class="db-banner-stat"><span>Guild</span><strong>${escHtml(data?.guildName || data?.guildSlug || 'Unconfigured')}</strong></div>
-        <div class="db-banner-stat"><span>Characters</span><strong>${members.length.toLocaleString()}</strong></div>
-        <div class="db-banner-stat"><span>Linked to Discord</span><strong class="gold">${linkedCount.toLocaleString()}</strong></div>
-        <div class="db-banner-stat"><span>Last Sync</span><strong>${escHtml(formatRelativeTime(data?.syncedAt))}</strong></div>
-      `;
-    }
-
-    const q = String(uiState.rosterQuery || '').trim().toLowerCase();
-    const filter = uiState.rosterFilter || 'all';
-    const filtered = members.filter(m => {
-      if (filter === 'linked' && !m.matchedDiscordId) return false;
-      if (filter === 'unlinked' && m.matchedDiscordId) return false;
-      if (filter === 'max' && Number(m.level) < 60) return false;
-      if (!q) return true;
-      return (
-        String(m.displayName || m.name || '').toLowerCase().includes(q) ||
-        String(m.className || '').toLowerCase().includes(q) ||
-        String(m.raceName || '').toLowerCase().includes(q) ||
-        String(m.matchedDiscordName || '').toLowerCase().includes(q)
-      );
-    });
-
-    if (!filtered.length) {
-      const empty = data?.found === false
-        ? (data.message || 'Guild roster not synced yet.')
-        : 'No guild characters match the active filters.';
-      if (tbody) tbody.innerHTML = `<tr><td colspan="6" class="table-loading-cell">${escHtml(empty)}</td></tr>`;
-      if (mobileList) mobileList.innerHTML = `<div class="table-loading-cell">${escHtml(empty)}</div>`;
-      return;
-    }
-
-    if (tbody) {
-      tbody.innerHTML = filtered.slice(0, 150).map(m => `
-        <tr>
-          <td class="subview-hint">Rank ${escHtml(String(m.rank ?? '—'))}</td>
-          <td><span class="class-badge ${classBadgeCss(m.className)}">${escHtml(m.displayName || m.name)}</span></td>
-          <td><strong>${escHtml(String(m.level || '?'))}</strong></td>
-          <td>${escHtml(m.raceName || '')} ${escHtml(m.className || '')}</td>
-          <td>
-            ${m.matchedDiscordId
-              ? `<button type="button" class="btn-link-subtle roster-open-wallet" data-discord-id="${escAttr(m.matchedDiscordId)}">${escHtml(m.matchedDiscordName || 'Linked Member')}</button>`
-              : `<span class="subview-hint">Unlinked</span>`
-            }
-          </td>
-          <td style="text-align:right;">
-            <button type="button" class="btn-secondary btn-xs roster-inspect-char" data-char-slug="${escAttr(m.slug)}">Armory</button>
-          </td>
-        </tr>
-      `).join('');
-    }
-
-    if (mobileList) {
-      mobileList.innerHTML = filtered.slice(0, 100).map(m => `
-        <div class="mobile-roster-card roster-inspect-char" data-char-slug="${escAttr(m.slug)}">
-          <div style="display:flex; justify-content:space-between; align-items:center; gap:0.65rem;">
-            <div style="min-width:0;">
-              <div style="display:flex; align-items:center; gap:0.45rem; flex-wrap:wrap;">
-                <span class="class-badge ${classBadgeCss(m.className)}">${escHtml(m.displayName || m.name)}</span>
-                <span class="subview-hint">Lv ${escHtml(String(m.level || '?'))} &bull; Rank ${escHtml(String(m.rank ?? '—'))}</span>
-              </div>
-              <div class="mobile-roster-meta">
-                <span>${escHtml(m.raceName || '')} ${escHtml(m.className || '')}</span>
-                ${m.matchedDiscordName ? `<span class="gold">&bull; ${escHtml(m.matchedDiscordName)}</span>` : ''}
-              </div>
-            </div>
-            <div class="mobile-roster-arrow">&rsaquo;</div>
-          </div>
-        </div>
-      `).join('');
-    }
-
-    const bindContainer = (root) => {
-      if (!root) return;
-      root.querySelectorAll('.roster-open-wallet').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          const did = btn.getAttribute('data-discord-id');
-          window.inspectMemberProfile?.(did);
-        });
-      });
-      root.querySelectorAll('.roster-inspect-char').forEach(el => {
-        el.addEventListener('click', () => inspectCharFromDatabase(el.getAttribute('data-char-slug')));
-      });
-    };
-    bindContainer(tbody);
-    bindContainer(mobileList);
-  }
-
-  // ---- 4. AH Price Watch --------------------------------------------------
-
-  async function loadAhWatchlist() {
-    const tbody = document.getElementById('dbAhTableBody');
-    const mobileList = document.getElementById('dbAhMobileList');
-    if (tbody && !uiState.ahData) {
-      tbody.innerHTML = `<tr><td colspan="6" class="table-loading-cell">Loading Auction House snapshot...</td></tr>`;
-    }
-
-    try {
-      const res = await fetch('/api/exchange/armory/ah/watchlist');
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to load AH watchlist');
-      uiState.ahData = data;
-      renderAhWatchlist(data);
-    } catch (err) {
-      const msg = `Unable to load AH watchlist: ${escHtml(err.message)}`;
-      if (tbody) tbody.innerHTML = `<tr><td colspan="6" class="table-loading-cell">${msg}</td></tr>`;
-      if (mobileList) mobileList.innerHTML = `<div class="table-loading-cell">${msg}</div>`;
-    }
-  }
-
-  function renderAhWatchlist(data) {
-    const banner = document.getElementById('dbAhSummaryBanner');
-    const tbody = document.getElementById('dbAhTableBody');
-    const mobileList = document.getElementById('dbAhMobileList');
-
-    if (banner) {
-      banner.innerHTML = `
-        <div class="db-banner-stat"><span>Auction House</span><strong>#${escHtml(String(data?.houseId || 110))}</strong></div>
-        <div class="db-banner-stat"><span>Ruleset</span><strong>${escHtml(RULESET_NAMES[data?.rulesetId] || `ID ${data?.rulesetId || 1}`)}</strong></div>
-        <div class="db-banner-stat"><span>Distinct Items</span><strong>${(data?.distinctItemCount || 0).toLocaleString()}</strong></div>
-        <div class="db-banner-stat"><span>Snapshot</span><strong>${data?.hasSnapshot ? escHtml(formatRelativeTime(data.updatedAt)) : 'Awaiting 1st hourly ingest'}</strong></div>
-      `;
-    }
-
-    const q = String(uiState.ahQuery || '').trim().toLowerCase();
-    const rows = (data?.items || []).filter(r =>
-      !q || String(r.name || '').toLowerCase().includes(q) || String(r.id).includes(q)
-    );
-
-    if (!rows.length) {
-      if (tbody) tbody.innerHTML = `<tr><td colspan="6" class="table-loading-cell">No tracked consumables match your filter.</td></tr>`;
-      if (mobileList) mobileList.innerHTML = `<div class="table-loading-cell">No tracked consumables match your filter.</div>`;
-      return;
-    }
-
-    if (tbody) {
-      tbody.innerHTML = rows.map(r => {
-        const qual = qualityInfo(r.quality);
-        const icon = sanitizeUrl(r.iconUrl);
-        const wowhead = sanitizeUrl(r.wowheadUrl);
-        return `
-          <tr>
-            <td>
-              <div style="display:flex; align-items:center; gap:0.55rem;">
-                <div class="db-item-icon-wrap" style="border-color:${qual.color}; width:30px; height:30px;">
-                  ${icon ? `<img src="${escAttr(icon)}" alt="">` : `<span class="armory-slot-glyph" style="font-size:0.65rem;">#</span>`}
-                </div>
-                <strong style="color:${qual.color};">${escHtml(r.name)}</strong>
-              </div>
-            </td>
-            <td class="subview-hint">#${escHtml(String(r.id))}</td>
-            <td>${formatWowCoinsHtml(r.minBuyout)}</td>
-            <td>${formatWowCoinsHtml(r.medianPrice)}</td>
-            <td>${r.qty > 0 ? escHtml(String(r.qty)) : '<span class="subview-hint">0</span>'}</td>
-            <td style="text-align:right;">
-              <button type="button" class="btn-secondary btn-xs ah-inspect-item" data-item-id="${escAttr(String(r.id))}">Item DB</button>
-              ${wowhead ? `<a href="${escAttr(wowhead)}" target="_blank" rel="noopener noreferrer" class="btn-secondary btn-xs" style="margin-left:0.25rem;">Wowhead &nearr;</a>` : ''}
-            </td>
-          </tr>
-        `;
-      }).join('');
-    }
-
-    if (mobileList) {
-      mobileList.innerHTML = rows.map(r => {
-        const qual = qualityInfo(r.quality);
-        return `
-          <div class="mobile-roster-card ah-inspect-item" data-item-id="${escAttr(String(r.id))}">
-            <div style="display:flex; justify-content:space-between; align-items:center; gap:0.5rem;">
-              <strong style="color:${qual.color}; font-size:0.9rem;">${escHtml(r.name)}</strong>
-              <span class="subview-hint">${r.qty > 0 ? `${r.qty} listed` : 'None listed'}</span>
-            </div>
-            <div class="mobile-roster-meta" style="margin-top:0.35rem; justify-content:space-between;">
-              <span>Min: ${formatWowCoinsHtml(r.minBuyout)}</span>
-              <span>Med: ${formatWowCoinsHtml(r.medianPrice)}</span>
-            </div>
-          </div>
-        `;
-      }).join('');
-    }
-
-    const bind = (root) => {
-      root?.querySelectorAll('.ah-inspect-item').forEach(el => {
-        el.addEventListener('click', () => {
-          const itemId = Number(el.getAttribute('data-item-id'));
-          switchDbSubtab('items');
-          openItemDetail(itemId);
-        });
-      });
-    };
-    bind(tbody);
-    bind(mobileList);
-  }
-
-  // ---- 5. Ad-Hoc Character Lookup -----------------------------------------
-
-  async function inspectCharFromDatabase(slugOrName, surname = '') {
-    const clean = String(slugOrName || '').trim();
-    if (!clean) return;
-    let first = clean;
-    let last = String(surname || '').trim();
-    if (!last && clean.includes('-')) {
-      const parts = clean.split('-');
-      first = parts[0] || '';
-      last = parts.slice(1).join('-');
-    }
-
-    const nameIn = document.getElementById('dbLookupName');
-    const surIn = document.getElementById('dbLookupSurname');
-    if (nameIn) nameIn.value = first;
-    if (surIn) surIn.value = last;
-
-    hostCtx.switchTab('database');
-    switchDbSubtab('lookup');
-    await executeDatabaseCharLookup(first, last, false);
-  }
-
-  async function executeDatabaseCharLookup(name, surname, forceRefresh = false) {
-    const resultEl = document.getElementById('dbCharLookupResult');
-    if (!resultEl) return;
-
-    const slug = buildCharSlugClient(name, surname);
-    if (!slug) {
-      hostCtx.showToast('Please enter a character name and surname.');
-      return;
-    }
-
-    uiState.lookupLastSlug = slug;
-    resultEl.innerHTML = `<div class="armory-loading-box">Loading WoW: Forever Armory for <strong>${escHtml(slug)}</strong>...</div>`;
-
-    try {
-      const snapshot = await fetchCharacterArmoryClient({ slug, name, surname, forceRefresh });
-      let tab = 'paperdoll';
-      const draw = (nextTab) => {
-        tab = nextTab;
-        renderSnapshotIntoContainer(resultEl, snapshot, {
-          innerTab: tab,
-          onTabChange: draw,
-          onRefresh: () => executeDatabaseCharLookup(name, surname, true)
-        });
-      };
-      draw('paperdoll');
-    } catch (err) {
-      resultEl.innerHTML = `<div class="bounty-empty-state">Armory lookup failed: ${escHtml(err.message)}</div>`;
     }
   }
 
@@ -1702,8 +1241,10 @@
         const snapshot = await fetchCharacterArmoryClient({ name, surname, forceRefresh: true });
         if (snapshot?.found) {
           const classEl = document.getElementById('newCharClass');
+          const levelEl = document.getElementById('newCharLevel');
           const profEl = document.getElementById('newCharProfessions');
           if (classEl && snapshot.className) classEl.value = snapshot.className;
+          if (levelEl && snapshot.level) levelEl.value = String(snapshot.level);
           if (profEl && snapshot.professions?.allSummary) profEl.value = snapshot.professions.allSummary;
 
           uiState.pendingVerifiedChar = {
@@ -1868,7 +1409,6 @@
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Roster sync failed');
-        uiState.rosterData = data.roster || null;
         const count = data.roster?.memberCount || data.roster?.members?.length || 0;
         setResult(`Synced "${data.roster?.guildName || guildSlug}": ${count} in-game characters indexed.`);
         hostCtx.showToast(`Synced ${count} Forever roster characters.`);
@@ -1909,79 +1449,8 @@
   }
 
   // =========================================================================
-  // DATABASE UI BINDINGS & PUBLIC API
+  // PUBLIC API
   // =========================================================================
-
-  function bindDatabaseEvents() {
-    document.querySelectorAll('.db-subtab').forEach(btn => {
-      btn.addEventListener('click', () => switchDbSubtab(btn.getAttribute('data-db-subtab')));
-    });
-
-    const itemInput = document.getElementById('dbItemSearchInput');
-    document.getElementById('btnDbItemSearch')?.addEventListener('click', () => searchItems(itemInput?.value || '', 1));
-    itemInput?.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        searchItems(itemInput.value, 1);
-      }
-    });
-    document.getElementById('btnClearDbItemSearch')?.addEventListener('click', () => {
-      if (itemInput) itemInput.value = '';
-      searchItems('', 1);
-    });
-
-    document.querySelectorAll('.db-item-preset').forEach(chip => {
-      chip.addEventListener('click', () => {
-        const q = chip.getAttribute('data-query') || '';
-        if (itemInput) itemInput.value = q;
-        searchItems(q, 1);
-      });
-    });
-
-    // Crafting search debounce
-    let craftTimer = null;
-    document.getElementById('dbCraftingSearch')?.addEventListener('input', (e) => {
-      uiState.craftingQuery = e.target.value;
-      clearTimeout(craftTimer);
-      craftTimer = setTimeout(() => loadCraftingDirectory(), 220);
-    });
-
-    // Roster filter & search
-    document.getElementById('dbRosterSearch')?.addEventListener('input', (e) => {
-      uiState.rosterQuery = e.target.value;
-      if (uiState.rosterData) renderForeverRoster(uiState.rosterData);
-    });
-    document.querySelectorAll('#dbRosterFilterPills [data-roster-filter]').forEach(btn => {
-      btn.addEventListener('click', () => {
-        document.querySelectorAll('#dbRosterFilterPills [data-roster-filter]').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        uiState.rosterFilter = btn.getAttribute('data-roster-filter');
-        if (uiState.rosterData) renderForeverRoster(uiState.rosterData);
-      });
-    });
-    document.getElementById('btnDbSyncRoster')?.addEventListener('click', () => loadForeverRoster(true));
-
-    // AH search & refresh
-    document.getElementById('dbAhSearchInput')?.addEventListener('input', (e) => {
-      uiState.ahQuery = e.target.value;
-      if (uiState.ahData) renderAhWatchlist(uiState.ahData);
-    });
-    document.getElementById('btnRefreshAhWatch')?.addEventListener('click', () => loadAhWatchlist());
-
-    // Ad-hoc character lookup
-    const runLookup = () => {
-      const first = document.getElementById('dbLookupName')?.value.trim() || '';
-      const last = document.getElementById('dbLookupSurname')?.value.trim() || '';
-      executeDatabaseCharLookup(first, last, false);
-    };
-    document.getElementById('btnDbCharLookup')?.addEventListener('click', runLookup);
-    document.getElementById('dbLookupSurname')?.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        runLookup();
-      }
-    });
-  }
 
   window.BSEArmory = {
     init(ctx) {
@@ -1989,38 +1458,19 @@
       if (uiState.initialized) return;
       uiState.initialized = true;
       bindGlobalTooltipHandlers();
-      bindDatabaseEvents();
       bindCharacterVerifyControls();
       bindOfficerArmoryControls();
-      updateConnectionBadge();
     },
 
-    onTabActivated(tabName) {
+    onTabActivated() {
       hideTooltip(true);
-      updateConnectionBadge();
-      if (tabName === 'database') {
-        switchDbSubtab(uiState.activeDbSubtab || 'items');
-      }
     },
 
-    onBseStateUpdated() {
-      updateConnectionBadge();
-    },
+    onBseStateUpdated() {},
 
     renderMemberProfileModal,
     consumePendingVerifiedCharacter,
     syncOfficerArmoryForm,
-    inspectCharacter: inspectCharFromDatabase,
-
-    openItemPicker(callback) {
-      uiState.itemPickerCallback = typeof callback === 'function' ? callback : null;
-      hostCtx.switchTab('database');
-      switchDbSubtab('items');
-      if (uiState.itemResults.length) {
-        renderItemsGrid({ page: uiState.itemPage, pageCount: 1 });
-      }
-    },
-
     formatWowCoinsHtml
   };
 })();

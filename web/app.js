@@ -192,7 +192,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     getDiscordAvatarUrl,
     resolveRankTitle,
     resolveClientMemberWeeklyStatus,
-    switchTab,
     openCharacterModal
   });
 
@@ -591,17 +590,84 @@ function getClassIcon(className = '') {
   return '';
 }
 
+function buildCharKeyClient(c, idx = 0) {
+  if (!c || !c.name) return `char_${idx}`;
+  if (c.slug) return c.slug;
+  const clean = (v) => String(v || '').trim().toLowerCase().replace(/\s+/g, '');
+  const n = clean(c.name);
+  const s = clean(c.surname || '');
+  if (n.includes('-') && !s) return n;
+  return s ? `${n}-${s}` : (n || `char_${idx}`);
+}
+
+function formatProfessionsBrief(rawProfessions, maxItems = 2) {
+  const items = String(rawProfessions || '')
+    .split(/[,;|\n•]+|\s+\/\s+|(?<=[a-zA-Z])\s*\/\s*(?=[a-zA-Z])/)
+    .map(s => s.trim())
+    .filter(Boolean);
+  if (!items.length) return '';
+  if (items.length <= maxItems) return items.join(' · ');
+  return `${items.slice(0, maxItems).join(' · ')} +${items.length - maxItems}`;
+}
+
 function resolveMemberPrimaryChar(w) {
-  const chars = w?.characters || [];
-  const primChar = chars.find(c => c.isPrimary)
-    || (w?.primaryCharacter ? chars.find(c => c.name === w.primaryCharacter) : null)
-    || chars[0]
-    || null;
+  const chars = Array.isArray(w?.characters) ? w.characters : [];
+  const primIdx = chars.findIndex(c => c.isPrimary);
+  const fallbackIdx = (primIdx < 0 && w?.primaryCharacter)
+    ? chars.findIndex(c => c.name === w.primaryCharacter)
+    : -1;
+  const resolvedIdx = primIdx >= 0 ? primIdx : (fallbackIdx >= 0 ? fallbackIdx : (chars.length ? 0 : -1));
+  const primChar = resolvedIdx >= 0 ? chars[resolvedIdx] : null;
+  const name = primChar ? primChar.name : (w?.primaryCharacter || null);
+
   return {
-    name: primChar ? primChar.name : (w?.primaryCharacter || null),
+    name,
+    surname: primChar?.surname || '',
+    slug: primChar?.slug || '',
+    key: primChar ? buildCharKeyClient(primChar, resolvedIdx) : (name ? buildCharKeyClient({ name }, 0) : null),
     charClass: primChar ? (primChar.class || 'Warrior') : '',
-    charRole: primChar ? (primChar.role || 'DPS') : ''
+    charRole: primChar ? (primChar.role || 'DPS') : '',
+    level: primChar?.level ? Number(primChar.level) : null,
+    professions: primChar?.professions || '',
+    armoryVerified: Boolean(primChar?.armoryVerified),
+    altCount: Math.max(0, chars.length - (primChar ? 1 : 0))
   };
+}
+
+function findCharacterMatchForLedgerQuery(w, query) {
+  if (!query) return null;
+  const chars = Array.isArray(w?.characters) ? w.characters : [];
+  if (!chars.length) return null;
+  const prim = resolveMemberPrimaryChar(w);
+
+  // Check primary character first so searches matching both main and alt highlight main first
+  const ordered = [];
+  chars.forEach((c, idx) => {
+    const key = buildCharKeyClient(c, idx);
+    ordered.push({ char: c, key, isPrimary: Boolean(prim.key && key === prim.key) });
+  });
+  ordered.sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary));
+
+  for (const item of ordered) {
+    const c = item.char;
+    const haystack = [
+      c.name,
+      c.surname,
+      c.surname ? `${c.name} ${c.surname}` : '',
+      c.slug,
+      c.class,
+      c.role,
+      c.professions
+    ].filter(Boolean).join(' ').toLowerCase();
+    if (haystack.includes(query)) {
+      return {
+        char: c,
+        key: item.key,
+        isAlt: !item.isPrimary
+      };
+    }
+  }
+  return null;
 }
 
 /**
@@ -828,22 +894,28 @@ function renderLeaderboard() {
     totalBonesEl.textContent = totalGuildCareerBones.toLocaleString();
   }
 
-  // Apply Role, Class, and Search query filters
-  const filtered = rankedPool.filter(({ w }) => {
+  // Apply Role, Class, and Search query filters (matching member identity, note, OR any linked character/profession)
+  const filtered = [];
+  for (const item of rankedPool) {
+    const { w } = item;
     const prim = resolveMemberPrimaryChar(w);
     if (roleFilter !== 'all') {
-      if (!prim.name || prim.charRole.toLowerCase() !== roleFilter) return false;
+      if (!prim.name || prim.charRole.toLowerCase() !== roleFilter) continue;
     }
     if (classFilter !== 'all') {
-      if (!prim.name || prim.charClass.toLowerCase() !== classFilter) return false;
+      if (!prim.name || prim.charClass.toLowerCase() !== classFilter) continue;
     }
-    if (!query) return true;
-    const name = (w.serverNickname || w.globalName || w.username || '').toLowerCase();
-    const handle = (w.username || '').toLowerCase();
-    const char = (prim.name || w.primaryCharacter || '').toLowerCase();
-    const note = (w.guildNote || '').toLowerCase();
-    return name.includes(query) || handle.includes(query) || char.includes(query) || note.includes(query);
-  });
+    const charMatch = query ? findCharacterMatchForLedgerQuery(w, query) : null;
+    if (query) {
+      const name = (w.serverNickname || w.globalName || w.username || '').toLowerCase();
+      const handle = (w.username || '').toLowerCase();
+      const primName = (prim.name || w.primaryCharacter || '').toLowerCase();
+      const note = (w.guildNote || '').toLowerCase();
+      const textHit = name.includes(query) || handle.includes(query) || primName.includes(query) || note.includes(query);
+      if (!textHit && !charMatch) continue;
+    }
+    filtered.push({ ...item, prim, charMatch });
+  }
 
   // Pagination slice (skip paging when typing search query or Show All toggled)
   const pageSize = state.ledgerPageSize || 20;
@@ -947,7 +1019,7 @@ function renderLeaderboard() {
   }
 
   // 1. Render Desktop Table (>= 768px)
-  leaderboardTbody.innerHTML = displayedRows.map(({ w, isHidden, isZero, rankNumber }) => {
+  leaderboardTbody.innerHTML = displayedRows.map(({ w, isHidden, isZero, rankNumber, prim, charMatch }) => {
     const rankDisplay = rankNumber !== null ? `#${rankNumber}` : '—';
     const rankTopCls = (rankNumber !== null && rankNumber <= 3) ? ` rank-top-${rankNumber}` : '';
 
@@ -957,16 +1029,34 @@ function renderLeaderboard() {
 
     const rankTitle = resolveRankTitle(w.rankTier || 0);
 
-    // Resolve character and class info
-    const prim = resolveMemberPrimaryChar(w);
+    // Resolve character, level, professions, and target key for Character Armory modal
     const charName = prim.name;
     const charClass = prim.charClass || 'Warrior';
     const charRole = prim.charRole || 'DPS';
     const classCss = `class-${charClass.toLowerCase().replace(/\s+/g, '-')}`;
+    const targetCharKey = (charMatch?.key || prim.key || '');
+    const profSummary = formatProfessionsBrief(prim.professions, 2);
+
+    const matchedAlt = (charMatch && charMatch.isAlt) ? charMatch.char : null;
+    const matchedAltProf = matchedAlt ? formatProfessionsBrief(matchedAlt.professions, 2) : '';
+
+    const lvPill = prim.level ? `<span class="ledger-char-lv">Lv ${escapeHtml(String(prim.level))}</span>` : '';
+    const verifiedDot = prim.armoryVerified ? `<span class="armory-verified-dot" title="Verified on WoW: Forever Armory">&#10003;</span>` : '';
+    const altPill = prim.altCount > 0 ? `<span class="ledger-alt-count" title="${prim.altCount} additional character${prim.altCount > 1 ? 's' : ''} linked">+${prim.altCount}</span>` : '';
+
+    const charSublineHtml = matchedAlt
+      ? `<button type="button" class="ledger-char-match-btn" onclick="event.stopPropagation(); inspectMemberProfile('${w.discordId}', '${escapeAttr(charMatch.key)}')" title="Open ${escapeAttr(matchedAlt.name)}'s Character Armory">Alt match: <strong>${escapeHtml(matchedAlt.name)}</strong>${matchedAltProf ? ` &bull; ${escapeHtml(matchedAltProf)}` : ''}</button>`
+      : (profSummary ? `<div class="ledger-char-profs" title="${escapeAttr(prim.professions)}">${escapeHtml(profSummary)}</div>` : '');
 
     const charDisplay = charName
-      ? `<span class="class-badge ${classCss}">${escapeHtml(charName)}</span>`
-      : `<span style="color:var(--text-dim); font-size:0.8rem;">—</span>`;
+      ? `<div class="ledger-char-cell">
+           <button type="button" class="ledger-char-armory-btn" onclick="event.stopPropagation(); inspectMemberProfile('${w.discordId}', '${escapeAttr(prim.key || '')}')" title="View ${escapeAttr(charName)}'s Armory (Level, Gear &amp; Professions)">
+             <span class="class-badge ${classCss}">${escapeHtml(charName)}</span>
+             ${lvPill}${verifiedDot}${altPill}
+           </button>
+           ${charSublineHtml}
+         </div>`
+      : `<span class="ledger-no-char">No character</span>`;
 
     const roleCss = (charRole || 'dps').toLowerCase();
     const roleDisplay = charName
@@ -982,6 +1072,10 @@ function renderLeaderboard() {
       </td>
     ` : '';
 
+    const armoryActionBtn = charName
+      ? `<button type="button" class="btn-ledger-armory" onclick="event.stopPropagation(); inspectMemberProfile('${w.discordId}', '${escapeAttr(targetCharKey)}')" title="Open ${escapeAttr(name)}'s Character Armory">Armory &rsaquo;</button>`
+      : `<button type="button" class="btn-ledger-armory is-muted" onclick="event.stopPropagation(); inspectMemberProfile('${w.discordId}')" title="Open ${escapeAttr(name)}'s Member Profile">Profile &rsaquo;</button>`;
+
     const statusBadge = isHidden
       ? `<span class="badge-officer-hidden">Hidden</span>`
       : (isZero ? `<span class="badge-zero-bones">0 Bones</span>` : '');
@@ -991,7 +1085,7 @@ function renderLeaderboard() {
     const rowClassAttr = rowClasses ? `class="${rowClasses}"` : '';
 
     return `
-      <tr ${rowClassAttr} onclick="inspectMemberProfile('${w.discordId}')" title="Click to inspect ${escapeAttr(name)}'s WoW characters, roles, and guild note">
+      <tr ${rowClassAttr} onclick="inspectMemberProfile('${w.discordId}', '${escapeAttr(targetCharKey)}')" title="Click to open ${escapeAttr(name)}'s Character Armory (Level, Gear &amp; Professions)">
         <td class="table-rank-cell${rankTopCls}">${rankDisplay}</td>
         <td>
           <div class="member-cell">
@@ -1010,26 +1104,36 @@ function renderLeaderboard() {
         <td style="font-weight: 700; color: var(--gold-300);">${(w.spendableBones || 0).toLocaleString()}</td>
         <td style="font-weight: 700; color: var(--amber);">${(w.boneScore || 0).toLocaleString()}</td>
         ${officerActionsCell}
-        <td class="col-inspect-chevron" aria-hidden="true">›</td>
+        <td class="col-inspect-chevron">${armoryActionBtn}</td>
       </tr>
     `;
   }).join('');
 
   // 2. Render Mobile Roster Stream (< 768px)
   if (mobileLeaderboardList) {
-    mobileLeaderboardList.innerHTML = displayedRows.map(({ w, isHidden, isZero, rankNumber }) => {
+    mobileLeaderboardList.innerHTML = displayedRows.map(({ w, isHidden, isZero, rankNumber, prim, charMatch }) => {
       const rankNum = rankNumber !== null ? `#${rankNumber}` : '—';
       const rankHighlightClass = rankNumber !== null && rankNumber <= 3 ? ` rank-${rankNumber}` : '';
 
       const name = w.serverNickname || w.globalName || w.username || 'Guild Member';
       const avatarUrl = getDiscordAvatarUrl(w.discordId, w.avatarHash, 64);
 
-      const prim = resolveMemberPrimaryChar(w);
       const charName = prim.name;
       const charClass = prim.charClass || 'Warrior';
       const charRole = prim.charRole || 'DPS';
       const classCss = `class-${charClass.toLowerCase().replace(/\s+/g, '-')}`;
       const roleCss = (charRole || 'dps').toLowerCase();
+      const targetCharKey = (charMatch?.key || prim.key || '');
+      const profSummary = formatProfessionsBrief(prim.professions, 2);
+
+      const matchedAlt = (charMatch && charMatch.isAlt) ? charMatch.char : null;
+      const matchedAltProf = matchedAlt ? formatProfessionsBrief(matchedAlt.professions, 2) : '';
+
+      const mobLvPill = prim.level ? `<span class="ledger-char-lv">Lv ${escapeHtml(String(prim.level))}</span>` : '';
+      const mobAltPill = prim.altCount > 0 ? `<span class="ledger-alt-count">+${prim.altCount}</span>` : '';
+      const mobileProfsLine = matchedAlt
+        ? `<div class="mobile-roster-profs">Alt match: <strong>${escapeHtml(matchedAlt.name)}</strong>${matchedAltProf ? ` &bull; ${escapeHtml(matchedAltProf)}` : ''}</div>`
+        : (profSummary ? `<div class="mobile-roster-profs">${escapeHtml(profSummary)}</div>` : '');
 
       const mobileOfficerStrip = isOfficer ? `
         <div class="mobile-card-officer-strip" onclick="event.stopPropagation()">
@@ -1050,8 +1154,8 @@ function renderLeaderboard() {
       ].filter(Boolean).join(' ');
 
       return `
-        <div class="${cardClass}" data-discord-id="${escapeAttr(w.discordId)}" onclick="inspectMemberProfile('${w.discordId}')">
-          <div style="display: flex; align-items: center; gap: 0.75rem;">
+        <div class="${cardClass}" data-discord-id="${escapeAttr(w.discordId)}" onclick="inspectMemberProfile('${w.discordId}', '${escapeAttr(targetCharKey)}')">
+          <div style="display: flex; align-items: center; gap: 0.65rem;">
             <div class="mobile-roster-rank${rankHighlightClass}">${rankNum}</div>
             <img src="${avatarUrl}" class="mobile-roster-avatar" alt="${escapeAttr(name)}" onerror="this.onerror=null;this.src='assets/favicon.svg';">
             <div class="mobile-roster-info">
@@ -1059,14 +1163,18 @@ function renderLeaderboard() {
                 ${escapeHtml(name)} ${statusBadge}
               </div>
               <div class="mobile-roster-meta">
-                ${charName ? `<span class="class-badge ${classCss}" style="padding:0.1rem 0.35rem; font-size:0.7rem;">${escapeHtml(charName)}</span> <span class="role-pill ${roleCss}">${escapeHtml(charRole)}</span>` : `<span style="color:var(--text-dim);">No character</span>`}
+                ${charName
+                  ? `<span class="class-badge ${classCss}" style="padding:0.1rem 0.35rem; font-size:0.7rem;">${escapeHtml(charName)}</span>${mobLvPill}<span class="role-pill ${roleCss}">${escapeHtml(charRole)}</span>${mobAltPill}`
+                  : `<span style="color:var(--text-dim);">No character</span>`
+                }
               </div>
+              ${mobileProfsLine}
             </div>
             <div class="mobile-roster-score">
               <span class="score-num">${(w.boneScore || 0).toLocaleString()}</span>
               <span class="score-label">Score</span>
+              <span class="mobile-armory-pill ${charName ? '' : 'is-muted'}">${charName ? 'Armory &rsaquo;' : 'View &rsaquo;'}</span>
             </div>
-            <div class="mobile-roster-arrow">›</div>
           </div>
           ${mobileOfficerStrip}
         </div>
@@ -1076,14 +1184,14 @@ function renderLeaderboard() {
 }
 
 /**
- * Inspect Member Profile & WoW Characters Modal (Click from Leaderboard)
+ * Inspect Member Profile & Character Armory Modal (Click from Leaderboard)
  */
-window.inspectMemberProfile = function(discordId) {
+window.inspectMemberProfile = function(discordId, preferredCharKey = null) {
   const w = state.bseState?.wallets?.[discordId];
   if (!w) return;
 
   if (window.BSEArmory?.renderMemberProfileModal) {
-    window.BSEArmory.renderMemberProfileModal(discordId, w);
+    window.BSEArmory.renderMemberProfileModal(discordId, w, preferredCharKey || null);
     return;
   }
 
@@ -3401,15 +3509,27 @@ function setupCharacterManagement() {
     const rawName = document.getElementById('newCharName').value.trim();
     const rawSurname = document.getElementById('newCharSurname')?.value.trim() || '';
     const charClass = document.getElementById('newCharClass').value;
+    const rawLevel = document.getElementById('newCharLevel')?.value.trim() || '';
     const charRole = document.getElementById('newCharRole')?.value || 'DPS';
     const charRuleset = document.getElementById('newCharRuleset')?.value || 'PvP';
     const professions = document.getElementById('newCharProfessions')?.value.trim() || '';
-    const verifiedMeta = window.BSEArmory?.consumePendingVerifiedCharacter?.() || null;
 
     if (!rawName) {
       showToast('Please enter a character name.');
       return;
     }
+
+    let manualLevel = null;
+    if (rawLevel !== '') {
+      const parsedLevel = parseInt(rawLevel, 10);
+      if (!Number.isFinite(parsedLevel) || parsedLevel < 1 || parsedLevel > 60) {
+        showToast('Character level must be between 1 and 60.');
+        return;
+      }
+      manualLevel = parsedLevel;
+    }
+
+    const verifiedMeta = window.BSEArmory?.consumePendingVerifiedCharacter?.() || null;
 
     let cleanName = rawName;
     let cleanSurname = rawSurname;
@@ -3438,9 +3558,11 @@ function setupCharacterManagement() {
       professions,
       isPrimary: isFirst
     };
+    const resolvedLevel = manualLevel || verifiedMeta?.level || null;
+    if (resolvedLevel) entry.level = resolvedLevel;
+
     if (verifiedMeta) {
       if (verifiedMeta.race) entry.race = verifiedMeta.race;
-      if (verifiedMeta.level) entry.level = verifiedMeta.level;
       if (verifiedMeta.avgItemLevel) entry.avgItemLevel = verifiedMeta.avgItemLevel;
       if (verifiedMeta.guildName) entry.guildName = verifiedMeta.guildName;
       if (verifiedMeta.avatarThumbUrl) entry.avatarThumbUrl = verifiedMeta.avatarThumbUrl;
@@ -3452,6 +3574,7 @@ function setupCharacterManagement() {
 
     document.getElementById('newCharName').value = '';
     if (document.getElementById('newCharSurname')) document.getElementById('newCharSurname').value = '';
+    if (document.getElementById('newCharLevel')) document.getElementById('newCharLevel').value = '';
     if (document.getElementById('newCharProfessions')) document.getElementById('newCharProfessions').value = '';
     renderCharacterModalList();
     const displayFull = surname ? `${name} ${surname}` : name;
@@ -3493,6 +3616,7 @@ function setupCharacterManagement() {
 
 function openCharacterModal() {
   state.userCharacters = [...(state.user?.characters || [])];
+  window.BSEArmory?.consumePendingVerifiedCharacter?.();
   if (document.getElementById('modalGuildNoteInput')) {
     document.getElementById('modalGuildNoteInput').value = state.user?.guildNote || '';
   }
