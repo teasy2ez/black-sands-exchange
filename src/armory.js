@@ -571,10 +571,17 @@ export async function getCharacterArmory({ name, surname = '', slug = '', forceR
     fetchImpl
   });
 
+  let firestoreCacheSaved = false;
   if (firestore) {
-    await firestore.saveCollectionDoc('armory_characters', firestore.sanitizeDocId(snapshot.slug), snapshot);
+    firestoreCacheSaved = await firestore
+      .saveCollectionDoc('armory_characters', firestore.sanitizeDocId(snapshot.slug), snapshot)
+      .then(() => true)
+      .catch(err => {
+        console.warn('Non-fatal armory_characters cache write warning:', err.message);
+        return false;
+      });
   }
-  await writeEdgeCache(cacheKey, snapshot, 1800);
+  await writeEdgeCache(cacheKey, snapshot, firestoreCacheSaved ? 1800 : 3600);
 
   // Synchronize light summary + crafting recipes into BSE state if wallet exists
   if (state && firestore) {
@@ -713,10 +720,17 @@ export async function getOrSyncGuildRoster({ guildSlug = '', forceRefresh = fals
 
   const fetched = await fetchForeverGuildRoster(slug, env, { fetchImpl });
   fetched.configured = true;
+  let firestoreSaved = false;
   if (firestore && fetched.found) {
-    await firestore.saveCollectionDoc('armory_guild', docId, fetched);
+    firestoreSaved = await firestore
+      .saveCollectionDoc('armory_guild', docId, fetched)
+      .then(() => true)
+      .catch(err => {
+        console.warn('Non-fatal armory_guild cache write warning:', err.message);
+        return false;
+      });
   }
-  await writeEdgeCache(cacheKey, fetched, 900);
+  await writeEdgeCache(cacheKey, fetched, firestoreSaved ? 900 : 1800);
 
   return {
     ...fetched,

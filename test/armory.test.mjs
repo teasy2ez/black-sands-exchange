@@ -1269,4 +1269,94 @@ describe('worker.js — Armory API Routes, Auth & Zero Secret Exposure', () => {
     assert.equal(tick.charactersRefreshed, 2);
     assert.equal(liveCharFetches, 2);
   });
+
+  it('returns live Battle.net character & roster data even when Firestore armory_* writes return 403 PERMISSION_DENIED', async () => {
+    resetBlizzardCaches();
+    const baseFirestore = createMemoryFirestore();
+    const state = await baseFirestore.getBseState();
+    state.wallets = {
+      u_bob: {
+        discordId: 'u_bob',
+        serverNickname: 'Bob',
+        characters: [{ name: 'Boblo', surname: 'Joblo', slug: 'boblo-joblo', class: 'Warrior', isPrimary: true }]
+      }
+    };
+    await baseFirestore.saveBseState(state);
+
+    // Simulate Firestore security rules allowing exchange/bse_state but rejecting armory_* collections with 403
+    const restrictedFirestore = {
+      sanitizeDocId: (id) => baseFirestore.sanitizeDocId(id),
+      async getBseState() { return baseFirestore.getBseState(); },
+      async saveBseState(next) { return baseFirestore.saveBseState(next); },
+      async getCollectionDoc() { return null; },
+      async batchGetCollectionDocs() { return {}; },
+      async batchSaveCollectionDocs() { return true; },
+      async saveCollectionDoc(col, docId) {
+        throw new Error(`Firestore write failed (${col}/${docId}) [403]: {"error":{"code":403,"message":"Missing or insufficient permissions.","status":"PERMISSION_DENIED"}}`);
+      }
+    };
+
+    const mockFetch = async (url) => {
+      if (url === 'https://oauth.battle.net/token') {
+        return makeJsonResponse({ access_token: 'tok_403_test', expires_in: 3600 });
+      }
+      const u = new URL(url);
+      if (u.pathname === '/profile/wow/character/boblo-joblo') {
+        return makeJsonResponse({
+          name: 'Boblo',
+          surname: 'Joblo',
+          level: 60,
+          race: { id: 5, name: 'Undead' },
+          character_class: { id: 8, name: 'Mage' },
+          average_item_level: 66
+        });
+      }
+      if (u.pathname === '/profile/wow/character/boblo-joblo/professions') {
+        return makeJsonResponse({
+          primaries: [{ profession: { id: 171, name: 'Alchemy' }, tiers: [{ tier: { name: 'Artisan' }, skill_points: 300, max_skill_points: 300, known_recipes: [] }] }]
+        });
+      }
+      if (u.pathname === '/data/wow/guild/black-sands/roster') {
+        return makeJsonResponse({
+          guild: { id: 9, name: 'Black Sands' },
+          members: [{ character: { name: 'Boblo', surname: 'Joblo', level: 60, playable_class: { id: 8 }, playable_race: { id: 5 } }, rank: 1 }]
+        });
+      }
+      return makeJsonResponse({}, 404);
+    };
+
+    const charRes = await getCharacterArmory({
+      name: 'Boblo',
+      surname: 'Joblo',
+      forceRefresh: true,
+      env: TEST_ENV,
+      firestore: restrictedFirestore,
+      state,
+      fetchImpl: mockFetch
+    });
+    assert.equal(charRes.found, true);
+    assert.equal(charRes.source, 'blizzard-live');
+    assert.equal(charRes.level, 60);
+    assert.equal(charRes.className, 'Mage');
+    assert.equal(charRes.professions.allSummary, 'Alchemy 300');
+
+    // Light summary still persisted onto allowed exchange/bse_state wallets
+    const updatedState = await baseFirestore.getBseState();
+    assert.equal(updatedState.wallets.u_bob.characters[0].level, 60);
+    assert.equal(updatedState.wallets.u_bob.characters[0].class, 'Mage');
+    assert.equal(updatedState.wallets.u_bob.characters[0].armoryVerified, true);
+
+    const rosterRes = await getOrSyncGuildRoster({
+      guildSlug: 'black-sands',
+      forceRefresh: true,
+      env: TEST_ENV,
+      firestore: restrictedFirestore,
+      state: updatedState,
+      fetchImpl: mockFetch
+    });
+    assert.equal(rosterRes.found, true);
+    assert.equal(rosterRes.source, 'blizzard-live');
+    assert.equal(rosterRes.members.length, 1);
+  });
 });
+

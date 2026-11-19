@@ -1255,11 +1255,11 @@
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; margin-bottom: 0.5rem;">
           <div>
             <label style="font-size: 0.75rem; color: var(--text-muted);">Character Name</label>
-            <input type="text" class="form-control" id="newCharName" placeholder="e.g. Grimfang">
+            <input type="text" class="form-control" id="newCharName" placeholder="e.g. Grimfang" autocomplete="off">
           </div>
           <div>
             <label style="font-size: 0.75rem; color: var(--text-muted);">Surname (Forever)</label>
-            <input type="text" class="form-control" id="newCharSurname" placeholder="e.g. Black">
+            <input type="text" class="form-control" id="newCharSurname" placeholder="e.g. Black" autocomplete="off">
           </div>
         </div>
         <div id="newCharArmoryStatus" class="armory-verify-status" style="display: none; margin-bottom: 0.55rem;"></div>
@@ -1280,7 +1280,7 @@
           </div>
           <div>
             <label style="font-size: 0.75rem; color: var(--text-muted);">Level</label>
-            <input type="number" class="form-control" id="newCharLevel" min="1" max="60" placeholder="60">
+            <input type="number" class="form-control" id="newCharLevel" min="1" max="60" placeholder="60" autocomplete="off">
           </div>
           <div>
             <label style="font-size: 0.75rem; color: var(--text-muted);">Role</label>
@@ -1302,7 +1302,7 @@
         </div>
         <div style="margin-bottom: 0.55rem;">
           <label style="font-size: 0.75rem; color: var(--text-muted);">Professions</label>
-          <input type="text" class="form-control" id="newCharProfessions" placeholder="e.g. Alchemy 300, Herbalism 300 (auto-filled when verified)">
+          <input type="text" class="form-control" id="newCharProfessions" placeholder="e.g. Alchemy 300, Herbalism 300 (auto-filled when verified)" autocomplete="off">
         </div>
         <button type="button" class="btn-secondary" id="btnAddCharacter" style="width: 100%; margin-top: 0.25rem;">Add to Roster</button>
       </div>
