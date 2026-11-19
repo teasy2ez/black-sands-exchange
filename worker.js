@@ -38,6 +38,25 @@ import {
   formatTithingRate,
   deriveTithingPairFromConstant
 } from './src/tithing.js';
+import {
+  DEFAULT_ARMORY_CONFIG,
+  resolveArmoryConfig,
+  isBlizzardConfigured,
+  buildCharacterSlug,
+  parseCharacterIdentity,
+  normalizeGuildSlug,
+  getCharacterArmory,
+  getOrSyncGuildRoster,
+  autoMatchGuildRosterToWallets,
+  getGuildCraftingDirectory,
+  getItemDetail,
+  searchAndHydrateDatabaseItems,
+  ingestCompactAuctionPrices,
+  getAuctionHouseWatchlist,
+  getCachedAhPricesDoc,
+  fetchRulesetsAndHouses,
+  runScheduledArmoryTick
+} from './src/armory.js';
 
 const AUTO_ROSTER_SYNC_INTERVAL_MS = 60 * 1000;
 let lastAutoRosterSyncCheckMs = 0;
@@ -96,6 +115,11 @@ export default {
     ctx.waitUntil(
       syncDiscordRoster(env, firestore, { manual: false }).catch(err => {
         console.error('Scheduled Discord roster sync failed:', err);
+      })
+    );
+    ctx.waitUntil(
+      runScheduledArmoryTick(env, firestore).catch(err => {
+        console.error('Scheduled Armory sync tick failed:', err);
       })
     );
   }
@@ -378,7 +402,18 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
       );
     }
 
-    return jsonResponse(state);
+    const armoryConfig = resolveArmoryConfig(state);
+    return jsonResponse({
+      ...state,
+      config: {
+        ...(state.config || {}),
+        armory: armoryConfig
+      },
+      armoryStatus: {
+        configured: isBlizzardConfigured(env),
+        ingestConfigured: Boolean(env.ARMORY_INGEST_SECRET)
+      }
+    });
   }
 
   // GET Member Autocomplete Search
@@ -439,13 +474,50 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
       boneScore: 0
     };
 
-    wallet.characters = characters.map(c => ({
-      name: String(c.name || '').trim(),
-      class: String(c.class || 'Warrior').trim(),
-      role: String(c.role || 'DPS').trim(),
-      professions: String(c.professions || '').trim(),
-      isPrimary: Boolean(c.isPrimary)
-    })).filter(c => c.name.length > 0);
+    const existingBySlug = new Map();
+    for (const prev of wallet.characters || []) {
+      const pSlug = prev.slug || buildCharacterSlug(prev.name, prev.surname || '');
+      if (pSlug) existingBySlug.set(pSlug, prev);
+    }
+
+    wallet.characters = characters.map(c => {
+      const rawName = String(c.name || '').trim();
+      const rawSurname = String(c.surname || '').trim();
+      const parsed = parseCharacterIdentity(c.slug || rawName, rawSurname);
+      const cleanName = rawName ? (rawName.includes('-') && !rawSurname ? parsed.name : rawName) : parsed.name;
+      const cleanSurname = rawSurname || (rawName.includes('-') ? parsed.surname : '');
+      const slug = buildCharacterSlug(cleanName, cleanSurname);
+      const prev = slug ? existingBySlug.get(slug) : null;
+
+      const entry = {
+        name: cleanName,
+        surname: cleanSurname,
+        slug,
+        class: String(c.class || prev?.class || 'Warrior').trim(),
+        role: String(c.role || prev?.role || 'DPS').trim(),
+        professions: String(c.professions !== undefined ? c.professions : (prev?.professions || '')).trim(),
+        isPrimary: Boolean(c.isPrimary)
+      };
+
+      const ruleset = c.ruleset || prev?.ruleset || '';
+      const race = c.race || prev?.race || '';
+      const level = Number(c.level || prev?.level || 0);
+      const avgItemLevel = Number(c.avgItemLevel || prev?.avgItemLevel || 0);
+      const guildName = c.guildName || prev?.guildName || '';
+      const avatarThumbUrl = c.avatarThumbUrl || prev?.avatarThumbUrl || '';
+      const lastArmorySyncAt = c.lastArmorySyncAt || prev?.lastArmorySyncAt || '';
+
+      if (ruleset) entry.ruleset = String(ruleset).trim();
+      if (race) entry.race = String(race).trim();
+      if (level > 0) entry.level = level;
+      if (avgItemLevel > 0) entry.avgItemLevel = avgItemLevel;
+      if (guildName) entry.guildName = String(guildName).trim();
+      if (avatarThumbUrl) entry.avatarThumbUrl = String(avatarThumbUrl).trim();
+      if (c.armoryVerified || prev?.armoryVerified) entry.armoryVerified = true;
+      if (lastArmorySyncAt) entry.lastArmorySyncAt = String(lastArmorySyncAt);
+
+      return entry;
+    }).filter(c => c.name.length > 0);
 
     // Save expanded public guild note if provided
     if (typeof guildNote === 'string') {
@@ -818,6 +890,157 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
     }
 
     return jsonResponse({ success: true, remainingBones: wallet.spendableBones, delivery });
+  }
+
+  // =========================================================================
+  // WOW: FOREVER US ARMORY, ITEM DB, CRAFTING & AUCTION HOUSE ENDPOINTS
+  // =========================================================================
+  if (path.startsWith('armory/') && !['armory/config', 'armory/sync-roster', 'armory/auto-match', 'armory/rulesets'].includes(path)) {
+    try {
+      // GET Armory & API configuration health (booleans only, zero secrets)
+      if (path === 'armory/status' && request.method === 'GET') {
+        const state = await firestore.getBseState();
+        return jsonResponse({
+          configured: isBlizzardConfigured(env),
+          ingestConfigured: Boolean(env.ARMORY_INGEST_SECRET),
+          armory: resolveArmoryConfig(state)
+        });
+      }
+
+      // GET Character Armory Snapshot (?name=&surname=&slug=&refresh=1)
+      if (path === 'armory/character' && request.method === 'GET') {
+        const name = url.searchParams.get('name') || '';
+        const surname = url.searchParams.get('surname') || '';
+        const slug = url.searchParams.get('slug') || '';
+        const refresh = url.searchParams.get('refresh') === '1' || url.searchParams.get('refresh') === 'true';
+
+        const state = await firestore.getBseState();
+        const result = await getCharacterArmory({
+          name,
+          surname,
+          slug,
+          forceRefresh: refresh,
+          env,
+          firestore,
+          state
+        });
+        return jsonResponse(result);
+      }
+
+      // GET Forever Guild Roster (?guildSlug=&refresh=1)
+      if (path === 'armory/guild-roster' && request.method === 'GET') {
+        const guildSlug = url.searchParams.get('guildSlug') || '';
+        const refresh = url.searchParams.get('refresh') === '1' || url.searchParams.get('refresh') === 'true';
+        const state = await firestore.getBseState();
+        const result = await getOrSyncGuildRoster({
+          guildSlug,
+          forceRefresh: Boolean(refresh && isAuthorizedOfficer),
+          env,
+          firestore,
+          state
+        });
+        return jsonResponse(result);
+      }
+
+      // GET Guild Crafting Directory (?q=&profession=)
+      if (path === 'armory/crafting' && request.method === 'GET') {
+        const q = url.searchParams.get('q') || '';
+        const profession = url.searchParams.get('profession') || '';
+        const result = await getGuildCraftingDirectory({ firestore, query: q, profession });
+        return jsonResponse(result);
+      }
+
+      // GET Search Forever Items (?q=&page=&pageSize=)
+      if (path === 'armory/items/search' && request.method === 'GET') {
+        const q = url.searchParams.get('q') || '';
+        const page = Math.max(1, parseInt(url.searchParams.get('page') || '1', 10) || 1);
+        const pageSize = Math.min(30, Math.max(1, parseInt(url.searchParams.get('pageSize') || '24', 10) || 24));
+        const state = await firestore.getBseState();
+        const result = await searchAndHydrateDatabaseItems({
+          query: q,
+          page,
+          pageSize,
+          env,
+          firestore,
+          state
+        });
+        return jsonResponse(result);
+      }
+
+      // GET Item Detail by numeric ID (/api/exchange/armory/item/:id)
+      const itemMatch = path.match(/^armory\/item\/(\d+)$/);
+      if (itemMatch && request.method === 'GET') {
+        const state = await firestore.getBseState();
+        const item = await getItemDetail({
+          itemId: Number(itemMatch[1]),
+          env,
+          firestore,
+          state
+        });
+        return jsonResponse(item);
+      }
+
+      // GET Curated Consumables / Materials AH Price Watchlist
+      if (path === 'armory/ah/watchlist' && request.method === 'GET') {
+        const state = await firestore.getBseState();
+        const cfg = resolveArmoryConfig(state);
+        const houseId = Number(url.searchParams.get('houseId')) || cfg.defaultAuctionHouseId;
+        const extraIds = String(url.searchParams.get('extraIds') || '')
+          .split(',')
+          .map(s => Number(s.trim()))
+          .filter(n => n > 0);
+        const data = await getAuctionHouseWatchlist({
+          houseId,
+          extraItemIds: extraIds,
+          env,
+          firestore,
+          state
+        });
+        return jsonResponse(data);
+      }
+
+      // GET Batch AH Price lookup (?houseId=&itemIds=13510,13468)
+      if (path === 'armory/ah/prices' && request.method === 'GET') {
+        const state = await firestore.getBseState();
+        const cfg = resolveArmoryConfig(state);
+        const houseId = Number(url.searchParams.get('houseId')) || cfg.defaultAuctionHouseId;
+        const doc = await getCachedAhPricesDoc(houseId, { firestore });
+        const itemIdsParam = String(url.searchParams.get('itemIds') || '').trim();
+        const prices = {};
+        if (doc?.prices) {
+          const ids = itemIdsParam ? itemIdsParam.split(',').map(s => s.trim()).filter(Boolean) : [];
+          for (const idStr of ids.slice(0, 100)) {
+            const tuple = doc.prices[idStr];
+            if (Array.isArray(tuple) && tuple.length >= 3) {
+              prices[idStr] = { min: tuple[0], median: tuple[1], qty: tuple[2] };
+            }
+          }
+        }
+        return jsonResponse({
+          houseId,
+          rulesetId: doc?.rulesetId || cfg.guildRulesetId,
+          updatedAt: doc?.updatedAt || null,
+          hasSnapshot: Boolean(doc?.prices),
+          distinctItemCount: doc?.distinctItemCount || 0,
+          prices
+        });
+      }
+
+      // POST Auction House Compact Snapshot Ingest (GitHub Action or Officer)
+      if (path === 'armory/ah-ingest' && request.method === 'POST') {
+        if (!isValidArmoryIngestAuth(request, env, isAuthorizedOfficer)) {
+          return jsonResponse({ error: 'Unauthorized: Invalid ingest secret or Officer session required' }, 401);
+        }
+        const summary = await ingestCompactAuctionPrices(body, { firestore });
+        return jsonResponse(summary);
+      }
+    } catch (err) {
+      const status = Number(err?.status) || 500;
+      return jsonResponse({
+        error: err.message || 'Armory API error',
+        code: err.code || 'ARMORY_ERROR'
+      }, status >= 400 && status < 600 ? status : 500);
+    }
   }
 
   // =========================================================================
@@ -2143,6 +2366,119 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
     return jsonResponse({ success: true, state: rawState });
   }
 
+  // GET Available Forever Rulesets & Auction Houses (Officer Diagnostic)
+  if (path === 'armory/rulesets' && request.method === 'GET') {
+    const state = await firestore.getBseState();
+    const cfg = resolveArmoryConfig(state);
+    const rulesetId = Number(url.searchParams.get('rulesetId')) || cfg.guildRulesetId;
+    if (!isBlizzardConfigured(env)) {
+      return jsonResponse({
+        configured: false,
+        rulesets: [
+          { id: 1, name: 'PvP' },
+          { id: 2, name: 'Normal' },
+          { id: 3, name: 'Roleplay' },
+          { id: 15, name: 'Roleplay PvP' }
+        ],
+        houses: [110, 111, 113, 114, 116, 117, 119, 120, 121, 123, 124, 125]
+      });
+    }
+    try {
+      const data = await fetchRulesetsAndHouses(rulesetId, env);
+      return jsonResponse({ configured: true, ...data });
+    } catch (err) {
+      return jsonResponse({ error: err.message || 'Failed to query rulesets' }, err.status || 502);
+    }
+  }
+
+  // POST Save Forever Armory Settings (Guild Slug, Ruleset, AH House, Auto-sync)
+  if (path === 'armory/config' && request.method === 'POST') {
+    const state = await firestore.getBseState();
+    state.config = state.config || {};
+    const prevCfg = resolveArmoryConfig(state);
+    const nextCfg = {
+      ...prevCfg,
+      enabled: body.enabled !== undefined ? Boolean(body.enabled) : prevCfg.enabled,
+      guildSlug: body.guildSlug !== undefined
+        ? (normalizeGuildSlug(body.guildSlug) || DEFAULT_ARMORY_CONFIG.guildSlug)
+        : prevCfg.guildSlug,
+      guildRulesetId: body.guildRulesetId !== undefined
+        ? (Number(body.guildRulesetId) || 1)
+        : prevCfg.guildRulesetId,
+      defaultAuctionHouseId: body.defaultAuctionHouseId !== undefined
+        ? (Number(body.defaultAuctionHouseId) || 110)
+        : prevCfg.defaultAuctionHouseId,
+      autoSyncGuildRoster: body.autoSyncGuildRoster !== undefined
+        ? Boolean(body.autoSyncGuildRoster)
+        : prevCfg.autoSyncGuildRoster
+    };
+
+    state.config.armory = nextCfg;
+    state.updatedAt = new Date().toISOString();
+    await firestore.saveBseState(state);
+
+    await firestore.logAuditEvent({
+      action: 'OFFICER_SETTINGS_UPDATE',
+      officerId,
+      officerName,
+      reason: `Updated WoW: Forever Armory config (Guild: ${nextCfg.guildSlug}, Ruleset: ${nextCfg.guildRulesetId}, AH: ${nextCfg.defaultAuctionHouseId})`,
+      timestamp: new Date().toISOString()
+    });
+
+    return jsonResponse({ success: true, armory: nextCfg });
+  }
+
+  // POST Force Sync WoW: Forever In-Game Guild Roster
+  if (path === 'armory/sync-roster' && request.method === 'POST') {
+    try {
+      const state = await firestore.getBseState();
+      const targetSlug = normalizeGuildSlug(body.guildSlug || '') || resolveArmoryConfig(state).guildSlug;
+      const roster = await getOrSyncGuildRoster({
+        guildSlug: targetSlug,
+        forceRefresh: true,
+        env,
+        firestore,
+        state
+      });
+      await firestore.logAuditEvent({
+        action: 'ARMORY_ROSTER_SYNC',
+        officerId,
+        officerName,
+        reason: `Synced WoW: Forever guild roster for "${targetSlug}" (${roster.memberCount || 0} characters)`,
+        timestamp: new Date().toISOString()
+      });
+      return jsonResponse({ success: true, roster });
+    } catch (err) {
+      return jsonResponse({ error: err.message || 'Armory roster sync failed' }, err.status || 502);
+    }
+  }
+
+  // POST Auto-Match Forever Guild Roster Characters -> Discord Member Wallets
+  if (path === 'armory/auto-match' && request.method === 'POST') {
+    try {
+      const state = await firestore.getBseState();
+      const targetSlug = normalizeGuildSlug(body.guildSlug || '') || resolveArmoryConfig(state).guildSlug;
+      const result = await autoMatchGuildRosterToWallets({
+        guildSlug: targetSlug,
+        env,
+        firestore,
+        state
+      });
+      if (result.matchedCount > 0) {
+        await firestore.logAuditEvent({
+          action: 'ARMORY_WALLET_MATCH',
+          officerId,
+          officerName,
+          reason: `Auto-matched ${result.matchedCount} Forever characters to Discord wallets for "${targetSlug}"`,
+          timestamp: new Date().toISOString()
+        });
+      }
+      return jsonResponse(result);
+    } catch (err) {
+      return jsonResponse({ error: err.message || 'Auto-match failed' }, err.status || 502);
+    }
+  }
+
   return jsonResponse({ error: 'Endpoint not found' }, 404);
 }
 
@@ -2400,6 +2736,39 @@ async function getSessionFromRequest(request, env) {
   return verifySessionToken(match[1], env.SESSION_SECRET || 'bse_secret_key');
 }
 
+function timingSafeStringEqual(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string' || !a || !b) return false;
+  const enc = new TextEncoder();
+  const bufA = enc.encode(a);
+  const bufB = enc.encode(b);
+  const maxLen = Math.max(bufA.length, bufB.length);
+  let mismatch = bufA.length ^ bufB.length;
+  for (let i = 0; i < maxLen; i++) {
+    mismatch |= (bufA[i] ?? 0) ^ (bufB[i] ?? 0);
+  }
+  return mismatch === 0;
+}
+
+function isValidArmoryIngestAuth(request, env, isAuthorizedOfficer) {
+  if (isAuthorizedOfficer) return true;
+  const configuredSecret = String(env?.ARMORY_INGEST_SECRET || '').trim();
+  if (!configuredSecret) return false;
+
+  const headerSecret = request.headers.get('X-Armory-Ingest-Secret') || '';
+  if (timingSafeStringEqual(headerSecret.trim(), configuredSecret)) {
+    return true;
+  }
+
+  const authHeader = request.headers.get('Authorization') || '';
+  if (authHeader.startsWith('Bearer ')) {
+    const bearer = authHeader.slice(7).trim();
+    if (timingSafeStringEqual(bearer, configuredSecret)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /**
  * JSON Response Helper with CORS
  */
@@ -2407,7 +2776,7 @@ function jsonResponse(data, status = 200, customHeaders = new Headers()) {
   customHeaders.set('Content-Type', 'application/json');
   customHeaders.set('Access-Control-Allow-Origin', '*');
   customHeaders.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  customHeaders.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  customHeaders.set('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Armory-Ingest-Secret');
   return new Response(JSON.stringify(data), { status, headers: customHeaders });
 }
 
@@ -2415,6 +2784,6 @@ function handleCors() {
   const headers = new Headers();
   headers.set('Access-Control-Allow-Origin', '*');
   headers.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  headers.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  headers.set('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Armory-Ingest-Secret');
   return new Response(null, { status: 204, headers });
 }

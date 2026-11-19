@@ -13,10 +13,21 @@ import {
   recordAuditLogAndSync,
   pushStandingsToDiscord,
   syncBountiesEmbed,
-  getChannelRouting
+  getChannelRouting,
+  buildArmoryCharacterEmbed,
+  buildArmoryItemEmbed
 } from './discord.js';
 import { applyWeeklyBoneAward } from './weeklyCap.js';
 import { getTithingConfig, calculateTithingBones, formatTithingRate, getMinimumGoldForOneBone, formatTithingNumber } from './tithing.js';
+import {
+  getCharacterArmory,
+  getItemDetail,
+  searchAndHydrateDatabaseItems,
+  getGuildCraftingDirectory,
+  parseCharacterIdentity,
+  buildCharacterSlug,
+  isBlizzardConfigured
+} from './armory.js';
 
 /**
  * Check if the member calling the command is an authorized Officer
@@ -101,6 +112,12 @@ export async function handleApplicationCommand(interaction, env, firestore) {
 
     case 'bounty':
       return handleBountySubcommands(interaction, interaction.data.options, env, firestore);
+
+    case 'armory':
+      return handleArmoryCommand(interaction, opts, env, firestore);
+
+    case 'item':
+      return handleItemCommand(interaction, opts, env, firestore);
 
     default:
       return {
@@ -574,4 +591,202 @@ async function handleBountySubcommands(interaction, subOptions, env, firestore) 
     type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
     data: { content: 'Unknown bounty subcommand.', flags: 64 }
   };
+}
+
+function findWalletOwnerByChar(wallets = {}, slug = '', firstName = '') {
+  const sLow = String(slug || '').toLowerCase();
+  const fLow = String(firstName || '').toLowerCase();
+  for (const w of Object.values(wallets || {})) {
+    const match = (w.characters || []).find(c => {
+      const cSlug = c.slug || buildCharacterSlug(c.name, c.surname || '');
+      return (sLow && cSlug === sLow) || (fLow && String(c.name || '').toLowerCase() === fLow && c.surname);
+    });
+    if (match) return { wallet: w, char: match };
+  }
+  return null;
+}
+
+/**
+ * /armory [character] [user]
+ */
+async function handleArmoryCommand(interaction, opts, env, firestore) {
+  const callerId = interaction.member?.user?.id || interaction.user?.id;
+  const charQuery = String(opts.character || '').trim();
+  const targetUserId = opts.user || (!charQuery ? callerId : null);
+
+  const state = await firestore.getBseState();
+  let identity = null;
+  let ownerWallet = null;
+
+  if (charQuery) {
+    identity = parseCharacterIdentity(charQuery);
+    if (!identity.hasSurname) {
+      // Check if a linked character in guild wallets gives us an unambiguous surname
+      const walletMatch = findWalletOwnerByChar(state.wallets, '', identity.name);
+      if (walletMatch) {
+        identity = parseCharacterIdentity(walletMatch.char.slug || walletMatch.char.name, walletMatch.char.surname);
+        ownerWallet = walletMatch.wallet;
+      }
+    } else {
+      const exactOwner = findWalletOwnerByChar(state.wallets, identity.slug);
+      if (exactOwner) ownerWallet = exactOwner.wallet;
+    }
+  } else if (targetUserId) {
+    const w = state.wallets?.[targetUserId];
+    ownerWallet = w || null;
+    const chars = w?.characters || [];
+    const prim = chars.find(c => c.isPrimary)
+      || (w?.primaryCharacter ? chars.find(c => c.name === w.primaryCharacter) : null)
+      || chars[0]
+      || null;
+
+    if (!prim && !w?.primaryCharacter) {
+      return {
+        type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+        data: {
+          content: `❌ <@${targetUserId}> does not have a WoW: Forever character linked yet.\nLink your \`{Name}-{Surname}\` on **https://bse.teasy2ez.win** or run \`/armory character:Name-Surname\`.`,
+          flags: 64
+        }
+      };
+    }
+
+    identity = parseCharacterIdentity(prim?.slug || prim?.name || w.primaryCharacter, prim?.surname || '');
+    if (!identity.hasSurname) {
+      return {
+        type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+        data: {
+          content: `ℹ️ **${identity.name}** is linked without a **Surname**, which WoW: Forever US Armory requires.\nAdd your Surname in **Manage Characters** on **https://bse.teasy2ez.win** or use \`/armory character:${identity.name}-Surname\`.`,
+          flags: 64
+        }
+      };
+    }
+  }
+
+  if (!identity?.slug) {
+    return {
+      type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+      data: {
+        content: '❌ Please specify a character (`Name-Surname`) or a guild member.',
+        flags: 64
+      }
+    };
+  }
+
+  try {
+    const snapshot = await getCharacterArmory({
+      name: identity.name,
+      surname: identity.surname,
+      slug: identity.slug,
+      env,
+      firestore,
+      state
+    });
+
+    if (snapshot?.found && !ownerWallet) {
+      const owner = findWalletOwnerByChar(state.wallets, snapshot.slug);
+      if (owner) ownerWallet = owner.wallet;
+    }
+
+    if (snapshot && !snapshot.found && !identity.hasSurname) {
+      snapshot.message = `${snapshot.message || 'Character not found.'}\n\n*Tip: WoW: Forever US characters include a Surname — try \`/armory character:${identity.name}-Surname\`.*`;
+    }
+
+    const embed = buildArmoryCharacterEmbed(snapshot, ownerWallet);
+    return {
+      type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+      data: { embeds: [embed] }
+    };
+  } catch (err) {
+    return {
+      type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+      data: {
+        content: `❌ Unable to load Armory for **${identity.slug}**: ${err.message}`,
+        flags: 64
+      }
+    };
+  }
+}
+
+/**
+ * /item <query>
+ */
+async function handleItemCommand(interaction, opts, env, firestore) {
+  const query = String(opts.query || '').trim();
+  if (!query) {
+    return {
+      type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+      data: { content: '❌ Provide an item name or numeric Item ID.', flags: 64 }
+    };
+  }
+
+  const state = await firestore.getBseState();
+
+  try {
+    if (/^\d+$/.test(query)) {
+      const item = await getItemDetail({ itemId: Number(query), env, firestore, state });
+      const craftRes = item?.name && !item.name.startsWith('Item #')
+        ? await getGuildCraftingDirectory({ firestore, query: item.name }).catch(() => ({ recipes: [] }))
+        : { recipes: [] };
+      const embed = buildArmoryItemEmbed(item, craftRes.recipes || [], []);
+      return {
+        type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+        data: { embeds: [embed] }
+      };
+    }
+
+    const [searchRes, dirByQuery] = await Promise.all([
+      searchAndHydrateDatabaseItems({ query, page: 1, pageSize: 6, env, firestore, state }),
+      getGuildCraftingDirectory({ firestore, query }).catch(() => ({ recipes: [] }))
+    ]);
+
+    const hits = Array.isArray(searchRes?.results) ? searchRes.results : [];
+    if (!hits.length) {
+      const craftHits = dirByQuery.recipes || [];
+      if (craftHits.length > 0) {
+        const lines = craftHits.slice(0, 6).map(r => {
+          const list = (r.crafters || []).slice(0, 5).map(c =>
+            c.discordId ? `**${c.displayName}** (<@${c.discordId}>)` : `**${c.displayName}**`
+          ).join(', ');
+          return `• **${r.name}** (*${r.profession}*): ${list || 'Synced crafter'}`;
+        });
+        return {
+          type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+          data: {
+            embeds: [{
+              title: `🔨 Guild Crafter Matches for "${query}"`,
+              description: lines.join('\n'),
+              color: Colors.GOLD,
+              footer: { text: 'WoW: Forever US Guild Crafting Directory • bse.teasy2ez.win' },
+              timestamp: new Date().toISOString()
+            }]
+          }
+        };
+      }
+
+      const msg = !isBlizzardConfigured(env)
+        ? '⚠️ Battle.net API credentials are not configured yet on the Worker.'
+        : `❌ No WoW: Forever items found matching **${query}**. Try an exact item name or numeric Item ID.`;
+      return {
+        type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+        data: { content: msg, flags: 64 }
+      };
+    }
+
+    const qLower = query.toLowerCase();
+    const chosen = hits.find(h => String(h.name || '').toLowerCase() === qLower) || hits[0];
+    const detailedItem = await getItemDetail({ itemId: chosen.id, env, firestore, state });
+    const altMatches = hits.filter(h => h.id !== chosen.id);
+    const craftByItem = await getGuildCraftingDirectory({ firestore, query: detailedItem.name || chosen.name }).catch(() => ({ recipes: [] }));
+
+    const embed = buildArmoryItemEmbed(detailedItem, craftByItem.recipes || dirByQuery.recipes || [], altMatches);
+    return {
+      type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+      data: { embeds: [embed] }
+    };
+  } catch (err) {
+    return {
+      type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+      data: { content: `❌ Item lookup failed: ${err.message}`, flags: 64 }
+    };
+  }
 }

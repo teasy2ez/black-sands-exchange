@@ -169,6 +169,36 @@ const commands = [
     ]
   },
   {
+    name: 'armory',
+    description: 'Inspect a WoW: Forever US character Armory profile, stats, and gear',
+    options: [
+      {
+        name: 'character',
+        description: 'Forever Character Name-Surname (e.g. Grimfang-Black)',
+        type: 3, // STRING
+        required: false
+      },
+      {
+        name: 'user',
+        description: 'Or inspect a Discord guild member primary character',
+        type: 6, // USER
+        required: false
+      }
+    ]
+  },
+  {
+    name: 'item',
+    description: 'Look up a WoW: Forever item, AH market prices, and guild crafters',
+    options: [
+      {
+        name: 'query',
+        description: 'Item name or numeric Item ID (e.g. Thunderfury or 19019)',
+        type: 3, // STRING
+        required: true
+      }
+    ]
+  },
+  {
     name: 'sync-standings',
     description: 'Force refresh all pinned dashboard embeds in #the-exchange (Officers Only)',
     default_member_permissions: MANAGE_GUILD_PERMISSION

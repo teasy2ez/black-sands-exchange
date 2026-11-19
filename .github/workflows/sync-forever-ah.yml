@@ -1,0 +1,42 @@
+name: Sync WoW Forever Auction House Prices
+
+on:
+  schedule:
+    # Run hourly at :17 past the hour to keep Forever AH market prices fresh
+    - cron: '17 * * * *'
+  workflow_dispatch:
+    inputs:
+      ruleset_id:
+        description: 'Optional WoW: Forever Ruleset ID override (e.g. 1=PvP, 2=Normal)'
+        required: false
+        default: ''
+      house_id:
+        description: 'Optional Auction House ID override (e.g. 110)'
+        required: false
+        default: ''
+
+concurrency:
+  group: sync-forever-ah
+  cancel-in-progress: true
+
+jobs:
+  sync-ah:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Aggregate & Ingest WoW Forever US Auction House Prices
+        env:
+          BLIZZARD_CLIENT_ID: ${{ secrets.BLIZZARD_CLIENT_ID }}
+          BLIZZARD_CLIENT_SECRET: ${{ secrets.BLIZZARD_CLIENT_SECRET }}
+          ARMORY_INGEST_SECRET: ${{ secrets.ARMORY_INGEST_SECRET }}
+          BSE_URL: ${{ vars.BSE_URL || 'https://bse.teasy2ez.win' }}
+          BSE_RULESET_ID: ${{ github.event.inputs.ruleset_id }}
+          BSE_AH_HOUSE_ID: ${{ github.event.inputs.house_id }}
+        run: node scripts/sync-forever-ah.mjs

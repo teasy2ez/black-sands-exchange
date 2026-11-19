@@ -42,6 +42,17 @@
   --rare: #0070dd;
   --legendary: #ff8000;
 
+  /* Classic WoW Item Quality & Coin Colors */
+  --q-poor: #9d9d9d;
+  --q-common: #ffffff;
+  --q-uncommon: #1eff00;
+  --q-rare: #0070dd;
+  --q-epic: #a335ee;
+  --q-legendary: #ff8000;
+  --coin-gold: #ffd100;
+  --coin-silver: #cbd5e1;
+  --coin-copper: #d97742;
+
   /* Classic WoW Class Colors */
   --class-warrior: #C79C6E;
   --class-paladin: #F58CBA;
@@ -434,7 +445,7 @@ code {
 
 @media (max-width: 959px) {
   .app-shell {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
     gap: 1rem;
     padding: 1rem 1rem 2rem;
   }
@@ -443,6 +454,7 @@ code {
     position: static;
     max-height: none;
     overflow: visible;
+    min-width: 0;
   }
 }
 
@@ -735,9 +747,9 @@ code {
 @media (min-width: 768px) and (max-width: 959px) {
   .wallet-auth-card {
     display: grid;
-    grid-template-columns: 1fr 1fr 1.05fr;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.05fr);
     grid-template-rows: auto auto;
-    column-gap: 1.1rem;
+    column-gap: 0.9rem;
     row-gap: 0.7rem;
     align-items: start;
   }
@@ -745,6 +757,7 @@ code {
   .wallet-member-info {
     grid-column: 1;
     grid-row: 1;
+    min-width: 0;
   }
 
   .primary-character-tag {
@@ -757,6 +770,7 @@ code {
     grid-column: 2;
     grid-row: 1;
     width: 100%;
+    min-width: 0;
   }
 
   .weekly-cap-box {
@@ -765,6 +779,7 @@ code {
     border-top: 1px solid var(--border-hairline);
     padding-top: 0.55rem;
     width: 100%;
+    min-width: 0;
   }
 
   .rank-progress-container {
@@ -773,9 +788,10 @@ code {
     border-top: none;
     border-left: 1px solid var(--border-hairline);
     padding-top: 0;
-    padding-left: 1rem;
+    padding-left: 0.9rem;
     height: 100%;
     justify-content: center;
+    min-width: 0;
   }
 
   .wallet-guest-card {
@@ -907,17 +923,21 @@ code {
 @media (min-width: 768px) and (max-width: 959px) {
   .nav-tabs {
     flex-direction: row;
+    flex-wrap: wrap;
     overflow-x: auto;
     padding: 0.35rem;
-    gap: 0.3rem;
+    gap: 0.28rem;
   }
 
   .nav-tab {
     width: auto;
+    flex: 1 1 auto;
     justify-content: center;
     border-left: 1px solid transparent;
     border-bottom: 2px solid transparent;
-    padding: 0.55rem 0.9rem;
+    padding: 0.48rem 0.65rem;
+    font-size: 0.78rem;
+    gap: 0.42rem;
   }
 
   .nav-tab.active {
@@ -928,7 +948,7 @@ code {
   .nav-tab.officer-tab {
     margin-top: 0;
     border-top: none;
-    padding-top: 0.55rem;
+    padding-top: 0.48rem;
   }
 
   .sidebar-quick-footer {
@@ -966,33 +986,42 @@ code {
     z-index: 1000;
     justify-content: space-around;
     align-items: center;
-    padding: 0 0.5rem;
+    padding: 0 0.2rem;
     padding-bottom: env(safe-area-inset-bottom, 0);
   }
 
   .mobile-nav-btn {
     flex: 1;
+    min-width: 0;
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 0.2rem;
+    gap: 0.18rem;
     background: none;
     border: none;
     color: var(--text-muted);
-    font-size: 0.65rem;
+    font-size: 0.6rem;
     font-family: var(--font-sans);
     font-weight: 700;
-    letter-spacing: 0.03em;
+    letter-spacing: 0.02em;
     text-transform: uppercase;
     cursor: pointer;
-    padding: 0.35rem 0.2rem;
+    padding: 0.3rem 0.1rem;
     position: relative;
     transition: color 0.15s ease;
   }
 
+  .mobile-nav-btn span {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
   .mobile-nav-btn svg {
     stroke-width: 2;
+    flex-shrink: 0;
     transition: transform 0.15s ease;
   }
 
@@ -1012,7 +1041,7 @@ code {
   .mobile-nav-btn.mobile-officer-btn .officer-badge {
     position: absolute;
     top: 2px;
-    right: 18%;
+    right: 10%;
     margin-left: 0;
   }
 }
@@ -3430,6 +3459,1152 @@ textarea.form-control {
   .edit-bonus-row .edit-bonus-desc {
     grid-column: 1 / -1;
   }
+}
+
+/* ==========================================================================
+   WOW: FOREVER ARMORY, PAPERDOLL, TOOLTIP PORTAL & ITEM DATABASE
+   ========================================================================== */
+.modal-content.modal-armory-wide {
+  max-width: 880px;
+}
+
+.armory-connection-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.74rem;
+  font-weight: 700;
+  padding: 0.28rem 0.7rem;
+  border-radius: 999px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-warm);
+  color: var(--gold-200);
+  white-space: nowrap;
+}
+
+.armory-connection-badge.is-online {
+  border-color: rgba(34, 197, 94, 0.4);
+  background: rgba(34, 197, 94, 0.1);
+  color: #86efac;
+}
+
+.armory-verify-status {
+  font-size: 0.78rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-hairline);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-muted);
+}
+
+.armory-verify-status.is-verified {
+  border-color: rgba(34, 197, 94, 0.4);
+  background: rgba(34, 197, 94, 0.1);
+  color: #bbf7d0;
+}
+
+.armory-verify-status.is-warning {
+  border-color: rgba(251, 191, 36, 0.4);
+  background: rgba(251, 191, 36, 0.1);
+  color: #fde68a;
+}
+
+.armory-verified-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.64rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0.1rem 0.38rem;
+  border-radius: 3px;
+  background: rgba(34, 197, 94, 0.15);
+  border: 1px solid rgba(34, 197, 94, 0.45);
+  color: #86efac;
+}
+
+.armory-verified-dot {
+  color: #4ade80;
+  font-weight: 800;
+  font-size: 0.78rem;
+}
+
+.armory-metric-lbl {
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  display: block;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.armory-metric-val {
+  font-size: 1.12rem;
+  font-weight: 800;
+}
+
+.armory-metric-val.gold { color: var(--gold-300); }
+.armory-metric-val.amber { color: var(--amber); }
+.armory-metric-val.blue { color: var(--blue); }
+.armory-metric-val.legendary { color: var(--legendary); }
+
+.armory-section-label {
+  color: var(--gold-100);
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 0.5rem;
+}
+
+.armory-char-switcher {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.armory-char-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0.65rem;
+  background: var(--bg-inner);
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  color: var(--text-main);
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.armory-char-pill:hover {
+  border-color: var(--border-warm);
+  background: var(--bg-card-hover);
+}
+
+.armory-char-pill.active {
+  border-color: var(--gold-300);
+  background: rgba(255, 209, 0, 0.1);
+}
+
+.armory-char-lv {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.armory-loading-box,
+.armory-unavailable-card {
+  background: var(--bg-inner);
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius-md);
+  padding: 1.5rem 1rem;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 0.86rem;
+}
+
+.armory-unavailable-card h5 {
+  font-family: var(--font-serif);
+  color: var(--gold-100);
+  font-size: 1.02rem;
+  margin-bottom: 0.4rem;
+}
+
+.armory-empty-note {
+  padding: 1rem;
+  text-align: center;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px dashed var(--border-hairline);
+  border-radius: var(--radius-sm);
+  font-size: 0.82rem;
+  color: var(--text-dim);
+}
+
+/* Character Sheet & Paperdoll */
+.armory-sheet-card {
+  background: var(--bg-inner);
+  border: 1px solid var(--border-warm);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.armory-sheet-banner {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.85rem;
+  flex-wrap: wrap;
+  padding: 0.9rem 1.05rem;
+  background: linear-gradient(120deg, rgba(198, 155, 58, 0.12) 0%, rgba(16, 19, 28, 0.9) 65%);
+  border-bottom: 1px solid var(--border-hairline);
+}
+
+.armory-sheet-identity {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.armory-sheet-avatar {
+  width: 48px;
+  height: 48px;
+  border-radius: var(--radius-sm);
+  border: 2px solid var(--border-warm);
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.armory-sheet-name-row {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+  font-family: var(--font-serif);
+  font-size: 1.08rem;
+}
+
+.armory-title-pill {
+  font-family: var(--font-sans);
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.armory-ilvl-pill {
+  font-family: var(--font-sans);
+  font-size: 0.7rem;
+  font-weight: 800;
+  color: var(--gold-300);
+  background: rgba(255, 209, 0, 0.12);
+  border: 1px solid rgba(255, 209, 0, 0.35);
+  padding: 0.1rem 0.42rem;
+  border-radius: 3px;
+}
+
+.armory-sheet-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  margin-top: 0.15rem;
+}
+
+.armory-sheet-actions {
+  display: flex;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+
+.armory-sheet-actions a {
+  text-decoration: none;
+}
+
+.armory-inner-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  padding: 0.45rem 0.85rem;
+  background: rgba(9, 11, 15, 0.65);
+  border-bottom: 1px solid var(--border-hairline);
+}
+
+.armory-inner-tab {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-muted);
+  padding: 0.36rem 0.75rem;
+  font-size: 0.76rem;
+  font-weight: 600;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.armory-inner-tab:hover {
+  color: var(--gold-100);
+}
+
+.armory-inner-tab.active {
+  color: var(--gold-300);
+  background: rgba(255, 209, 0, 0.1);
+  border-color: rgba(255, 209, 0, 0.25);
+}
+
+.armory-inner-body {
+  padding: 0.95rem 1rem 1.05rem;
+}
+
+.armory-paperdoll-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 235px minmax(0, 1fr);
+  gap: 0.75rem;
+  align-items: stretch;
+}
+
+.armory-slots-col {
+  display: flex;
+  flex-direction: column;
+  gap: 0.38rem;
+  min-width: 0;
+}
+
+.armory-slot-row {
+  display: flex;
+  align-items: center;
+  gap: 0.52rem;
+  width: 100%;
+  background: rgba(20, 24, 36, 0.88);
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius-sm);
+  padding: 0.3rem 0.42rem;
+  text-align: left;
+  min-width: 0;
+  color: var(--text-main);
+  transition: border-color 0.14s ease, background 0.14s ease;
+}
+
+button.armory-slot-row.equipped {
+  cursor: pointer;
+}
+
+button.armory-slot-row.equipped:hover {
+  border-color: var(--border-gold-accent);
+  background: var(--bg-card-hover);
+}
+
+.armory-slot-row.align-right {
+  flex-direction: row-reverse;
+  text-align: right;
+}
+
+.armory-slot-icon-frame {
+  width: 38px;
+  height: 38px;
+  border-radius: 4px;
+  border: 2px solid var(--border-hairline);
+  background: #090b0f;
+  position: relative;
+  overflow: hidden;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.armory-slot-icon-frame.is-empty {
+  border-style: dashed;
+  opacity: 0.55;
+}
+
+.armory-slot-icon-frame img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.armory-slot-glyph {
+  font-size: 0.7rem;
+  font-weight: 800;
+  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+}
+
+.armory-slot-ilvl {
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  background: rgba(0, 0, 0, 0.85);
+  color: var(--gold-200);
+  font-size: 0.58rem;
+  font-weight: 800;
+  padding: 0 3px;
+  line-height: 1.25;
+  border-top-left-radius: 3px;
+}
+
+.armory-slot-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+.armory-slot-name {
+  font-size: 0.76rem;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.armory-slot-sub {
+  font-size: 0.67rem;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.armory-slot-empty-label {
+  font-size: 0.72rem;
+  color: var(--text-dim);
+}
+
+.armory-model-stage {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  background: radial-gradient(circle at 50% 42%, rgba(255, 209, 0, 0.08) 0%, #090b0f 78%);
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius-md);
+  padding: 0.85rem 0.65rem;
+}
+
+.armory-model-frame {
+  width: 100%;
+  flex: 1;
+  min-height: 220px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: rgba(5, 7, 11, 0.65);
+}
+
+.armory-main-render {
+  max-width: 100%;
+  max-height: 280px;
+  object-fit: contain;
+  display: block;
+}
+
+.armory-crest-fallback {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  padding: 1rem;
+}
+
+.armory-class-crest-svg {
+  width: 105px;
+  height: 120px;
+}
+
+.armory-crest-caption {
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.armory-stage-pills {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.35rem;
+}
+
+.armory-stat-chip {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border-hairline);
+  border-radius: 3px;
+  padding: 0.14rem 0.45rem;
+}
+
+.armory-stat-chip strong {
+  color: var(--gold-300);
+}
+
+.armory-tooltip-hint {
+  font-size: 0.68rem;
+  color: var(--text-dim);
+  text-align: center;
+}
+
+.armory-weapons-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.6rem;
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border-hairline);
+}
+
+@media (min-width: 768px) and (max-width: 900px) {
+  .armory-paperdoll-grid {
+    grid-template-columns: minmax(0, 1fr) 190px minmax(0, 1fr);
+    gap: 0.55rem;
+  }
+}
+
+@media (max-width: 767px) {
+  .armory-paperdoll-grid {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 0.45rem;
+  }
+
+  .armory-model-stage {
+    grid-column: 1 / -1;
+    order: -1;
+  }
+
+  .armory-model-frame {
+    min-height: 150px;
+  }
+
+  .armory-slot-row.align-right {
+    flex-direction: row;
+    text-align: left;
+  }
+
+  .armory-slot-icon-frame {
+    width: 32px;
+    height: 32px;
+  }
+
+  .armory-weapons-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Stats, Talents, Professions & Reputations Tabs */
+.armory-stats-grid,
+.armory-profs-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr));
+  gap: 0.75rem;
+}
+
+.armory-stat-card,
+.armory-prof-card,
+.armory-talent-tree-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius-sm);
+  padding: 0.8rem 0.9rem;
+}
+
+.armory-stat-card h6 {
+  font-family: var(--font-serif);
+  font-size: 0.86rem;
+  color: var(--gold-200);
+  margin-bottom: 0.55rem;
+  padding-bottom: 0.35rem;
+  border-bottom: 1px solid var(--border-hairline);
+}
+
+.armory-stat-line {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.8rem;
+  padding: 0.2rem 0;
+  color: var(--text-muted);
+}
+
+.armory-stat-line strong {
+  color: var(--text-main);
+}
+
+.armory-stat-line strong.gold {
+  color: var(--gold-300);
+}
+
+.armory-talent-trees {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr));
+  gap: 0.7rem;
+}
+
+.armory-talent-tree-head,
+.armory-prof-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.86rem;
+  color: var(--gold-100);
+}
+
+.armory-prof-kind {
+  display: block;
+  font-size: 0.7rem;
+  color: var(--text-dim);
+}
+
+.armory-talent-pills,
+.armory-recipe-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.32rem;
+}
+
+.armory-talent-pill {
+  font-size: 0.7rem;
+  padding: 0.14rem 0.42rem;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border-hairline);
+  border-radius: 3px;
+  color: var(--text-muted);
+}
+
+.armory-talent-pill b {
+  color: var(--gold-300);
+}
+
+.armory-reps-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 250px), 1fr));
+  gap: 0.55rem;
+}
+
+.armory-rep-row {
+  background: var(--bg-card);
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius-sm);
+  padding: 0.52rem 0.7rem;
+}
+
+.armory-rep-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.77rem;
+  margin-bottom: 0.32rem;
+}
+
+.armory-rep-name {
+  font-weight: 600;
+  color: var(--text-main);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.armory-rep-standing { font-size: 0.7rem; font-weight: 700; white-space: nowrap; }
+.rep-exalted { color: #2dd4bf; }
+.rep-revered { color: #4ade80; }
+.rep-honored { color: #86efac; }
+.rep-friendly { color: #a3e635; }
+.rep-neutral { color: #fbbf24; }
+.rep-hostile { color: #f87171; }
+
+.armory-rep-bar-bg {
+  width: 100%;
+  height: 5px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.07);
+  overflow: hidden;
+}
+
+.armory-rep-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+.armory-rep-bar-fill.rep-exalted { background: #14b8a6; }
+.armory-rep-bar-fill.rep-revered { background: #22c55e; }
+.armory-rep-bar-fill.rep-honored { background: #4ade80; }
+.armory-rep-bar-fill.rep-friendly { background: #84cc16; }
+.armory-rep-bar-fill.rep-neutral { background: #f59e0b; }
+.armory-rep-bar-fill.rep-hostile { background: #ef4444; }
+
+/* Warcraft Floating Tooltip Portal & Coins */
+.wow-tooltip-portal {
+  position: fixed;
+  z-index: 2500;
+  width: max-content;
+  max-width: min(330px, calc(100vw - 24px));
+  background: rgba(8, 12, 22, 0.97);
+  border: 1px solid #8a96ab;
+  border-radius: 5px;
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.92), inset 0 1px 0 rgba(255, 255, 255, 0.14);
+  padding: 0.65rem 0.8rem;
+  font-size: 0.78rem;
+  line-height: 1.42;
+  color: #ffffff;
+  pointer-events: none;
+}
+
+.wow-tooltip-portal.is-pinned {
+  pointer-events: auto;
+  border-color: var(--gold-300);
+}
+
+.wow-tooltip-inline-card {
+  background: rgba(8, 12, 22, 0.96);
+  border: 1px solid #596375;
+  border-radius: 5px;
+  padding: 0.85rem 0.95rem;
+  font-size: 0.82rem;
+  line-height: 1.46;
+}
+
+.wt-title {
+  font-size: 0.92rem;
+  font-weight: 700;
+  margin-bottom: 0.16rem;
+}
+
+.wt-gold { color: #ffd100; }
+.wt-white { color: #f8fafc; }
+.wt-green { color: #1eff00; }
+.wt-red { color: #ff4040; }
+.wt-dim { color: #94a3b8; font-size: 0.74rem; }
+
+.wt-row-split {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  color: #f8fafc;
+}
+
+.wt-set-block,
+.wt-ah-block {
+  margin-top: 0.42rem;
+  padding-top: 0.35rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.wt-flavor {
+  margin-top: 0.32rem;
+  font-style: italic;
+}
+
+.wt-sell-row {
+  margin-top: 0.25rem;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: #e2e8f0;
+}
+
+.wt-actions-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+  margin-top: 0.55rem;
+  padding-top: 0.45rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+.wt-link-btn,
+.wt-copy-btn,
+.wt-close-btn {
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 0.2rem 0.48rem;
+  border-radius: 3px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--gold-200);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.wt-close-btn {
+  margin-left: auto;
+  color: #fca5a5;
+  border-color: rgba(239, 68, 68, 0.45);
+}
+
+.wow-coins-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.wow-coin {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.12rem;
+  font-weight: 700;
+}
+
+.coin-g { color: var(--coin-gold); }
+.coin-s { color: var(--coin-silver); }
+.coin-c { color: var(--coin-copper); }
+
+.coin-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.coin-dot.g { background: radial-gradient(circle at 35% 35%, #fff5a8, #eab308); }
+.coin-dot.s { background: radial-gradient(circle at 35% 35%, #f8fafc, #94a3b8); }
+.coin-dot.c { background: radial-gradient(circle at 35% 35%, #fdba74, #c2410c); }
+
+/* Database Subtabs, Item Cards, Crafters & Roster */
+.db-subtabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  border-bottom: 1px solid var(--border-hairline);
+  margin-bottom: 1.15rem;
+  padding-bottom: 0.5rem;
+}
+
+.db-subtab {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-muted);
+  padding: 0.42rem 0.82rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.14s ease;
+}
+
+.db-subtab:hover {
+  color: var(--gold-100);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.db-subtab.active {
+  color: var(--gold-300);
+  background: rgba(255, 209, 0, 0.1);
+  border-color: rgba(255, 209, 0, 0.25);
+  font-weight: 700;
+}
+
+.db-subview {
+  display: none;
+}
+
+.db-subview.active {
+  display: block;
+}
+
+.db-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.85rem;
+}
+
+.db-results-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.75rem;
+}
+
+.db-items-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr));
+  gap: 0.85rem;
+}
+
+.db-item-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius-md);
+  padding: 0.85rem 0.95rem;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 0.75rem;
+  cursor: pointer;
+  transition: border-color 0.15s ease, transform 0.15s ease;
+}
+
+.db-item-card:hover {
+  border-color: var(--border-warm);
+  transform: translateY(-1px);
+}
+
+.db-item-card-top {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  min-width: 0;
+}
+
+.db-item-icon-wrap {
+  width: 40px;
+  height: 40px;
+  border-radius: 4px;
+  border: 2px solid var(--border-hairline);
+  background: #090b0f;
+  flex-shrink: 0;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.db-item-icon-wrap img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.db-item-meta {
+  min-width: 0;
+  flex: 1;
+}
+
+.db-item-name {
+  font-weight: 700;
+  font-size: 0.88rem;
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.db-item-sub {
+  font-size: 0.74rem;
+  color: var(--text-muted);
+  margin-top: 0.15rem;
+}
+
+.db-item-card-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  padding-top: 0.55rem;
+  border-top: 1px solid var(--border-hairline);
+  font-size: 0.75rem;
+}
+
+.db-ah-mini-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.73rem;
+  color: var(--text-muted);
+}
+
+.db-id-tag {
+  font-size: 0.72rem;
+  color: var(--text-dim);
+}
+
+.db-detail-drawer {
+  background: var(--bg-card);
+  border: 1px solid var(--border-gold-accent);
+  border-radius: var(--radius-md);
+  padding: 1rem 1.1rem;
+  box-shadow: var(--shadow-soft);
+}
+
+.db-detail-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.85rem;
+  flex-wrap: wrap;
+  padding-bottom: 0.8rem;
+  border-bottom: 1px solid var(--border-hairline);
+  margin-bottom: 0.9rem;
+}
+
+.db-detail-body {
+  display: grid;
+  grid-template-columns: 1.35fr 1fr;
+  gap: 1rem;
+}
+
+.db-detail-market-box {
+  background: var(--bg-inner);
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius-sm);
+  padding: 0.85rem 0.95rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.32rem;
+}
+
+.db-detail-market-box h6 {
+  font-family: var(--font-serif);
+  color: var(--gold-200);
+  font-size: 0.88rem;
+  margin-bottom: 0.35rem;
+}
+
+@media (max-width: 720px) {
+  .db-detail-body {
+    grid-template-columns: 1fr;
+  }
+}
+
+.db-crafters-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+}
+
+.db-crafter-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius-sm);
+  padding: 0.55rem 0.75rem;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.14s ease;
+}
+
+.db-crafter-card:hover {
+  border-color: var(--border-warm);
+}
+
+.db-crafter-head {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-bottom: 0.35rem;
+}
+
+.db-crafter-profs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.db-recipes-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.db-recipe-row {
+  background: var(--bg-card);
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius-sm);
+  padding: 0.72rem 0.95rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.db-recipe-title {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  flex-wrap: wrap;
+  color: var(--gold-100);
+}
+
+.db-recipe-crafters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.db-recipe-crafter-pill {
+  background: var(--bg-inner);
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius-sm);
+  padding: 0.25rem 0.55rem;
+  font-size: 0.76rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  cursor: pointer;
+}
+
+.db-recipe-crafter-pill:hover {
+  border-color: var(--border-warm);
+}
+
+.db-roster-banner {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 0.65rem;
+}
+
+.db-banner-stat {
+  background: var(--bg-card);
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius-sm);
+  padding: 0.55rem 0.85rem;
+}
+
+.db-banner-stat span {
+  display: block;
+  font-size: 0.7rem;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.db-banner-stat strong {
+  font-size: 0.95rem;
+  color: var(--gold-100);
+}
+
+.db-banner-stat strong.gold {
+  color: var(--gold-300);
+}
+
+.db-lookup-form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 180px;
+  gap: 0.65rem;
+}
+
+@media (max-width: 640px) {
+  .db-lookup-form-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.armory-diagnostics-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.armory-diag-pill {
+  font-size: 0.74rem;
+  font-weight: 600;
+  padding: 0.28rem 0.65rem;
+  border-radius: 999px;
+  border: 1px solid var(--border-hairline);
+  background: var(--bg-inner);
+  color: var(--text-muted);
+}
+
+.armory-diag-pill.is-ok {
+  border-color: rgba(34, 197, 94, 0.35);
+  color: #86efac;
+  background: rgba(34, 197, 94, 0.08);
+}
+
+.armory-diag-pill.is-warn {
+  border-color: rgba(251, 191, 36, 0.35);
+  color: #fde68a;
+  background: rgba(251, 191, 36, 0.08);
 }
 
 /* ==========================================================================

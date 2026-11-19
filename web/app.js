@@ -185,6 +185,16 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupCreateBountyFormControls();
   setupDiscordChannelsManager();
 
+  window.BSEArmory?.init?.({
+    getState: () => state,
+    showToast,
+    refreshBseState,
+    getDiscordAvatarUrl,
+    resolveRankTitle,
+    switchTab,
+    openCharacterModal
+  });
+
   // Concurrently fetch auth session and central BSE state
   await Promise.allSettled([checkAuthSession(), refreshBseState()]);
 
@@ -396,6 +406,7 @@ function renderBseDependentViews() {
   renderShop();
   renderFaq();
   updateFaqSpendActions();
+  window.BSEArmory?.onBseStateUpdated?.();
 
   if (state.user?.isOfficer) {
     renderOfficerQueues();
@@ -1055,6 +1066,11 @@ function renderLeaderboard() {
 window.inspectMemberProfile = function(discordId) {
   const w = state.bseState?.wallets?.[discordId];
   if (!w) return;
+
+  if (window.BSEArmory?.renderMemberProfileModal) {
+    window.BSEArmory.renderMemberProfileModal(discordId, w);
+    return;
+  }
 
   const name = w.serverNickname || w.globalName || w.username || 'Guild Member';
   const handle = w.username ? `@${w.username}` : '';
@@ -2420,6 +2436,8 @@ function populateOfficerSettingsForms() {
   if (!state.tithingDraftDirty && !isEditingTithingInput) {
     syncTithingEditorDisplays(tithingCfg.goldAmount, tithingCfg.bonesAmount);
   }
+
+  window.BSEArmory?.syncOfficerArmoryForm?.();
 }
 
 /**
@@ -3072,29 +3090,64 @@ function setupCharacterManagement() {
   });
 
   document.getElementById('btnAddCharacter').addEventListener('click', () => {
-    const name = document.getElementById('newCharName').value.trim();
+    const rawName = document.getElementById('newCharName').value.trim();
+    const rawSurname = document.getElementById('newCharSurname')?.value.trim() || '';
     const charClass = document.getElementById('newCharClass').value;
     const charRole = document.getElementById('newCharRole')?.value || 'DPS';
+    const charRuleset = document.getElementById('newCharRuleset')?.value || 'PvP';
     const professions = document.getElementById('newCharProfessions')?.value.trim() || '';
+    const verifiedMeta = window.BSEArmory?.consumePendingVerifiedCharacter?.() || null;
 
-    if (!name) {
+    if (!rawName) {
       showToast('Please enter a character name.');
       return;
     }
 
+    let cleanName = rawName;
+    let cleanSurname = rawSurname;
+    if (!cleanSurname && rawName.includes('-')) {
+      const parts = rawName.split('-').map(s => s.trim()).filter(Boolean);
+      if (parts.length >= 2) {
+        cleanName = parts[0];
+        cleanSurname = parts.slice(1).join('-');
+      }
+    }
+
+    const name = verifiedMeta?.name || cleanName;
+    const surname = verifiedMeta?.surname || cleanSurname;
+    const slug = verifiedMeta?.slug || (surname
+      ? `${name.toLowerCase().replace(/\s+/g, '')}-${surname.toLowerCase().replace(/\s+/g, '')}`
+      : name.toLowerCase().replace(/\s+/g, ''));
+
     const isFirst = state.userCharacters.length === 0;
-    state.userCharacters.push({
+    const entry = {
       name,
+      surname,
+      slug,
       class: charClass,
       role: charRole,
+      ruleset: verifiedMeta?.ruleset || charRuleset,
       professions,
       isPrimary: isFirst
-    });
+    };
+    if (verifiedMeta) {
+      if (verifiedMeta.race) entry.race = verifiedMeta.race;
+      if (verifiedMeta.level) entry.level = verifiedMeta.level;
+      if (verifiedMeta.avgItemLevel) entry.avgItemLevel = verifiedMeta.avgItemLevel;
+      if (verifiedMeta.guildName) entry.guildName = verifiedMeta.guildName;
+      if (verifiedMeta.avatarThumbUrl) entry.avatarThumbUrl = verifiedMeta.avatarThumbUrl;
+      entry.armoryVerified = true;
+      entry.lastArmorySyncAt = verifiedMeta.lastArmorySyncAt;
+    }
+
+    state.userCharacters.push(entry);
 
     document.getElementById('newCharName').value = '';
+    if (document.getElementById('newCharSurname')) document.getElementById('newCharSurname').value = '';
     if (document.getElementById('newCharProfessions')) document.getElementById('newCharProfessions').value = '';
     renderCharacterModalList();
-    showToast(`Added ${name} (${charClass} ${charRole}). Click "Save Changes" to store.`);
+    const displayFull = surname ? `${name} ${surname}` : name;
+    showToast(`Added ${displayFull} (${charClass} ${charRole}). Click "Save Changes" to store.`);
   });
 
   document.getElementById('btnSaveCharacters').addEventListener('click', async () => {
@@ -3142,27 +3195,34 @@ function openCharacterModal() {
 function renderCharacterModalList() {
   const container = document.getElementById('characterListContainer');
   if (!state.userCharacters.length) {
-    container.innerHTML = `<p style="color: var(--text-dim); font-size: 0.85rem; text-align: center; padding: 1rem;">No characters added yet. Add your main Classic character below!</p>`;
+    container.innerHTML = `<p style="color: var(--text-dim); font-size: 0.85rem; text-align: center; padding: 1rem;">No characters added yet. Add your main WoW: Forever character below!</p>`;
     return;
   }
 
   container.innerHTML = state.userCharacters.map((c, idx) => {
     const classCss = `class-${(c.class || 'warrior').toLowerCase().replace(/\s+/g, '-')}`;
     const roleCss = (c.role || 'dps').toLowerCase();
-    const profs = c.professions ? `<span style="font-size:0.7rem; color:var(--text-muted); margin-left:0.35rem;">(${c.professions})</span>` : '';
+    const displayName = c.surname ? `${c.name} ${c.surname}` : c.name;
+    const lvTag = c.level ? `<span style="font-size:0.7rem; color:var(--gold-200); margin-left:0.35rem;">Lv ${escapeHtml(String(c.level))}</span>` : '';
+    const verifiedBadge = c.armoryVerified
+      ? `<span class="armory-verified-badge" style="margin-left:0.35rem;">Verified</span>`
+      : '';
+    const profs = c.professions ? `<span style="font-size:0.7rem; color:var(--text-muted); margin-left:0.35rem;">(${escapeHtml(c.professions)})</span>` : '';
 
     return `
-      <div style="display: flex; justify-content: space-between; align-items: center; background: var(--bg-inner); padding: 0.6rem 0.85rem; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle); margin-bottom: 0.4rem; gap: 0.5rem; flex-wrap: wrap;">
-        <div style="display: flex; align-items: center; gap: 0.6rem;">
-          <input type="radio" name="primaryCharRadio" ${c.isPrimary ? 'checked' : ''} onchange="setPrimaryCharacter(${idx})" title="Set as primary character">
-          <div>
-            <span class="class-badge ${classCss}">${c.name}</span>
-            <span class="role-pill ${roleCss}" style="margin-left: 0.3rem;">${c.role || 'DPS'}</span>
+      <div style="display: flex; justify-content: space-between; align-items: center; background: var(--bg-inner); padding: 0.6rem 0.85rem; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle); margin-bottom: 0.4rem; gap: 0.65rem;">
+        <div style="display: flex; align-items: center; gap: 0.6rem; flex: 1; min-width: 0;">
+          <input type="radio" name="primaryCharRadio" ${c.isPrimary ? 'checked' : ''} onchange="setPrimaryCharacter(${idx})" title="Set as primary character" style="flex-shrink: 0;">
+          <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem; min-width: 0;">
+            <span class="class-badge ${classCss}">${escapeHtml(displayName)}</span>
+            ${lvTag}
+            <span class="role-pill ${roleCss}">${escapeHtml(c.role || 'DPS')}</span>
+            ${verifiedBadge}
             ${profs}
-            ${c.isPrimary ? '<span class="char-pill" style="font-size: 0.65rem; margin-left: 0.4rem;">PRIMARY</span>' : ''}
+            ${c.isPrimary ? '<span class="char-pill" style="font-size: 0.65rem;">PRIMARY</span>' : ''}
           </div>
         </div>
-        <button class="btn-danger" style="padding: 0.2rem 0.5rem; font-size: 0.7rem;" onclick="removeCharacter(${idx})">✕</button>
+        <button type="button" class="btn-danger" style="padding: 0.25rem 0.55rem; font-size: 0.72rem; flex-shrink: 0;" onclick="removeCharacter(${idx})">✕</button>
       </div>
     `;
   }).join('');
@@ -5036,6 +5096,7 @@ function switchTab(targetView) {
   if (targetView === 'history') {
     renderMemberHistory();
   }
+  window.BSEArmory?.onTabActivated?.(targetView);
 
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
@@ -5054,6 +5115,9 @@ function switchOfficerSubtab(target) {
 
   if (target === 'discord-channels') {
     renderDiscordChannelControls();
+  }
+  if (target === 'armory') {
+    window.BSEArmory?.syncOfficerArmoryForm?.();
   }
 }
 

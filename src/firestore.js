@@ -207,9 +207,16 @@ export class FirestoreClient {
     this.env = env;
     this.projectId = env.FIRESTORE_PROJECT_ID || 'black-sands-exchange-addon';
     this.databaseId = '(default)';
-    this.baseUrl = `https://firestore.googleapis.com/v1/projects/${this.projectId}/databases/${this.databaseId}/documents`;
+    this.docPathPrefix = `projects/${this.projectId}/databases/${this.databaseId}/documents`;
+    this.baseUrl = `https://firestore.googleapis.com/v1/${this.docPathPrefix}`;
     this._cachedToken = null;
     this._tokenExpiry = 0;
+  }
+
+  sanitizeDocId(docId) {
+    const clean = String(docId || '').trim().replace(/[^a-zA-Z0-9._-]/g, '_');
+    if (!clean) throw new Error('Firestore document ID cannot be empty');
+    return clean;
   }
 
   async getHeaders() {
@@ -225,6 +232,127 @@ export class FirestoreClient {
       }
     }
     return headers;
+  }
+
+  /**
+   * Read a single document from any collection (returns null on 404)
+   */
+  async getCollectionDoc(collection, docId) {
+    try {
+      const headers = await this.getHeaders();
+      const safeCol = this.sanitizeDocId(collection);
+      const safeId = this.sanitizeDocId(docId);
+      const res = await fetch(`${this.baseUrl}/${safeCol}/${safeId}`, { headers });
+      if (res.status === 404) return null;
+      if (!res.ok) {
+        const text = await res.text();
+        console.warn(`Firestore getCollectionDoc warning (${safeCol}/${safeId} [${res.status}]):`, text);
+        return null;
+      }
+      const doc = await res.json();
+      return fromFirestoreDoc(doc);
+    } catch (err) {
+      console.error(`Failed to read ${collection}/${docId}:`, err);
+      return null;
+    }
+  }
+
+  /**
+   * Upsert a single document in any collection
+   */
+  async saveCollectionDoc(collection, docId, data) {
+    const headers = await this.getHeaders();
+    const safeCol = this.sanitizeDocId(collection);
+    const safeId = this.sanitizeDocId(docId);
+    const body = toFirestoreFields(data);
+    const res = await fetch(`${this.baseUrl}/${safeCol}/${safeId}`, {
+      method: 'PATCH',
+      headers,
+      body: JSON.stringify(body)
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Firestore write failed (${safeCol}/${safeId}) [${res.status}]: ${text}`);
+    }
+    return true;
+  }
+
+  /**
+   * Batch read multiple documents from one collection in a single Firestore REST subrequest
+   */
+  async batchGetCollectionDocs(collection, docIds = []) {
+    const result = {};
+    const safeCol = this.sanitizeDocId(collection);
+    const uniqueIds = [...new Set(docIds.map(id => this.sanitizeDocId(id)).filter(Boolean))];
+    if (!uniqueIds.length) return result;
+
+    try {
+      const headers = await this.getHeaders();
+      for (let i = 0; i < uniqueIds.length; i += 80) {
+        const chunk = uniqueIds.slice(i, i + 80);
+        const documents = chunk.map(id => `${this.docPathPrefix}/${safeCol}/${id}`);
+        const res = await fetch(`${this.baseUrl}:batchGet`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ documents })
+        });
+        if (!res.ok) {
+          const text = await res.text();
+          console.warn(`Firestore batchGet warning (${safeCol} [${res.status}]):`, text);
+          continue;
+        }
+        const rows = await res.json();
+        if (Array.isArray(rows)) {
+          for (const row of rows) {
+            if (row?.found) {
+              const parsed = fromFirestoreDoc(row.found);
+              if (parsed?._id) {
+                result[parsed._id] = parsed;
+              }
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.error(`Failed batchGet on ${collection}:`, err);
+    }
+    return result;
+  }
+
+  /**
+   * Batch upsert multiple documents in one Firestore REST :commit subrequest
+   */
+  async batchSaveCollectionDocs(collection, docMapOrEntries) {
+    const entries = Array.isArray(docMapOrEntries)
+      ? docMapOrEntries
+      : Object.entries(docMapOrEntries || {});
+    if (!entries.length) return true;
+
+    const headers = await this.getHeaders();
+    const safeCol = this.sanitizeDocId(collection);
+    for (let i = 0; i < entries.length; i += 80) {
+      const chunk = entries.slice(i, i + 80);
+      const writes = chunk.map(([docId, data]) => {
+        const safeId = this.sanitizeDocId(docId);
+        return {
+          update: {
+            name: `${this.docPathPrefix}/${safeCol}/${safeId}`,
+            fields: toFirestoreFields(data).fields
+          }
+        };
+      });
+
+      const res = await fetch(`${this.baseUrl}:commit`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ writes })
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        console.warn(`Firestore batchCommit warning (${safeCol} [${res.status}]):`, text);
+      }
+    }
+    return true;
   }
 
   /**
@@ -444,6 +572,16 @@ export class FirestoreClient {
         tithing: {
           goldAmount: 1,
           bonesAmount: 1
+        },
+        armory: {
+          enabled: true,
+          region: 'us',
+          edition: 'forever',
+          guildSlug: 'black-sands',
+          guildRulesetId: 1,
+          defaultAuctionHouseId: 110,
+          autoSyncGuildRoster: true,
+          staticNamespaceCache: 'static-1.60.1_70399-forever-us'
         }
       }
     };

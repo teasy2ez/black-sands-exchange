@@ -766,3 +766,254 @@ export async function recordAuditLogAndSync(state, env, firestore, entry) {
 
   return logItem;
 }
+
+/**
+ * Classic Wowhead Forever & item quality helpers for Discord embeds
+ */
+export const QualityColors = {
+  POOR: 0x9D9D9D,
+  COMMON: 0xFFFFFF,
+  UNCOMMON: 0x1EFF00,
+  RARE: 0x0070DD,
+  EPIC: 0xA335EE,
+  LEGENDARY: 0xFF8000,
+  ARTIFACT: 0xE6CC80,
+  HEIRLOOM: 0x00CCFF
+};
+
+export const QualityEmojis = {
+  POOR: '⬜',
+  COMMON: '▫️',
+  UNCOMMON: '🟩',
+  RARE: '🟦',
+  EPIC: '🟪',
+  LEGENDARY: '🟧',
+  ARTIFACT: '🟨',
+  HEIRLOOM: '🩵'
+};
+
+export const ClassicClassColors = {
+  Warrior: 0xC79C6E,
+  Paladin: 0xF58CBA,
+  Hunter: 0xABD473,
+  Rogue: 0xFFF569,
+  Priest: 0xFFFFFF,
+  Shaman: 0x0070DE,
+  Mage: 0x69CCF0,
+  Warlock: 0x9482C9,
+  Druid: 0xFF7D0A
+};
+
+export function formatCopperCoins(copperAmount = 0) {
+  const total = Math.max(0, Math.round(Number(copperAmount) || 0));
+  if (total === 0) return '0c';
+  const g = Math.floor(total / 10000);
+  const s = Math.floor((total % 10000) / 100);
+  const c = total % 100;
+  const parts = [];
+  if (g > 0) parts.push(`${g.toLocaleString()}g`);
+  if (s > 0 || g > 0) parts.push(`${s}s`);
+  if (c > 0 || parts.length === 0) parts.push(`${c}c`);
+  return parts.join(' ');
+}
+
+function truncateField(text, maxLen = 1000) {
+  const str = String(text || '');
+  return str.length > maxLen ? `${str.slice(0, maxLen - 1)}…` : str;
+}
+
+/**
+ * Build WoW: Forever Armory Character Inspection Embed
+ */
+export function buildArmoryCharacterEmbed(snapshot, ownerWallet = null) {
+  if (!snapshot || !snapshot.found) {
+    const label = snapshot?.slug || snapshot?.name || 'Character';
+    return {
+      title: `⚔️ Forever Armory — ${label}`,
+      url: snapshot?.armoryUrl || undefined,
+      description: snapshot?.message || 'Character was not found on WoW: Forever US Armory. Characters appear once they reach Level 10+ and log out once.',
+      color: Colors.RED,
+      footer: { text: 'WoW: Forever US Armory • bse.teasy2ez.win' },
+      timestamp: new Date().toISOString()
+    };
+  }
+
+  const classColor = ClassicClassColors[snapshot.className] || Colors.GOLD;
+  const metaParts = [
+    snapshot.guild?.name ? `<${snapshot.guild.name}>` : null,
+    snapshot.ruleset?.name ? `Ruleset: **${snapshot.ruleset.name}**` : null,
+    snapshot.activeSpec ? `Spec: **${snapshot.activeSpec}**` : null,
+    snapshot.avgItemLevel ? `Avg iLvl: **${snapshot.avgItemLevel}**` : null,
+    ownerWallet?.discordId ? `BSE Member: <@${ownerWallet.discordId}>` : null
+  ].filter(Boolean);
+
+  const fields = [];
+
+  if (snapshot.statistics) {
+    const st = snapshot.statistics;
+    const statBits = [
+      st.health ? `HP: **${Number(st.health).toLocaleString()}**` : null,
+      st.power ? `${st.powerType || 'Resource'}: **${Number(st.power).toLocaleString()}**` : null,
+      st.strength ? `STR **${st.strength}**` : null,
+      st.agility ? `AGI **${st.agility}**` : null,
+      st.stamina ? `STA **${st.stamina}**` : null,
+      st.intellect ? `INT **${st.intellect}**` : null,
+      st.spirit ? `SPI **${st.spirit}**` : null,
+      st.armor ? `Armor **${Number(st.armor).toLocaleString()}**` : null,
+      st.attackPower ? `AP **${st.attackPower}**` : null,
+      st.spellPower ? `SP **${st.spellPower}**` : null
+    ].filter(Boolean);
+    if (statBits.length) {
+      fields.push({
+        name: '📊 Character Attributes',
+        value: truncateField(statBits.join(' • ')),
+        inline: false
+      });
+    }
+  }
+
+  const primaries = snapshot.professions?.primaries || [];
+  if (primaries.length) {
+    fields.push({
+      name: '🛠️ Primary Professions',
+      value: primaries.map(p => `• **${p.name}** (${p.skillPoints}/${p.maxSkillPoints}${p.knownRecipes?.length ? `, ${p.knownRecipes.length} recipes` : ''})`).join('\n'),
+      inline: false
+    });
+  }
+
+  const gear = Array.isArray(snapshot.equipment) ? snapshot.equipment : [];
+  if (gear.length) {
+    const lines = gear.slice(0, 12).map(it => {
+      const emoji = QualityEmojis[it.quality] || '▫️';
+      const slot = it.slotName || it.slotType || 'Slot';
+      const ilvl = it.level ? ` (${it.level})` : '';
+      const link = it.wowheadUrl ? `[${it.name}](${it.wowheadUrl})` : `**${it.name}**`;
+      return `${emoji} **${slot}:** ${link}${ilvl}`;
+    });
+    if (gear.length > 12) {
+      lines.push(`*+${gear.length - 12} more slots — inspect full paperdoll on bse.teasy2ez.win*`);
+    }
+    fields.push({
+      name: '🛡️ Equipped Gear',
+      value: truncateField(lines.join('\n')),
+      inline: false
+    });
+  }
+
+  const embed = {
+    title: `⚔️ ${snapshot.displayName} — Lv ${snapshot.level} ${snapshot.race} ${snapshot.className}`,
+    url: snapshot.armoryUrl || undefined,
+    description: metaParts.join(' • ') || undefined,
+    color: classColor,
+    fields,
+    footer: { text: 'WoW: Forever US Armory • bse.teasy2ez.win' },
+    timestamp: snapshot.syncedAt || new Date().toISOString()
+  };
+
+  const thumb = snapshot.media?.avatar || snapshot.media?.inset;
+  if (thumb) {
+    embed.thumbnail = { url: thumb };
+  }
+
+  return embed;
+}
+
+/**
+ * Build WoW: Forever Item Detail + AH Price + Guild Crafters Embed
+ */
+export function buildArmoryItemEmbed(item, craftingRecipes = [], altMatches = []) {
+  const quality = String(item?.quality || 'COMMON').toUpperCase();
+  const emoji = QualityEmojis[quality] || '▫️';
+  const color = QualityColors[quality] ?? Colors.GOLD;
+
+  const metaLines = [];
+  if (item.level) metaLines.push(`Item Level **${item.level}**`);
+  if (item.binding) metaLines.push(item.binding);
+  if (item.inventoryName || item.itemSubclass) {
+    metaLines.push([item.inventoryName, item.itemSubclass].filter(Boolean).join(' • '));
+  }
+  if (item.requiredLevel) metaLines.push(`Requires Level **${item.requiredLevel}**`);
+
+  const statLines = [];
+  if (item.armorDisplay) statLines.push(item.armorDisplay);
+  if (item.weapon?.damage) {
+    statLines.push([item.weapon.damage, item.weapon.attackSpeed, item.weapon.dps].filter(Boolean).join(' • '));
+  }
+  for (const s of (item.stats || []).slice(0, 8)) {
+    if (s.label) statLines.push(s.label);
+  }
+  for (const sp of (item.spells || []).slice(0, 4)) {
+    if (sp.description) statLines.push(`*${sp.description}*`);
+  }
+
+  let description = '';
+  if (item.notFoundInStatic && !statLines.length) {
+    description = `${metaLines.join(' • ')}\n\n*Blizzard's static Classic catalog returned partial data for this legacy Forever item. [View full stats on Wowhead Forever](${item.wowheadUrl}).*`;
+  } else {
+    description = [
+      metaLines.length ? metaLines.join(' • ') : null,
+      statLines.length ? statLines.join('\n') : null
+    ].filter(Boolean).join('\n\n') || `[Open on Wowhead Forever](${item.wowheadUrl})`;
+  }
+
+  const fields = [];
+  if (item.ahPrice) {
+    fields.push({
+      name: '💰 Forever Auction House',
+      value: `Min Buyout: **${formatCopperCoins(item.ahPrice.min)}**\nMedian: **${formatCopperCoins(item.ahPrice.median)}**\nQuantity Listed: **${Number(item.ahPrice.qty || 0).toLocaleString()}**`,
+      inline: true
+    });
+  }
+
+  if (item.sellPrice > 0) {
+    fields.push({
+      name: '🪙 Vendor Sell Value',
+      value: formatCopperCoins(item.sellPrice),
+      inline: true
+    });
+  }
+
+  if (Array.isArray(craftingRecipes) && craftingRecipes.length > 0) {
+    const crafterLines = [];
+    for (const rec of craftingRecipes.slice(0, 3)) {
+      const list = (rec.crafters || []).slice(0, 5).map(c =>
+        c.discordId ? `**${c.displayName}** (<@${c.discordId}>)` : `**${c.displayName}**`
+      );
+      if (list.length) {
+        crafterLines.push(`• **${rec.name}** (*${rec.profession}*): ${list.join(', ')}`);
+      }
+    }
+    if (crafterLines.length) {
+      fields.push({
+        name: '🔨 Guild Crafters',
+        value: truncateField(crafterLines.join('\n')),
+        inline: false
+      });
+    }
+  }
+
+  if (Array.isArray(altMatches) && altMatches.length > 0) {
+    fields.push({
+      name: '🔎 Other Search Matches',
+      value: altMatches.slice(0, 4).map(m => `• [${m.name}](${m.wowheadUrl}) (\`#${m.id}\`)`).join('\n'),
+      inline: false
+    });
+  }
+
+  const embed = {
+    title: `${emoji} ${item.name || `Item #${item.id}`}`,
+    url: item.wowheadUrl || undefined,
+    description: truncateField(description, 2000),
+    color,
+    fields,
+    footer: { text: `Item ID #${item.id} • WoW: Forever US • bse.teasy2ez.win` },
+    timestamp: new Date().toISOString()
+  };
+
+  if (item.iconUrl) {
+    embed.thumbnail = { url: item.iconUrl };
+  }
+
+  return embed;
+}
+

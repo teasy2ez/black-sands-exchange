@@ -173,6 +173,14 @@
           <span class="nav-tab-label">Exchange Shop</span>
         </button>
 
+        <button type="button" class="nav-tab" data-tab="database" id="tabNavDatabase">
+          <svg class="nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M12 2L4 5v6c0 5.55 3.84 10.74 8 12 4.16-1.26 8-6.45 8-12V5l-8-3z"/>
+            <path d="M9.5 11.5L11.5 13.5L15 9.5"/>
+          </svg>
+          <span class="nav-tab-label">Armory &amp; DB</span>
+        </button>
+
         <button type="button" class="nav-tab" data-tab="faq" id="tabNavFaq">
           <svg class="nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <circle cx="12" cy="12" r="10"/>
@@ -397,6 +405,193 @@
         <!-- Bounties & Player Contracts Grid -->
         <div class="cards-grid" id="bountiesGrid">
           <!-- Dynamically populated -->
+        </div>
+      </section>
+
+      <!-- 2b. WoW: Forever Armory & Item Database View -->
+      <section class="tab-view" id="view-database">
+        <div class="section-header">
+          <div>
+            <h3>WoW: Forever Armory &amp; Database</h3>
+            <p class="section-subtitle">Explore official WoW: Forever US items, guild crafters, live in-game roster, Auction House market prices, and character armory profiles.</p>
+          </div>
+          <span class="armory-connection-badge" id="armoryConnectionBadge">WoW: Forever US</span>
+        </div>
+
+        <!-- Database Sub-Navigation Tabs -->
+        <div class="db-subtabs" role="tablist" aria-label="Armory and Database sections">
+          <button type="button" class="db-subtab active" data-db-subtab="items" role="tab" aria-selected="true">Items &amp; Loot DB</button>
+          <button type="button" class="db-subtab" data-db-subtab="crafting" role="tab" aria-selected="false">Guild Crafters</button>
+          <button type="button" class="db-subtab" data-db-subtab="roster" role="tab" aria-selected="false">Forever Roster</button>
+          <button type="button" class="db-subtab" data-db-subtab="ah" role="tab" aria-selected="false">AH Price Watch</button>
+          <button type="button" class="db-subtab" data-db-subtab="lookup" role="tab" aria-selected="false">Character Lookup</button>
+        </div>
+
+        <!-- DB Subtab 1: Items & Loot DB -->
+        <div class="db-subview active" id="db-subview-items">
+          <div class="db-toolbar">
+            <div class="search-input-wrap">
+              <svg class="search-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+              </svg>
+              <input type="text" class="search-input search-input-with-icon" id="dbItemSearchInput" placeholder="Search Forever items by name or numeric Item ID (e.g. Thunderfury, Flask of the Titans, 19019)...">
+              <button type="button" class="search-clear-btn" id="btnClearDbItemSearch" style="display: none;" title="Clear item search">✕</button>
+            </div>
+            <button type="button" class="btn-primary" id="btnDbItemSearch">Search Items</button>
+          </div>
+
+          <div class="quick-chips-row db-preset-chips" style="margin-bottom: 1rem;">
+            <button type="button" class="quick-chip db-item-preset" data-query="Thunderfury">Thunderfury</button>
+            <button type="button" class="quick-chip db-item-preset" data-query="Sulfuras">Sulfuras</button>
+            <button type="button" class="quick-chip db-item-preset" data-query="Lionheart">Lionheart Helm</button>
+            <button type="button" class="quick-chip db-item-preset" data-query="Flask of the Titans">Flask of the Titans</button>
+            <button type="button" class="quick-chip db-item-preset" data-query="Black Lotus">Black Lotus</button>
+            <button type="button" class="quick-chip db-item-preset" data-query="19379">Neltharion's Tear (#19379)</button>
+          </div>
+
+          <!-- Selected Item Full Inspector Drawer (Hidden until an item is clicked) -->
+          <div id="dbItemDetailPanel" class="db-item-detail-panel" style="display: none; margin-bottom: 1.15rem;"></div>
+
+          <div class="db-results-meta">
+            <span id="dbItemsHeaderLabel" class="subview-hint">Featured WoW: Forever Items &amp; Raid Classics</span>
+            <div id="dbItemPagination" class="pagination-controls"></div>
+          </div>
+
+          <div id="dbItemsGrid" class="db-items-grid">
+            <div class="table-loading-cell">Loading WoW: Forever item catalog...</div>
+          </div>
+        </div>
+
+        <!-- DB Subtab 2: Guild Professions & Crafting Directory -->
+        <div class="db-subview" id="db-subview-crafting">
+          <div class="db-toolbar">
+            <div class="search-input-wrap">
+              <svg class="search-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+              </svg>
+              <input type="text" class="search-input search-input-with-icon" id="dbCraftingSearch" placeholder="Find a recipe or crafter (e.g. Titans, Crusader, Lionheart, Salt Shaker)...">
+            </div>
+            <span class="category-chip" id="dbCraftingStatsBadge">0 Recipes &bull; 0 Crafters</span>
+          </div>
+
+          <div class="category-chips-bar" id="dbCraftingProfChips" style="margin-bottom: 1rem;">
+            <button type="button" class="category-chip active" data-prof="all">All Professions</button>
+          </div>
+
+          <div id="dbCraftingCraftersBar" class="db-crafters-strip" style="margin-bottom: 1.1rem;"></div>
+          <div id="dbCraftingRecipesList" class="db-recipes-list">
+            <div class="table-loading-cell">Loading Guild Crafting Directory...</div>
+          </div>
+        </div>
+
+        <!-- DB Subtab 3: Forever In-Game Guild Roster -->
+        <div class="db-subview" id="db-subview-roster">
+          <div id="dbRosterBanner" class="db-roster-banner" style="margin-bottom: 0.9rem;"></div>
+
+          <div class="db-toolbar">
+            <div class="search-input-wrap">
+              <svg class="search-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+              </svg>
+              <input type="text" class="search-input search-input-with-icon" id="dbRosterSearch" placeholder="Search Forever character, class, race, or Discord member...">
+            </div>
+            <div class="toolbar-filters">
+              <div class="segmented-pills" id="dbRosterFilterPills">
+                <button type="button" class="seg-pill active" data-roster-filter="all">All</button>
+                <button type="button" class="seg-pill" data-roster-filter="linked">Linked Discord</button>
+                <button type="button" class="seg-pill" data-roster-filter="unlinked">Unlinked</button>
+                <button type="button" class="seg-pill" data-roster-filter="max">Lv 60</button>
+              </div>
+              <button type="button" class="btn-secondary btn-sm" id="btnDbSyncRoster" style="display: none;">Refresh Roster</button>
+            </div>
+          </div>
+
+          <div class="table-container">
+            <div class="table-scroll-wrap">
+              <table class="leaderboard-table desktop-roster-table">
+                <thead>
+                  <tr>
+                    <th>Rank</th>
+                    <th>Character</th>
+                    <th>Level</th>
+                    <th>Race &amp; Class</th>
+                    <th>Discord Member</th>
+                    <th style="text-align: right;">Inspect</th>
+                  </tr>
+                </thead>
+                <tbody id="dbRosterTableBody">
+                  <tr><td colspan="6" class="table-loading-cell">Loading Forever guild roster...</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="mobile-roster-list" id="dbRosterMobileList">
+              <div class="table-loading-cell">Loading Forever guild roster...</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- DB Subtab 4: Live Auction House Price Watch -->
+        <div class="db-subview" id="db-subview-ah">
+          <div id="dbAhSummaryBanner" class="db-roster-banner" style="margin-bottom: 0.9rem;"></div>
+
+          <div class="db-toolbar">
+            <div class="search-input-wrap">
+              <svg class="search-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+              </svg>
+              <input type="text" class="search-input search-input-with-icon" id="dbAhSearchInput" placeholder="Filter tracked consumables &amp; raid materials...">
+            </div>
+            <button type="button" class="btn-secondary btn-sm" id="btnRefreshAhWatch">Refresh Prices</button>
+          </div>
+
+          <div class="table-container">
+            <div class="table-scroll-wrap">
+              <table class="leaderboard-table desktop-roster-table">
+                <thead>
+                  <tr>
+                    <th>Item</th>
+                    <th>ID</th>
+                    <th>Min Buyout</th>
+                    <th>Weighted Median</th>
+                    <th>Qty</th>
+                    <th style="text-align: right;">Links</th>
+                  </tr>
+                </thead>
+                <tbody id="dbAhTableBody">
+                  <tr><td colspan="6" class="table-loading-cell">Loading Auction House snapshot...</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="mobile-roster-list" id="dbAhMobileList">
+              <div class="table-loading-cell">Loading Auction House snapshot...</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- DB Subtab 5: Ad-Hoc Character Armory Lookup -->
+        <div class="db-subview" id="db-subview-lookup">
+          <div class="wow-inner-box" style="padding: 1rem; margin-bottom: 1rem;">
+            <p style="font-size: 0.82rem; color: var(--text-muted); margin-bottom: 0.75rem;">
+              Look up any <strong>WoW: Forever US</strong> character directly from Battle.net using their <strong>First Name + Surname</strong>. Characters appear on Armory once they reach Level 10+ and log out once.
+            </p>
+            <div class="db-lookup-form-grid">
+              <div>
+                <label class="field-section-label">Character Name</label>
+                <input type="text" class="form-control" id="dbLookupName" placeholder="e.g. Grimfang">
+              </div>
+              <div>
+                <label class="field-section-label">Surname</label>
+                <input type="text" class="form-control" id="dbLookupSurname" placeholder="e.g. Black">
+              </div>
+              <div style="display: flex; align-items: flex-end;">
+                <button type="button" class="btn-primary" id="btnDbCharLookup" style="width: 100%;">Inspect Armory</button>
+              </div>
+            </div>
+          </div>
+
+          <div id="dbCharLookupResult">
+            <div class="bounty-empty-state">Enter a Character Name and Surname above to load their WoW: Forever Paperdoll, Stats, Talents, and Professions.</div>
+          </div>
         </div>
       </section>
 
@@ -640,6 +835,9 @@
           </button>
           <button type="button" class="officer-subtab" data-subtab="discord-channels">
             Discord Channels
+          </button>
+          <button type="button" class="officer-subtab" data-subtab="armory">
+            Forever Armory
           </button>
         </div>
 
@@ -1103,6 +1301,68 @@
           </div>
         </div>
 
+        <!-- Officer Subtab 9: WoW: Forever Armory & Roster Integration -->
+        <div class="officer-subview" id="subview-armory">
+          <div class="subview-toolbar">
+            <div>
+              <h4>WoW: Forever US Armory &amp; Roster Config</h4>
+              <span class="subview-hint">Configure guild slug, ruleset, AH realm house, and Battle.net roster synchronization.</span>
+            </div>
+            <div style="display: flex; gap: 0.45rem; flex-wrap: wrap;">
+              <button type="button" class="btn-secondary btn-sm" id="btnTestBlizzardArmory">Test Blizzard API</button>
+              <button type="button" class="btn-secondary btn-sm" id="btnOfficerSyncForeverRoster">Sync Guild Roster</button>
+              <button type="button" class="btn-primary btn-sm" id="btnOfficerAutoMatchWallets">Auto-Match Wallets</button>
+            </div>
+          </div>
+
+          <div id="officerArmoryDiagnostics" class="armory-diagnostics-strip" style="margin-bottom: 1rem;"></div>
+
+          <div class="officer-dashboard-grid">
+            <div class="officer-box">
+              <h4>Guild Identity &amp; Ruleset</h4>
+              <div class="form-group">
+                <label>WoW: Forever Guild Slug (or Guild Armory URL)</label>
+                <input type="text" class="form-control" id="officerArmoryGuildSlug" placeholder="e.g. black-sands">
+                <small style="color: var(--text-muted); font-size: 0.72rem;">Lowercase hyphenated guild name on WoW: Forever US (e.g. <code>black-sands</code>).</small>
+              </div>
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem;">
+                <div class="form-group">
+                  <label>Default Ruleset</label>
+                  <select class="form-control" id="officerArmoryRuleset">
+                    <option value="1">PvP (1)</option>
+                    <option value="2">Normal (2)</option>
+                    <option value="3">Roleplay (3)</option>
+                    <option value="15">Roleplay PvP (15)</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label>Auction House ID</label>
+                  <input type="number" class="form-control" id="officerArmoryHouseId" min="1" value="110" placeholder="110">
+                </div>
+              </div>
+              <div style="display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 1rem;">
+                <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; font-size: 0.84rem; color: var(--gold-100);">
+                  <input type="checkbox" id="officerArmoryEnabled" checked style="width: auto;"> Enable Armory &amp; Database Integration
+                </label>
+                <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; font-size: 0.84rem; color: var(--gold-100);">
+                  <input type="checkbox" id="officerArmoryAutoSync" checked style="width: auto;"> Auto-Sync Roster &amp; Stale Characters (5m Cron)
+                </label>
+              </div>
+              <button type="button" class="btn-primary" id="btnSaveArmoryConfig" style="width: 100%;">Save Armory Configuration</button>
+            </div>
+
+            <div class="officer-box">
+              <h4>Sync Status &amp; Action Log</h4>
+              <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.85rem;">
+                Use <strong>Sync Guild Roster</strong> to pull live characters from Battle.net, or <strong>Auto-Match Wallets</strong> to automatically upgrade legacy single-name characters onto matching Forever surnames.
+              </p>
+              <div id="officerArmoryActionResult" class="wow-inner-box" style="padding: 0.85rem; font-size: 0.82rem; color: var(--text-muted);">
+                Ready. Configure your guild slug and click Test Blizzard API or Sync Guild Roster.
+              </div>
+            </div>
+          </div>
+        </div>
+
       </section>
 
     </main>
@@ -1139,6 +1399,13 @@
       </svg>
       <span>Shop</span>
     </button>
+    <button type="button" class="mobile-nav-btn" data-tab="database" id="mobileTabDatabase">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M12 2L4 5v6c0 5.55 3.84 10.74 8 12 4.16-1.26 8-6.45 8-12V5l-8-3z"/>
+        <path d="M9.5 11.5L11.5 13.5L15 9.5"/>
+      </svg>
+      <span>Armory</span>
+    </button>
     <button type="button" class="mobile-nav-btn" data-tab="faq">
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <circle cx="12" cy="12" r="10"/>
@@ -1165,24 +1432,36 @@
 
   <!-- Modal: Manage In-Game Characters -->
   <div class="modal-overlay" id="modalCharacters">
-    <div class="modal-content" style="max-width: 520px;">
+    <div class="modal-content" style="max-width: 560px;">
       <div class="modal-header">
         <h4>Manage Characters</h4>
         <button type="button" class="modal-close" data-close-modal="modalCharacters">✕</button>
       </div>
       <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 1rem;">
-        Add your WoW Classic characters. Your Primary Character appears across the Ledger and bounty claims.
+        Link your <strong>WoW: Forever</strong> character using <strong>First Name + Surname</strong> to unlock live Armory Paperdoll, gear inspection, and guild crafter indexing.
       </p>
 
-      <div id="characterListContainer" style="margin-bottom: 1.25rem;"></div>
+      <div id="characterListContainer" style="margin-bottom: 1.15rem;"></div>
 
       <div class="wow-inner-box" style="padding: 1rem; margin-bottom: 1rem;">
-        <h5 style="color: var(--gold-100); margin-bottom: 0.5rem; font-size: 0.85rem;">Add Character (WoW: Forever)</h5>
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.6rem; gap: 0.5rem; flex-wrap: wrap;">
+          <h5 style="color: var(--gold-100); font-size: 0.88rem; margin: 0;">Add Character (WoW: Forever US)</h5>
+          <button type="button" class="btn-secondary btn-xs" id="btnVerifyNewCharArmory" title="Auto-fill class, level &amp; professions from Battle.net Armory">
+            Verify via Armory
+          </button>
+        </div>
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; margin-bottom: 0.5rem;">
           <div>
             <label style="font-size: 0.75rem; color: var(--text-muted);">Character Name</label>
             <input type="text" class="form-control" id="newCharName" placeholder="e.g. Grimfang">
           </div>
+          <div>
+            <label style="font-size: 0.75rem; color: var(--text-muted);">Surname (Forever)</label>
+            <input type="text" class="form-control" id="newCharSurname" placeholder="e.g. Black">
+          </div>
+        </div>
+        <div id="newCharArmoryStatus" class="armory-verify-status" style="display: none; margin-bottom: 0.55rem;"></div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.5rem; margin-bottom: 0.5rem;">
           <div>
             <label style="font-size: 0.75rem; color: var(--text-muted);">Classic Class</label>
             <select class="form-control" id="newCharClass">
@@ -1197,8 +1476,6 @@
               <option value="Druid">Druid</option>
             </select>
           </div>
-        </div>
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; margin-bottom: 0.5rem;">
           <div>
             <label style="font-size: 0.75rem; color: var(--text-muted);">Role</label>
             <select class="form-control" id="newCharRole">
@@ -1208,9 +1485,18 @@
             </select>
           </div>
           <div>
-            <label style="font-size: 0.75rem; color: var(--text-muted);">Professions / Spec</label>
-            <input type="text" class="form-control" id="newCharProfessions" placeholder="e.g. Alchemy 300 / Herbalism 300">
+            <label style="font-size: 0.75rem; color: var(--text-muted);">Ruleset</label>
+            <select class="form-control" id="newCharRuleset">
+              <option value="PvP">PvP</option>
+              <option value="Normal">Normal</option>
+              <option value="Roleplay">Roleplay</option>
+              <option value="Roleplay PvP">Roleplay PvP</option>
+            </select>
           </div>
+        </div>
+        <div style="margin-bottom: 0.55rem;">
+          <label style="font-size: 0.75rem; color: var(--text-muted);">Professions / Spec</label>
+          <input type="text" class="form-control" id="newCharProfessions" placeholder="e.g. Alchemy 300 / Herbalism 300 (auto-filled when verified)">
         </div>
         <button type="button" class="btn-secondary" id="btnAddCharacter" style="width: 100%; margin-top: 0.25rem;">Add to Roster</button>
       </div>
@@ -1227,15 +1513,15 @@
     </div>
   </div>
 
-  <!-- Modal: Inspect Member Profile & WoW Characters -->
+  <!-- Modal: Inspect Member Profile & WoW Forever Armory -->
   <div class="modal-overlay" id="modalMemberProfile">
-    <div class="modal-content" style="max-width: 560px;">
+    <div class="modal-content modal-armory-wide">
       <div class="modal-header">
-        <h4>Guild Member Profile</h4>
+        <h4>Guild Member Profile &amp; Forever Armory</h4>
         <button type="button" class="modal-close" data-close-modal="modalMemberProfile">✕</button>
       </div>
       <div id="memberProfileModalBody">
-        <!-- Dynamically rendered -->
+        <!-- Dynamically rendered by armory.js / app.js -->
       </div>
       <div style="display: flex; justify-content: flex-end; margin-top: 1rem;">
         <button type="button" class="btn-secondary" data-close-modal="modalMemberProfile">Close</button>
@@ -1759,10 +2045,14 @@
     </div>
   </div>
 
+  <!-- Floating Warcraft Item Tooltip Portal (Hover / Tap) -->
+  <div id="wowTooltipPortal" class="wow-tooltip-portal" role="tooltip" aria-hidden="true" style="display: none;"></div>
+
   <!-- Toast Notifications Container -->
   <div class="toast-container" id="toastContainer"></div>
 
-  <!-- Client Script -->
+  <!-- Client Scripts -->
+  <script src="armory.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
