@@ -2634,6 +2634,58 @@ textarea.form-control {
 .history-amount-negative { color: var(--danger); font-weight: 700; }
 .history-amount-neutral { color: var(--amber); font-weight: 700; }
 
+.btn-audit-undo {
+  padding: 0.24rem 0.6rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.42);
+  color: var(--amber);
+  border-radius: 3px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.14s ease, border-color 0.14s ease, color 0.14s ease;
+}
+
+.btn-audit-undo:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.16);
+  border-color: rgba(239, 68, 68, 0.65);
+  color: #fca5a5;
+}
+
+.btn-audit-undo:disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
+  background: rgba(148, 163, 184, 0.06);
+  border-color: var(--border-hairline);
+  color: var(--text-dim);
+}
+
+.audit-undone-pill {
+  display: inline-block;
+  padding: 0.18rem 0.5rem;
+  border-radius: 3px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: rgba(148, 163, 184, 0.12);
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+tr.audit-row-undone td,
+.mobile-history-card.audit-row-undone {
+  opacity: 0.62;
+}
+
+.audit-row-undone .history-amount-positive,
+.audit-row-undone .history-amount-negative,
+.audit-row-undone .history-amount-neutral {
+  text-decoration: line-through;
+}
+
 /* ==========================================================================
    OFFICER INLINE LEDGER CONTROLS & FILTERS
    ========================================================================== */

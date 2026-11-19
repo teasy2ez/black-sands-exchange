@@ -7,6 +7,7 @@ import {
   sendChannelMessage,
   editChannelMessage,
   addGuildMemberRole,
+  removeGuildMemberRole,
   buildLeaderboardEmbed,
   buildBountiesEmbed,
   buildShopEmbed,
@@ -30,6 +31,7 @@ import { FirestoreClient } from './src/firestore.js';
 import { handleApplicationCommand, resolveRank } from './src/commands.js';
 import { handleMessageComponent } from './src/components.js';
 import { WEEK_DAYS, getWeeklyCapConfig, applyWeeklyBoneAward } from './src/weeklyCap.js';
+import { compactWalletSnapshot, compactBountySnapshot, revertAuditEntry } from './src/auditUndo.js';
 import {
   getTithingConfig,
   calculateTithingBones,
@@ -590,6 +592,7 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
     };
 
     const currentTier = wallet.rankTier || 0;
+    const prevRankTitle = wallet.rankTitle || null;
     const sortedRanks = [...(state.ranks || [])].sort((a, b) => (a.tier || 0) - (b.tier || 0));
     const nextRank = sortedRanks.find(r => r.tier === currentTier + 1);
 
@@ -625,7 +628,16 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
       amount: -nextRank.costBones,
       spendableBones: wallet.spendableBones,
       boneScore: wallet.boneScore,
-      reason: `Purchased Prestige Promotion to ${nextRank.title} (Tier ${nextRank.tier}) for ${nextRank.costBones} Bones`
+      reason: `Purchased Prestige Promotion to ${nextRank.title} (Tier ${nextRank.tier}) for ${nextRank.costBones} Bones`,
+      undoMeta: {
+        kind: 'prestige_promotion',
+        targetId: session.id,
+        refundBones: nextRank.costBones,
+        prevRankTier: currentTier,
+        prevRankTitle,
+        newRankTier: nextRank.tier,
+        grantedRoleId: nextRank.roleId || null
+      }
     });
 
     return jsonResponse({
@@ -708,7 +720,13 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
       amount: -bonesOffered,
       spendableBones: wallet.spendableBones,
       boneScore: wallet.boneScore,
-      reason: `Member submitted bounty request "${newBounty.title}" with ${bonesOffered} Bones held in escrow`
+      reason: `Member submitted bounty request "${newBounty.title}" with ${bonesOffered} Bones held in escrow`,
+      undoMeta: {
+        kind: 'bounty_request_escrow',
+        targetId: session.id,
+        bountyId,
+        refundBones: bonesOffered
+      }
     });
 
     // Notify #officer-exchange if configured
@@ -876,7 +894,15 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
       amount: -item.costBones,
       spendableBones: wallet.spendableBones,
       boneScore: wallet.boneScore,
-      reason: `Purchased ${item.title} (Order: ${orderId}${resolvedChar ? ` for ${resolvedChar}` : ''})`
+      reason: `Purchased ${item.title} (Order: ${orderId}${resolvedChar ? ` for ${resolvedChar}` : ''})`,
+      undoMeta: {
+        kind: 'shop_purchase',
+        targetId,
+        orderId,
+        itemId: item.id,
+        refundBones: item.costBones,
+        decrementedStock: !item.unlimitedStock
+      }
     });
 
     // Notify #officer-exchange
@@ -1068,6 +1094,10 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
     const achievedBonuses = (bounty?.bonuses || []).filter(bn => verifiedBonusIds.includes(bn.id));
     const bonusSum = achievedBonuses.reduce((acc, bn) => acc + Math.max(0, parseInt(bn.bonusBones, 10) || 0), 0);
 
+    const prevClaimStatus = claim.status || 'pending';
+    const prevClaimRewardBones = claim.rewardBones;
+    const prevClaimAchievedBonusIds = Array.isArray(claim.achievedBonusIds) ? [...claim.achievedBonusIds] : [];
+
     claim.status = 'approved';
     claim.achievedBonusIds = verifiedBonusIds;
     claim.reviewedBy = officerName;
@@ -1096,7 +1126,8 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
     state.wallets[claim.discordId] = wallet;
 
     // Increment postedBountiesCompleted for the creator if player-sponsored
-    if (bounty?.creatorId && state.wallets[bounty.creatorId]) {
+    const hasSponsoredCreator = Boolean(bounty?.creatorId && state.wallets[bounty.creatorId]);
+    if (hasSponsoredCreator) {
       const creatorWallet = state.wallets[bounty.creatorId];
       creatorWallet.postedBountiesCompleted = (creatorWallet.postedBountiesCompleted || 0) + 1;
       creatorWallet.updatedAt = new Date().toISOString();
@@ -1121,7 +1152,21 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
       amount: awardResult.granted,
       spendableBones: wallet.spendableBones,
       boneScore: wallet.boneScore,
-      reason: `Approved claim ${claimId} (${claim.bountyTitle})${tithingNote}${bonusNote}${officerNote ? ` - Note: ${officerNote}` : ''}${capNote}`
+      reason: `Approved claim ${claimId} (${claim.bountyTitle})${tithingNote}${bonusNote}${officerNote ? ` - Note: ${officerNote}` : ''}${capNote}`,
+      undoMeta: {
+        kind: 'bounty_reward',
+        claimId,
+        targetId: claim.discordId,
+        bountyId: claim.bountyId,
+        creatorId: hasSponsoredCreator ? bounty.creatorId : null,
+        deltaSpendable: awardResult.granted,
+        deltaScore: awardResult.granted,
+        deltaWeeklyEarned: awardResult.granted,
+        weeklyWindowStart: wallet.weeklyWindowStart,
+        prevClaimStatus,
+        prevClaimRewardBones,
+        prevClaimAchievedBonusIds
+      }
     });
 
     return jsonResponse({
@@ -1172,6 +1217,10 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
       return jsonResponse({ error: `Bounty request is already ${bounty.status}` }, 400);
     }
 
+    const prevStatus = bounty.status;
+    const prevOfficerBonusBones = bounty.officerBonusBones || 0;
+    const prevRewardBones = bounty.rewardBones !== undefined ? bounty.rewardBones : (bounty.baseRewardBones || 0);
+
     const bonus = Math.max(0, parseInt(officerBonusBones, 10) || 0);
     const escrowedBase = bounty.baseRewardBones !== undefined ? bounty.baseRewardBones : (bounty.rewardBones || 0);
     bounty.status = 'active';
@@ -1189,7 +1238,15 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
       targetId: bounty.creatorId,
       targetName: bounty.creatorNickname || bounty.creatorUsername,
       amount: 0,
-      reason: `Approved member bounty "${bounty.title}" (Base Escrow: ${escrowedBase} Bones, Officer Bonus: +${bonus} Bones, Total Payout: ${bounty.rewardBones} Bones)`
+      reason: `Approved member bounty "${bounty.title}" (Base Escrow: ${escrowedBase} Bones, Officer Bonus: +${bonus} Bones, Total Payout: ${bounty.rewardBones} Bones)`,
+      undoMeta: {
+        kind: 'bounty_request_approved',
+        bountyId: bounty.id,
+        targetId: bounty.creatorId,
+        prevStatus,
+        prevOfficerBonusBones,
+        prevRewardBones
+      }
     });
 
     try {
@@ -1212,6 +1269,7 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
       return jsonResponse({ error: `Bounty request is already ${bounty.status}` }, 400);
     }
 
+    const prevStatus = bounty.status;
     bounty.status = 'rejected';
     bounty.rejectedBy = officerName;
     bounty.rejectedAt = new Date().toISOString();
@@ -1234,7 +1292,15 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
       targetName: bounty.creatorNickname || bounty.creatorUsername,
       amount: refundAmount,
       spendableBones: creatorWallet?.spendableBones,
-      reason: `Rejected member bounty "${bounty.title}": ${bounty.rejectReason} (${refundAmount} Bones refunded to creator)`
+      reason: `Rejected member bounty "${bounty.title}": ${bounty.rejectReason} (${refundAmount} Bones refunded to creator)`,
+      undoMeta: {
+        kind: 'bounty_escrow_refund',
+        mode: 'bounty_reject',
+        bountyId: bounty.id,
+        targetId: bounty.creatorId,
+        deductBones: refundAmount,
+        prevStatus
+      }
     });
 
     return jsonResponse({ success: true, bounty, refundedBones: refundAmount });
@@ -1279,6 +1345,7 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
       return jsonResponse({ error: 'Order was already refunded' }, 400);
     }
 
+    const prevStatus = delivery.status || 'pending';
     delivery.status = 'refunded';
     delivery.refundedBy = officerName;
     delivery.refundedAt = new Date().toISOString();
@@ -1294,7 +1361,8 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
 
     // Restore item stock if limited
     const item = (state.shop || []).find(i => i.id === delivery.itemId);
-    if (item && !item.unlimitedStock) {
+    const incrementedStock = Boolean(item && !item.unlimitedStock);
+    if (incrementedStock) {
       item.stock = (item.stock || 0) + 1;
     }
 
@@ -1306,7 +1374,16 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
       targetName: delivery.serverNickname,
       amount: delivery.costBones,
       spendableBones: wallet ? wallet.spendableBones : null,
-      reason: `Refunded ${delivery.itemTitle} (${orderId}): ${delivery.refundReason}`
+      reason: `Refunded ${delivery.itemTitle} (${orderId}): ${delivery.refundReason}`,
+      undoMeta: {
+        kind: 'shop_refund',
+        orderId,
+        itemId: delivery.itemId,
+        targetId: delivery.discordId,
+        deductBones: delivery.costBones,
+        prevStatus,
+        incrementedStock
+      }
     });
 
     return jsonResponse({ success: true, delivery, refundedBones: delivery.costBones });
@@ -1325,6 +1402,7 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
       boneScore: 0
     };
 
+    const prevWeeklyWindowStart = wallet.weeklyWindowStart || null;
     const targetName = wallet.serverNickname || wallet.globalName || wallet.username || targetId;
     const awardResult = applyWeeklyBoneAward(wallet, numAmount, state);
     if (awardResult.hitCap) {
@@ -1352,7 +1430,16 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
       amount: awardResult.granted,
       spendableBones: wallet.spendableBones,
       boneScore: wallet.boneScore,
-      reason: `${reason || 'Guild contribution'}${capNote}`
+      reason: `${reason || 'Guild contribution'}${capNote}`,
+      undoMeta: {
+        kind: 'wallet_award',
+        targetId,
+        deltaSpendable: awardResult.granted,
+        deltaScore: awardResult.granted,
+        deltaWeeklyEarned: awardResult.granted,
+        prevWeeklyWindowStart,
+        newWeeklyWindowStart: wallet.weeklyWindowStart
+      }
     });
 
     return jsonResponse({
@@ -1378,7 +1465,9 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
       boneScore: 0
     };
 
-    wallet.spendableBones = Math.max(0, (wallet.spendableBones || 0) - numAmount);
+    const oldSpendable = wallet.spendableBones || 0;
+    wallet.spendableBones = Math.max(0, oldSpendable - numAmount);
+    const actualDeducted = oldSpendable - wallet.spendableBones;
     wallet.updatedAt = new Date().toISOString();
     state.wallets[targetId] = wallet;
 
@@ -1393,7 +1482,12 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
       amount: -numAmount,
       spendableBones: wallet.spendableBones,
       boneScore: wallet.boneScore,
-      reason: reason || 'Administrative adjustment'
+      reason: reason || 'Administrative adjustment',
+      undoMeta: {
+        kind: 'wallet_deduct',
+        targetId,
+        deltaSpendable: actualDeducted
+      }
     });
 
     return jsonResponse({ success: true, wallet });
@@ -1435,25 +1529,42 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
 
     const oldSpendable = wallet.spendableBones || 0;
     const oldScore = wallet.boneScore || 0;
+    const oldBountiesCompleted = wallet.bountiesCompleted || 0;
+    const oldPostedBountiesCompleted = wallet.postedBountiesCompleted || 0;
+    const oldRankTier = wallet.rankTier || 0;
+    const oldRankTitle = wallet.rankTitle || null;
+    const oldOfficerHidden = Boolean(wallet.officerHidden);
+
+    const changedFields = [];
 
     // Direct overrides are intentionally independent of Career Score & Weekly Earn Cap
     if (hasSpendable) {
+      if (parsedSpendable !== oldSpendable) changedFields.push('spendableBones');
       wallet.spendableBones = parsedSpendable;
     }
     if (hasScore) {
+      if (parsedScore !== oldScore) changedFields.push('boneScore');
       wallet.boneScore = parsedScore;
     }
     if (body.bountiesCompleted !== undefined && body.bountiesCompleted !== null) {
-      wallet.bountiesCompleted = Math.max(0, parseInt(body.bountiesCompleted, 10) || 0);
+      const nextBc = Math.max(0, parseInt(body.bountiesCompleted, 10) || 0);
+      if (nextBc !== oldBountiesCompleted) changedFields.push('bountiesCompleted');
+      wallet.bountiesCompleted = nextBc;
     }
     if (body.postedBountiesCompleted !== undefined && body.postedBountiesCompleted !== null) {
-      wallet.postedBountiesCompleted = Math.max(0, parseInt(body.postedBountiesCompleted, 10) || 0);
+      const nextPbc = Math.max(0, parseInt(body.postedBountiesCompleted, 10) || 0);
+      if (nextPbc !== oldPostedBountiesCompleted) changedFields.push('postedBountiesCompleted');
+      wallet.postedBountiesCompleted = nextPbc;
     }
     if (body.rankTier !== undefined && body.rankTier !== null) {
-      wallet.rankTier = Math.max(0, parseInt(body.rankTier, 10) || 0);
+      const nextTier = Math.max(0, parseInt(body.rankTier, 10) || 0);
+      if (nextTier !== oldRankTier) changedFields.push('rankTier');
+      wallet.rankTier = nextTier;
     }
     if (officerHidden !== undefined) {
-      wallet.officerHidden = Boolean(officerHidden);
+      const nextHidden = Boolean(officerHidden);
+      if (nextHidden !== oldOfficerHidden) changedFields.push('officerHidden');
+      wallet.officerHidden = nextHidden;
     }
     wallet.updatedAt = new Date().toISOString();
     state.wallets[targetId] = wallet;
@@ -1487,7 +1598,21 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
       amount: diff,
       spendableBones: wallet.spendableBones,
       boneScore: wallet.boneScore,
-      reason: detailMsg
+      reason: detailMsg,
+      undoMeta: changedFields.length > 0 ? {
+        kind: 'member_adjust',
+        targetId,
+        changedFields,
+        prev: {
+          spendableBones: oldSpendable,
+          boneScore: oldScore,
+          bountiesCompleted: oldBountiesCompleted,
+          postedBountiesCompleted: oldPostedBountiesCompleted,
+          rankTier: oldRankTier,
+          rankTitle: oldRankTitle,
+          officerHidden: oldOfficerHidden
+        }
+      } : undefined
     });
 
     return jsonResponse({
@@ -1496,6 +1621,50 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
       action,
       spendableChanged,
       scoreChanged
+    });
+  }
+
+  // POST Undo Audit Trail Entry (Officer only)
+  if (path === 'audit/undo' && request.method === 'POST') {
+    const { entryId, reason } = body;
+    if (!entryId) {
+      return jsonResponse({ error: 'Missing entryId' }, 400);
+    }
+
+    const state = await firestore.getBseState();
+    const result = revertAuditEntry(state, entryId, {
+      officerId,
+      officerName,
+      reason
+    });
+
+    if (!result.ok) {
+      return jsonResponse({ error: result.error }, result.status || 400);
+    }
+
+    if (result.discordRoleRemoval && env.DISCORD_GUILD_ID && env.DISCORD_BOT_TOKEN) {
+      await removeGuildMemberRole(
+        env.DISCORD_GUILD_ID,
+        result.discordRoleRemoval.userId,
+        result.discordRoleRemoval.roleId,
+        env.DISCORD_BOT_TOKEN
+      );
+    }
+
+    const undoEntry = await recordAuditLogAndSync(state, env, firestore, result.auditPayload);
+
+    if (result.syncBounties) {
+      try {
+        await syncBountiesEmbed(env, firestore, state);
+      } catch (err) {
+        console.error('Auto-sync bounties embed after audit undo error:', err);
+      }
+    }
+
+    return jsonResponse({
+      success: true,
+      undoEntry,
+      undoneEntry: result.undoneEntry
     });
   }
 
@@ -1509,7 +1678,8 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
     const wallet = state.wallets[targetId];
     if (!wallet) return jsonResponse({ error: 'Member not found' }, 404);
 
-    wallet.officerHidden = !wallet.officerHidden;
+    const prevHidden = Boolean(wallet.officerHidden);
+    wallet.officerHidden = !prevHidden;
     wallet.updatedAt = new Date().toISOString();
 
     const targetName = wallet.serverNickname || wallet.globalName || wallet.username || targetId;
@@ -1524,7 +1694,12 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
       amount: 0,
       spendableBones: wallet.spendableBones || 0,
       boneScore: wallet.boneScore || 0,
-      reason: reason || (wallet.officerHidden ? 'Officer hid member from public leaderboard' : 'Officer restored member to public leaderboard')
+      reason: reason || (wallet.officerHidden ? 'Officer hid member from public leaderboard' : 'Officer restored member to public leaderboard'),
+      undoMeta: {
+        kind: 'member_toggle_hide',
+        targetId,
+        prevHidden
+      }
     });
 
     return jsonResponse({ success: true, officerHidden: wallet.officerHidden, wallet });
@@ -1567,7 +1742,12 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
       amount: numAmount,
       spendableBones: null,
       boneScore: null,
-      reason: fullReason
+      reason: fullReason,
+      undoMeta: {
+        kind: 'batch_award',
+        targetIds: [...targetIds],
+        amount: numAmount
+      }
     });
 
     return jsonResponse({
@@ -1598,6 +1778,7 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
 
     let newlyImported = 0;
     let updatedCount = 0;
+    const joinedIds = [];
 
     for (const m of members) {
       const uid = m.user.id;
@@ -1626,6 +1807,7 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
           createdAt: new Date().toISOString()
         };
         newlyImported++;
+        joinedIds.push(uid);
       }
     }
 
@@ -1640,7 +1822,8 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
       amount: 0,
       spendableBones: null,
       boneScore: null,
-      reason: `Synchronized ${members.length} Discord members (${newlyImported} new, ${updatedCount} refreshed)`
+      reason: `Synchronized ${members.length} Discord members (${newlyImported} new, ${updatedCount} refreshed)`,
+      undoMeta: joinedIds.length > 0 ? { kind: 'roster_sync', joinedIds: joinedIds.slice(0, 100), removedWallets: [] } : undefined
     });
 
     return jsonResponse({
@@ -1990,6 +2173,7 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
       creatorWallet.spendableBones = (creatorWallet.spendableBones || 0) + refundAmount;
       creatorWallet.updatedAt = new Date().toISOString();
       refundedBones = refundAmount;
+      const bountySnap = compactBountySnapshot(bounty);
 
       await recordAuditLogAndSync(state, env, firestore, {
         action: 'BOUNTY_ESCROW_REFUND',
@@ -1999,7 +2183,15 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
         targetName: bounty.creatorNickname || bounty.creatorUsername,
         amount: refundAmount,
         spendableBones: creatorWallet.spendableBones,
-        reason: `Cancelled player-sponsored bounty "${bounty.title}" (${refundAmount} escrowed Bones refunded to creator)`
+        reason: `Cancelled player-sponsored bounty "${bounty.title}" (${refundAmount} escrowed Bones refunded to creator)`,
+        undoMeta: {
+          kind: 'bounty_escrow_refund',
+          mode: 'bounty_delete',
+          bountyId: bounty.id,
+          targetId: bounty.creatorId,
+          deductBones: refundAmount,
+          bountySnapshot: bountySnap
+        }
       });
     } else {
       await firestore.saveBseState(state);
@@ -2324,6 +2516,8 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
       const spendable = oldWallet.spendableBones || 0;
       const score = oldWallet.boneScore || 0;
 
+      const walletSnap = compactWalletSnapshot(oldWallet);
+
       delete state.wallets[targetId];
       state.updatedAt = new Date().toISOString();
 
@@ -2336,7 +2530,12 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
         amount: -spendable,
         spendableBones: 0,
         boneScore: 0,
-        reason: reason ? `${reason} (Purged: ${spendable} Bones, ${score} Pts)` : `Purged from roster with ${spendable} Bones and ${score} Career Pts`
+        reason: reason ? `${reason} (Purged: ${spendable} Bones, ${score} Pts)` : `Purged from roster with ${spendable} Bones and ${score} Career Pts`,
+        undoMeta: {
+          kind: 'member_delete',
+          targetId,
+          walletSnapshot: walletSnap
+        }
       });
     }
 
@@ -2582,6 +2781,8 @@ async function syncDiscordRoster(env, firestore, options = {}) {
   let removedCount = 0;
   const joinedNames = [];
   const leftNames = [];
+  const joinedIds = [];
+  const removedWallets = [];
 
   for (const m of members) {
     const uid = m.user?.id;
@@ -2633,6 +2834,7 @@ async function syncDiscordRoster(env, firestore, options = {}) {
         createdAt: nowIso
       };
       newlyImported++;
+      joinedIds.push(uid);
       joinedNames.push(nextServerNickname || nextGlobalName || nextUsername || uid);
     }
   }
@@ -2642,6 +2844,9 @@ async function syncDiscordRoster(env, firestore, options = {}) {
       const displayName = wallet.serverNickname || wallet.globalName || wallet.username || uid;
       const spendable = wallet.spendableBones || 0;
       const score = wallet.boneScore || 0;
+      if (removedWallets.length < 40) {
+        removedWallets.push(compactWalletSnapshot(wallet));
+      }
       delete state.wallets[uid];
       removedCount++;
       leftNames.push(spendable || score ? `${displayName} (${spendable} Bones, ${score} Pts)` : displayName);
@@ -2651,6 +2856,9 @@ async function syncDiscordRoster(env, firestore, options = {}) {
   state.lastRosterSyncAt = nowIso;
   const rosterChanged = newlyImported > 0 || removedCount > 0;
   const anyDataChanged = rosterChanged || updatedCount > 0;
+  const rosterUndoMeta = rosterChanged
+    ? { kind: 'roster_sync', joinedIds: joinedIds.slice(0, 100), removedWallets }
+    : undefined;
 
   if (options.manual) {
     state.updatedAt = nowIso;
@@ -2663,7 +2871,8 @@ async function syncDiscordRoster(env, firestore, options = {}) {
       amount: 0,
       spendableBones: null,
       boneScore: null,
-      reason: `Synchronized ${members.length} Discord members (${newlyImported} joined, ${removedCount} removed, ${updatedCount} refreshed)`
+      reason: `Synchronized ${members.length} Discord members (${newlyImported} joined, ${removedCount} removed, ${updatedCount} refreshed)`,
+      undoMeta: rosterUndoMeta
     });
   } else if (rosterChanged) {
     state.updatedAt = nowIso;
@@ -2689,7 +2898,8 @@ async function syncDiscordRoster(env, firestore, options = {}) {
       amount: 0,
       spendableBones: null,
       boneScore: null,
-      reason: `Auto-synced Discord roster: ${parts.join(', ')}`
+      reason: `Auto-synced Discord roster: ${parts.join(', ')}`,
+      undoMeta: rosterUndoMeta
     });
   } else if (anyDataChanged) {
     state.updatedAt = nowIso;

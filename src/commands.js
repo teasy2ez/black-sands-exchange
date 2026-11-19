@@ -18,6 +18,7 @@ import {
   buildArmoryItemEmbed
 } from './discord.js';
 import { applyWeeklyBoneAward } from './weeklyCap.js';
+import { compactBountySnapshot } from './auditUndo.js';
 import { getTithingConfig, calculateTithingBones, formatTithingRate, getMinimumGoldForOneBone, formatTithingNumber } from './tithing.js';
 import {
   getCharacterArmory,
@@ -343,6 +344,7 @@ async function handleAwardCommand(interaction, opts, env, firestore) {
     boneScore: 0
   };
 
+  const prevWeeklyWindowStart = wallet.weeklyWindowStart || null;
   const awardResult = applyWeeklyBoneAward(wallet, amount, state);
   if (awardResult.hitCap) {
     return {
@@ -370,7 +372,16 @@ async function handleAwardCommand(interaction, opts, env, firestore) {
     amount: awardResult.granted,
     spendableBones: wallet.spendableBones,
     boneScore: wallet.boneScore,
-    reason: `${reason}${capNote}`
+    reason: `${reason}${capNote}`,
+    undoMeta: {
+      kind: 'wallet_award',
+      targetId,
+      deltaSpendable: awardResult.granted,
+      deltaScore: awardResult.granted,
+      deltaWeeklyEarned: awardResult.granted,
+      prevWeeklyWindowStart,
+      newWeeklyWindowStart: wallet.weeklyWindowStart
+    }
   });
 
   return {
@@ -407,7 +418,9 @@ async function handleDeductCommand(interaction, opts, env, firestore) {
     boneScore: 0
   };
 
-  wallet.spendableBones = Math.max(0, (wallet.spendableBones || 0) - amount);
+  const oldSpendable = wallet.spendableBones || 0;
+  wallet.spendableBones = Math.max(0, oldSpendable - amount);
+  const actualDeducted = oldSpendable - wallet.spendableBones;
   // Note: Bone Score is not reduced on penalties unless explicitly requested
   wallet.updatedAt = new Date().toISOString();
   state.wallets[targetId] = wallet;
@@ -421,7 +434,12 @@ async function handleDeductCommand(interaction, opts, env, firestore) {
     amount: -amount,
     spendableBones: wallet.spendableBones,
     boneScore: wallet.boneScore,
-    reason
+    reason,
+    undoMeta: {
+      kind: 'wallet_deduct',
+      targetId,
+      deltaSpendable: actualDeducted
+    }
   });
 
   return {
@@ -560,6 +578,7 @@ async function handleBountySubcommands(interaction, subOptions, env, firestore) 
       const creatorWallet = state.wallets[bounty.creatorId];
       creatorWallet.spendableBones = (creatorWallet.spendableBones || 0) + refundAmount;
       creatorWallet.updatedAt = new Date().toISOString();
+      const bountySnap = compactBountySnapshot(bounty);
       await recordAuditLogAndSync(state, env, firestore, {
         action: 'BOUNTY_ESCROW_REFUND',
         officerId: officer?.id || null,
@@ -568,7 +587,15 @@ async function handleBountySubcommands(interaction, subOptions, env, firestore) 
         targetName: bounty.creatorNickname || bounty.creatorUsername,
         amount: refundAmount,
         spendableBones: creatorWallet.spendableBones,
-        reason: `Cancelled player-sponsored bounty "${bounty.title}" (${refundAmount} escrowed Bones refunded to creator)`
+        reason: `Cancelled player-sponsored bounty "${bounty.title}" (${refundAmount} escrowed Bones refunded to creator)`,
+        undoMeta: {
+          kind: 'bounty_escrow_refund',
+          mode: 'bounty_delete',
+          bountyId: bounty.id,
+          targetId: bounty.creatorId,
+          deductBones: refundAmount,
+          bountySnapshot: bountySnap
+        }
       });
       refundedMsg = ` (Refunded **${refundAmount} Bones** in escrow to <@${bounty.creatorId}>)`;
     } else {

@@ -75,6 +75,10 @@ async function handleBountyApprove(interaction, claimId, env, firestore) {
   const achievedBonuses = (relatedBounty?.bonuses || []).filter(bn => verifiedBonusIds.includes(bn.id));
   const bonusSum = achievedBonuses.reduce((acc, bn) => acc + Math.max(0, parseInt(bn.bonusBones, 10) || 0), 0);
 
+  const prevClaimStatus = claim.status || 'pending';
+  const prevClaimRewardBones = claim.rewardBones;
+  const prevClaimAchievedBonusIds = Array.isArray(claim.achievedBonusIds) ? [...claim.achievedBonusIds] : [];
+
   // Update claim
   claim.status = 'approved';
   claim.reviewedBy = officerName;
@@ -102,7 +106,8 @@ async function handleBountyApprove(interaction, claimId, env, firestore) {
   state.wallets[claim.discordId] = wallet;
 
   // If bounty was requested/sponsored by a member, increment their postedBountiesCompleted
-  if (relatedBounty?.creatorId && state.wallets[relatedBounty.creatorId]) {
+  const hasSponsoredCreator = Boolean(relatedBounty?.creatorId && state.wallets[relatedBounty.creatorId]);
+  if (hasSponsoredCreator) {
     const creatorWallet = state.wallets[relatedBounty.creatorId];
     creatorWallet.postedBountiesCompleted = (creatorWallet.postedBountiesCompleted || 0) + 1;
     creatorWallet.updatedAt = new Date().toISOString();
@@ -127,7 +132,21 @@ async function handleBountyApprove(interaction, claimId, env, firestore) {
     amount: awardResult.granted,
     spendableBones: wallet.spendableBones,
     boneScore: wallet.boneScore,
-    reason: `Approved Bounty: ${claim.bountyTitle} (${claimId})${tithingNote}${bonusNote}${capNote}`
+    reason: `Approved Bounty: ${claim.bountyTitle} (${claimId})${tithingNote}${bonusNote}${capNote}`,
+    undoMeta: {
+      kind: 'bounty_reward',
+      claimId,
+      targetId: claim.discordId,
+      bountyId: claim.bountyId,
+      creatorId: hasSponsoredCreator ? relatedBounty.creatorId : null,
+      deltaSpendable: awardResult.granted,
+      deltaScore: awardResult.granted,
+      deltaWeeklyEarned: awardResult.granted,
+      weeklyWindowStart: wallet.weeklyWindowStart,
+      prevClaimStatus,
+      prevClaimRewardBones,
+      prevClaimAchievedBonusIds
+    }
   });
 
   // Update existing Discord message in-place

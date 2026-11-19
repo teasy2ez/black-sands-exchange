@@ -218,6 +218,22 @@ export async function addGuildMemberRole(guildId, userId, roleId, botToken) {
 }
 
 /**
+ * Remove a guild member role cleanly via Discord API
+ */
+export async function removeGuildMemberRole(guildId, userId, roleId, botToken) {
+  if (!roleId) return false;
+  try {
+    await discordFetch(`/guilds/${guildId}/members/${userId}/roles/${roleId}`, {
+      method: 'DELETE'
+    }, botToken);
+    return true;
+  } catch (err) {
+    console.error(`Failed to remove role ${roleId} from user ${userId}:`, err);
+    return false;
+  }
+}
+
+/**
  * Search guild members for autocomplete
  */
 export async function searchGuildMembers(guildId, query = '', limit = 10, botToken) {
@@ -510,7 +526,7 @@ export function buildShopDeliveryReviewMessage(delivery, item, user) {
 export function recordTransaction(state, entry) {
   state.auditLog = state.auditLog || [];
   const logItem = {
-    id: `tx_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+    id: entry.id || `tx_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
     timestamp: new Date().toISOString(),
     action: entry.action,
     officerId: entry.officerId || null,
@@ -522,6 +538,9 @@ export function recordTransaction(state, entry) {
     boneScore: entry.boneScore !== undefined ? entry.boneScore : null,
     reason: entry.reason || '—'
   };
+  if (entry.undoMeta && typeof entry.undoMeta === 'object') {
+    logItem.undoMeta = entry.undoMeta;
+  }
 
   state.auditLog.push(logItem);
   if (state.auditLog.length > 300) {

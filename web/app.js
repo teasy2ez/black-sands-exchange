@@ -1683,7 +1683,7 @@ function formatAuditBadge(action) {
   if (action === 'BOUNTY_REWARD') return { cls: 'bounty', text: 'Bounty' };
   if (action === 'SHOP_PURCHASE') return { cls: 'purchase', text: 'Purchase' };
   if (action === 'SHOP_REFUND') return { cls: 'award', text: 'Refund' };
-  if (action === 'RANK_PROMOTE') return { cls: 'purchase', text: 'Promote' };
+  if (action === 'RANK_PROMOTE' || action === 'PRESTIGE_PROMOTION') return { cls: 'purchase', text: 'Promote' };
   if (action === 'BOUNTY_REQUEST_ESCROW') return { cls: 'deduct', text: 'Escrow' };
   if (action === 'BOUNTY_REQUEST_APPROVED') return { cls: 'bounty', text: 'Sponsored' };
   if (action === 'BOUNTY_REQUEST_REFUND' || action === 'BOUNTY_ESCROW_REFUND') return { cls: 'award', text: 'Escrow Refund' };
@@ -1691,6 +1691,11 @@ function formatAuditBadge(action) {
   if (action === 'LIFETIME_BONES_ADJUST') return { cls: 'adjust', text: 'Career Override' };
   if (action === 'BOUNTY_STATS_ADJUST') return { cls: 'adjust', text: 'Bounty Override' };
   if (action === 'LEDGER_CORRECTION') return { cls: 'adjust', text: 'Correction' };
+  if (action === 'AUDIT_UNDO') return { cls: 'adjust', text: 'Undone Action' };
+  if (action === 'BATCH_AWARD') return { cls: 'award', text: 'Raid Award' };
+  if (action === 'MEMBER_HIDE') return { cls: 'deduct', text: 'Hidden' };
+  if (action === 'MEMBER_UNHIDE') return { cls: 'award', text: 'Unhidden' };
+  if (action === 'ROSTER_DISCORD_SYNC' || action === 'ROSTER_AUTO_SYNC') return { cls: 'adjust', text: 'Roster Sync' };
   if (action === 'MEMBER_DELETE') return { cls: 'purge', text: 'Purged' };
   return { cls: 'adjust', text: action || 'Event' };
 }
@@ -1745,11 +1750,12 @@ function renderMemberHistory() {
     }
 
     const balAfter = e.spendableBones !== null && e.spendableBones !== undefined ? `${e.spendableBones} Bones` : '—';
+    const undoneTag = e.undoneAt ? ` <span class="audit-undone-pill" style="margin-left:0.25rem;">Undone</span>` : '';
 
     return `
-      <tr>
+      <tr class="${e.undoneAt ? 'audit-row-undone' : ''}">
         <td style="font-size: 0.8rem; color: var(--text-dim); white-space: nowrap;">${timeStr}</td>
-        <td><span class="history-tx-badge ${badgeClass}">${badgeText}</span></td>
+        <td><span class="history-tx-badge ${badgeClass}">${badgeText}</span>${undoneTag}</td>
         <td style="font-size: 0.95rem;">${amountHtml}</td>
         <td style="font-size: 0.85rem; color: var(--gold-300);">${balAfter}</td>
         <td style="font-size: 0.85rem; color: var(--text-main);">${escapeHtml(e.reason || '—')}</td>
@@ -1776,11 +1782,12 @@ function renderMemberHistory() {
       }
 
       const balAfter = e.spendableBones !== null && e.spendableBones !== undefined ? `${e.spendableBones} Bones` : '—';
+      const undoneTag = e.undoneAt ? ` <span class="audit-undone-pill" style="margin-left:0.25rem;">Undone</span>` : '';
 
       return `
-        <div class="mobile-history-card">
+        <div class="mobile-history-card ${e.undoneAt ? 'audit-row-undone' : ''}">
           <div class="history-card-header">
-            <span class="history-tx-badge ${badgeClass}">${badgeText}</span>
+            <div><span class="history-tx-badge ${badgeClass}">${badgeText}</span>${undoneTag}</div>
             <span style="font-size: 0.75rem; color: var(--text-dim);">${timeStr}</span>
           </div>
           <div style="display: flex; justify-content: space-between; align-items: baseline; margin: 0.2rem 0;">
@@ -3121,13 +3128,202 @@ function renderOfficerShopList() {
 }
 
 /**
+ * Mirror backend reversibility rules so the Audit Trail Undo button accurately reflects live state
+ */
+function evaluateAuditEntryUndo(entry, bseState) {
+  if (!entry || !entry.id) return { status: 'disabled', reason: 'Invalid audit entry' };
+  if (entry.undoneAt) {
+    const when = new Date(entry.undoneAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    return { status: 'undone', reason: `Undone by ${entry.undoneBy || 'an Officer'} on ${when}` };
+  }
+  if (entry.action === 'AUDIT_UNDO') {
+    return { status: 'disabled', reason: 'Reversal log entries cannot be undone directly' };
+  }
+
+  const wallets = bseState?.wallets || {};
+  const bounties = bseState?.bounties || [];
+  const claims = bseState?.claims || {};
+  const deliveries = bseState?.deliveries || {};
+  const meta = entry.undoMeta || null;
+
+  switch (entry.action) {
+    case 'AWARD':
+    case 'DEDUCT':
+    case 'PRESTIGE_PROMOTION':
+    case 'MEMBER_HIDE':
+    case 'MEMBER_UNHIDE':
+    case 'BOUNTY_REWARD': {
+      const tid = meta?.targetId || entry.targetId;
+      if (!tid || !wallets[tid]) return { status: 'disabled', reason: 'Member wallet no longer in ledger' };
+      return { status: 'allowed', reason: '' };
+    }
+    case 'SPENDABLE_BONES_OVERRIDE':
+    case 'LIFETIME_BONES_ADJUST':
+    case 'BOUNTY_STATS_ADJUST':
+    case 'LEDGER_CORRECTION': {
+      const tid = meta?.targetId || entry.targetId;
+      if (!tid || !wallets[tid]) return { status: 'disabled', reason: 'Member wallet no longer in ledger' };
+      if (meta?.kind === 'member_adjust') {
+        return Array.isArray(meta.changedFields) && meta.changedFields.length > 0
+          ? { status: 'allowed', reason: '' }
+          : { status: 'disabled', reason: 'No changed fields recorded' };
+      }
+      if (entry.action === 'SPENDABLE_BONES_OVERRIDE' && entry.spendableBones !== null && entry.spendableBones !== undefined) {
+        return { status: 'allowed', reason: '' };
+      }
+      if (entry.action === 'LEDGER_CORRECTION' && entry.spendableBones !== null && entry.spendableBones !== undefined && entry.amount) {
+        return { status: 'allowed', reason: '' };
+      }
+      if (entry.action === 'LIFETIME_BONES_ADJUST' && /(\d+)\s*->\s*(\d+)/.test(String(entry.reason || ''))) {
+        return { status: 'allowed', reason: '' };
+      }
+      return { status: 'disabled', reason: 'Legacy adjustment lacks previous values — adjust via Ledger Overrides' };
+    }
+    case 'BOUNTY_REQUEST_ESCROW': {
+      const m = String(entry.reason || '').match(/"([^"]+)"/);
+      const bounty = meta?.bountyId
+        ? bounties.find(b => b.id === meta.bountyId)
+        : bounties.find(b => b.creatorId === entry.targetId && m && b.title === m[1]);
+      if (!bounty) return { status: 'disabled', reason: 'Bounty no longer exists or escrow already resolved' };
+      if (bounty.status === 'rejected') return { status: 'disabled', reason: 'Escrow already refunded when rejected' };
+      if (Object.values(claims).some(c => c.bountyId === bounty.id && c.status === 'approved')) {
+        return { status: 'disabled', reason: 'Claim already approved for this bounty' };
+      }
+      return { status: 'allowed', reason: '' };
+    }
+    case 'BOUNTY_REQUEST_APPROVED': {
+      const m = String(entry.reason || '').match(/"([^"]+)"/);
+      const bounty = meta?.bountyId
+        ? bounties.find(b => b.id === meta.bountyId)
+        : bounties.find(b => b.creatorId === entry.targetId && m && b.title === m[1] && b.status === 'active');
+      if (!bounty) return { status: 'disabled', reason: 'Bounty no longer exists' };
+      if (bounty.status === 'rejected') return { status: 'disabled', reason: 'Bounty already rejected' };
+      if (Object.values(claims).some(c => c.bountyId === bounty.id && c.status === 'approved')) {
+        return { status: 'disabled', reason: 'Claim already approved for this bounty' };
+      }
+      return { status: 'allowed', reason: '' };
+    }
+    case 'BOUNTY_ESCROW_REFUND': {
+      if (meta?.kind === 'bounty_escrow_refund' && meta.mode === 'bounty_delete' && meta.bountySnapshot) {
+        return bounties.some(b => b.id === meta.bountySnapshot.id)
+          ? { status: 'disabled', reason: 'Cancelled bounty already exists' }
+          : { status: 'allowed', reason: '' };
+      }
+      const m = String(entry.reason || '').match(/"([^"]+)"/);
+      const rejectedBounty = meta?.bountyId
+        ? bounties.find(b => b.id === meta.bountyId && b.status === 'rejected')
+        : bounties.find(b => b.creatorId === entry.targetId && m && b.title === m[1] && b.status === 'rejected');
+      return rejectedBounty
+        ? { status: 'allowed', reason: '' }
+        : { status: 'disabled', reason: 'Legacy deleted bounty lacks snapshot — recreate manually' };
+    }
+    case 'SHOP_PURCHASE': {
+      const m = String(entry.reason || '').match(/(order_[a-zA-Z0-9_]+)/);
+      const orderId = meta?.orderId || (m ? m[1] : null);
+      const delivery = orderId ? deliveries[orderId] : null;
+      if (!delivery) return { status: 'disabled', reason: 'Order record no longer exists' };
+      if (delivery.status === 'refunded') return { status: 'disabled', reason: 'Order already refunded' };
+      if (!wallets[meta?.targetId || entry.targetId]) return { status: 'disabled', reason: 'Buyer wallet not found' };
+      return { status: 'allowed', reason: '' };
+    }
+    case 'SHOP_REFUND': {
+      const m = String(entry.reason || '').match(/(order_[a-zA-Z0-9_]+)/);
+      const orderId = meta?.orderId || (m ? m[1] : null);
+      const delivery = orderId ? deliveries[orderId] : null;
+      return delivery && delivery.status === 'refunded'
+        ? { status: 'allowed', reason: '' }
+        : { status: 'disabled', reason: 'Refunded order no longer exists' };
+    }
+    case 'BATCH_AWARD': {
+      if (meta?.kind === 'batch_award' && Array.isArray(meta.targetIds) && meta.targetIds.length > 0) {
+        return { status: 'allowed', reason: '' };
+      }
+      const raw = String(entry.targetId || '');
+      return raw && !raw.includes('more')
+        ? { status: 'allowed', reason: '' }
+        : { status: 'disabled', reason: 'Legacy batch list truncated — adjust members individually' };
+    }
+    case 'MEMBER_DELETE': {
+      const tid = meta?.targetId || entry.targetId;
+      if (!tid) return { status: 'disabled', reason: 'Missing deleted member ID' };
+      return wallets[tid]
+        ? { status: 'disabled', reason: 'Member wallet already exists in ledger' }
+        : { status: 'allowed', reason: '' };
+    }
+    case 'ROSTER_DISCORD_SYNC':
+    case 'ROSTER_AUTO_SYNC': {
+      if (meta?.kind === 'roster_sync' && ((meta.joinedIds?.length || 0) > 0 || (meta.removedWallets?.length || 0) > 0)) {
+        return { status: 'allowed', reason: '' };
+      }
+      return { status: 'disabled', reason: 'No member additions or removals in this sync to revert' };
+    }
+    default:
+      return { status: 'disabled', reason: `Undo not supported for ${entry.action || 'this event'}` };
+  }
+}
+
+window.undoAuditEntry = async function(entryId) {
+  const entry = (state.bseState?.auditLog || []).find(e => e && e.id === entryId);
+  if (!entry) {
+    showToast('Audit entry not found.');
+    return;
+  }
+
+  const check = evaluateAuditEntryUndo(entry, state.bseState);
+  if (check.status !== 'allowed') {
+    showToast(check.reason || 'Cannot undo this entry.');
+    return;
+  }
+
+  const { text: badgeText } = formatAuditBadge(entry.action);
+  const deltaText = entry.amount > 0 ? `+${entry.amount} Bones` : (entry.amount < 0 ? `${entry.amount} Bones` : 'No balance delta');
+
+  const decision = await openOfficerDecisionModal({
+    title: `Undo: ${badgeText}`,
+    lead: `Target: ${entry.targetName || 'Member'} • Change: ${deltaText} — Confirm reverting this action and recording an Undone Action log.`,
+    submitLabel: 'Confirm Undo',
+    submitVariant: 'danger',
+    fields: [
+      {
+        name: 'reason',
+        label: 'Undo Reason (Optional)',
+        type: 'text',
+        value: '',
+        placeholder: 'Why is this action being reverted?'
+      }
+    ]
+  });
+  if (!decision) return;
+
+  try {
+    const res = await fetch('/api/exchange/audit/undo', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        entryId,
+        reason: (decision.reason || '').trim()
+      })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok) {
+      showToast(data.undoEntry?.reason || `Undid ${badgeText} entry.`);
+      await refreshBseState();
+    } else {
+      showToast(`Undo failed: ${data.error || 'Server error'}`);
+    }
+  } catch (err) {
+    showToast(`Undo error: ${err.message}`);
+  }
+};
+
+/**
  * Render Live Audit Trail
  */
 function renderAuditTrail() {
   if (!auditTrailTbody) return;
   const auditEntries = (state.bseState?.auditLog || []).slice(-100).reverse();
   if (!auditEntries.length) {
-    auditTrailTbody.innerHTML = `<tr><td colspan="7" style="text-align: center; color: var(--text-dim); padding: 1.5rem;">Audit events will appear as actions occur.</td></tr>`;
+    auditTrailTbody.innerHTML = `<tr><td colspan="8" style="text-align: center; color: var(--text-dim); padding: 1.5rem;">Audit events will appear as actions occur.</td></tr>`;
     return;
   }
 
@@ -3147,7 +3343,7 @@ function renderAuditTrail() {
     : auditEntries;
 
   if (!filteredEntries.length) {
-    auditTrailTbody.innerHTML = `<tr><td colspan="7" style="text-align: center; color: var(--text-dim); padding: 1.5rem;">No audit events match "${escapeHtml(query)}".</td></tr>`;
+    auditTrailTbody.innerHTML = `<tr><td colspan="8" style="text-align: center; color: var(--text-dim); padding: 1.5rem;">No audit events match "${escapeHtml(query)}".</td></tr>`;
     return;
   }
 
@@ -3167,9 +3363,19 @@ function renderAuditTrail() {
     }
 
     const balAfter = e.spendableBones !== null && e.spendableBones !== undefined ? `${e.spendableBones} Bones` : '—';
+    const undoState = evaluateAuditEntryUndo(e, state.bseState);
+
+    let undoCellHtml = '';
+    if (undoState.status === 'undone') {
+      undoCellHtml = `<span class="audit-undone-pill" title="${escapeHtml(undoState.reason)}">Undone</span>`;
+    } else if (undoState.status === 'allowed') {
+      undoCellHtml = `<button type="button" class="btn-audit-undo" data-audit-undo-id="${escapeHtml(e.id)}" title="Revert this audit item">Undo</button>`;
+    } else {
+      undoCellHtml = `<button type="button" class="btn-audit-undo" disabled title="${escapeHtml(undoState.reason)}">Undo</button>`;
+    }
 
     return `
-      <tr>
+      <tr class="${undoState.status === 'undone' ? 'audit-row-undone' : ''}">
         <td style="font-size: 0.75rem; color: var(--text-dim); white-space: nowrap;">${timeStr}</td>
         <td><span class="history-tx-badge ${badgeClass}">${badgeText}</span></td>
         <td style="font-weight: 600; font-size: 0.85rem;">${escapeHtml(e.officerName || 'System')}</td>
@@ -3177,6 +3383,7 @@ function renderAuditTrail() {
         <td style="font-size: 0.9rem;">${amountHtml}</td>
         <td style="font-size: 0.85rem; color: var(--gold-300);">${balAfter}</td>
         <td style="font-size: 0.8rem; color: var(--text-muted);">${escapeHtml(e.reason || '—')}</td>
+        <td style="text-align: right;">${undoCellHtml}</td>
       </tr>
     `;
   }).join('');
@@ -4265,11 +4472,18 @@ function setupOfficerTools() {
     if (btnToggleTithingEditor) btnToggleTithingEditor.textContent = 'Adjust Rate';
   });
 
-  // Audit Trail Search Filter
+  // Audit Trail Search Filter & Undo Actions
   const searchAuditTrailInput = document.getElementById('searchAuditTrail');
   searchAuditTrailInput?.addEventListener('input', () => {
     state.auditSearchQuery = searchAuditTrailInput.value;
     renderAuditTrail();
+  });
+
+  auditTrailTbody?.addEventListener('click', (evt) => {
+    const undoBtn = evt.target.closest('button[data-audit-undo-id]');
+    if (!undoBtn || undoBtn.disabled) return;
+    const entryId = undoBtn.getAttribute('data-audit-undo-id');
+    if (entryId) window.undoAuditEntry(entryId);
   });
 
   // Toggle Announcement & Discord Event Options
