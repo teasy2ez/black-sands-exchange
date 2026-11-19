@@ -1402,6 +1402,29 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
   // POST Member Balance Adjust / Ledger Correction (Spendable and/or Lifetime Bones)
   if (path === 'member/adjust' && request.method === 'POST') {
     const { targetId, spendableBones, boneScore, officerHidden, reason } = body;
+    if (!targetId) {
+      return jsonResponse({ error: 'Missing targetId' }, 400);
+    }
+
+    const hasSpendable = spendableBones !== undefined && spendableBones !== null && String(spendableBones).trim() !== '';
+    const hasScore = boneScore !== undefined && boneScore !== null && String(boneScore).trim() !== '';
+
+    let parsedSpendable = null;
+    if (hasSpendable) {
+      parsedSpendable = parseInt(String(spendableBones).trim(), 10);
+      if (!Number.isFinite(parsedSpendable) || parsedSpendable < 0) {
+        return jsonResponse({ error: 'Invalid spendableBones value (must be 0 or higher).' }, 400);
+      }
+    }
+
+    let parsedScore = null;
+    if (hasScore) {
+      parsedScore = parseInt(String(boneScore).trim(), 10);
+      if (!Number.isFinite(parsedScore) || parsedScore < 0) {
+        return jsonResponse({ error: 'Invalid boneScore value (must be 0 or higher).' }, 400);
+      }
+    }
+
     const state = await firestore.getBseState();
     state.wallets = state.wallets || {};
     const wallet = state.wallets[targetId] || {
@@ -1413,11 +1436,12 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
     const oldSpendable = wallet.spendableBones || 0;
     const oldScore = wallet.boneScore || 0;
 
-    if (spendableBones !== undefined && spendableBones !== null) {
-      wallet.spendableBones = Math.max(0, parseInt(spendableBones, 10) || 0);
+    // Direct overrides are intentionally independent of Career Score & Weekly Earn Cap
+    if (hasSpendable) {
+      wallet.spendableBones = parsedSpendable;
     }
-    if (boneScore !== undefined && boneScore !== null) {
-      wallet.boneScore = Math.max(0, parseInt(boneScore, 10) || 0);
+    if (hasScore) {
+      wallet.boneScore = parsedScore;
     }
     if (body.bountiesCompleted !== undefined && body.bountiesCompleted !== null) {
       wallet.bountiesCompleted = Math.max(0, parseInt(body.bountiesCompleted, 10) || 0);
@@ -1436,9 +1460,23 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
 
     const targetName = wallet.serverNickname || wallet.globalName || wallet.username || targetId;
     const diff = (wallet.spendableBones || 0) - oldSpendable;
+    const spendableChanged = hasSpendable && wallet.spendableBones !== oldSpendable;
+    const scoreChanged = hasScore && wallet.boneScore !== oldScore;
 
-    const action = (spendableBones === undefined && boneScore !== undefined) ? 'LIFETIME_BONES_ADJUST' : 'LEDGER_CORRECTION';
-    const detailMsg = reason || `Adjusted balances: Spendable ${oldSpendable} -> ${wallet.spendableBones}, Lifetime ${oldScore} -> ${wallet.boneScore}`;
+    let action = 'LEDGER_CORRECTION';
+    let defaultDetail = `Adjusted balances: Spendable ${oldSpendable} -> ${wallet.spendableBones}, Career ${oldScore} -> ${wallet.boneScore}`;
+    if ((hasSpendable && !hasScore) || (spendableChanged && !scoreChanged)) {
+      action = 'SPENDABLE_BONES_OVERRIDE';
+      defaultDetail = `Spendable Bones override: ${oldSpendable} -> ${wallet.spendableBones} (separate from weekly cap)`;
+    } else if ((!hasSpendable && hasScore) || (!spendableChanged && scoreChanged)) {
+      action = 'LIFETIME_BONES_ADJUST';
+      defaultDetail = `Lifetime Bones (Career Score) override: ${oldScore} -> ${wallet.boneScore}`;
+    } else if (!hasSpendable && !hasScore && (body.bountiesCompleted !== undefined || body.postedBountiesCompleted !== undefined)) {
+      action = 'BOUNTY_STATS_ADJUST';
+      defaultDetail = `Updated bounty stats (Completed: ${wallet.bountiesCompleted || 0}, Posted: ${wallet.postedBountiesCompleted || 0})`;
+    }
+
+    const detailMsg = reason || defaultDetail;
 
     await recordAuditLogAndSync(state, env, firestore, {
       action,
@@ -1452,7 +1490,13 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
       reason: detailMsg
     });
 
-    return jsonResponse({ success: true, wallet });
+    return jsonResponse({
+      success: true,
+      wallet,
+      action,
+      spendableChanged,
+      scoreChanged
+    });
   }
 
   // POST Toggle Member Hide (Officer Override)

@@ -883,15 +883,26 @@
       ? `<div class="guild-note-card">"${escHtml(w.guildNote)}"</div>`
       : `<div style="color:var(--text-dim); font-size:0.85rem; font-style:italic; margin:0.4rem 0;">No public guild note provided yet.</div>`;
 
+    const wkStatus = hostCtx.resolveClientMemberWeeklyStatus?.(w, appState.bseState) || {
+      enabled: true,
+      weeklyEarned: w.weeklyBonesEarned || 0,
+      effectiveCap: appState.bseState?.config?.weeklyCap?.cap || 50,
+      label: `${(w.weeklyBonesEarned || 0).toLocaleString()} / ${(appState.bseState?.config?.weeklyCap?.cap || 50).toLocaleString()}`
+    };
+
     const officerHtml = isOfficer
       ? `<div class="wow-inner-box" style="margin-top: 1.15rem; padding: 0.85rem;">
-           <div style="font-size: 0.75rem; color: var(--gold-300); font-weight: 700; text-transform: uppercase; margin-bottom: 0.5rem; display: flex; justify-content: space-between; align-items: center;">
+           <div style="font-size: 0.75rem; color: var(--gold-300); font-weight: 700; text-transform: uppercase; margin-bottom: 0.5rem; display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
              <span>Officer Controls</span>
-             ${w.officerHidden ? `<span class="badge-officer-hidden">Hidden from Leaderboard</span>` : ''}
+             <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+               <span style="font-size: 0.7rem; color: var(--text-muted); text-transform: none; font-weight: 500;">Weekly Cap: <strong style="color: ${wkStatus.enabled && wkStatus.weeklyEarned >= wkStatus.effectiveCap ? '#f87171' : 'var(--gold-200)'};">${escHtml(wkStatus.label)}</strong></span>
+               ${w.officerHidden ? `<span class="badge-officer-hidden">Hidden from Leaderboard</span>` : ''}
+             </div>
            </div>
            <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
              <button type="button" class="btn-officer-award" style="padding: 0.4rem 0.8rem; font-size: 0.8rem;" data-officer-op="award">+ Award Bones</button>
              <button type="button" class="btn-officer-deduct" style="padding: 0.4rem 0.8rem; font-size: 0.8rem;" data-officer-op="deduct">- Deduct Bones</button>
+             <button type="button" class="btn-officer-adjust" style="padding: 0.4rem 0.8rem; font-size: 0.8rem;" data-officer-op="spendable">Override Spendable Bones</button>
              <button type="button" class="btn-officer-adjust" style="padding: 0.4rem 0.8rem; font-size: 0.8rem;" data-officer-op="lifetime">Adjust Lifetime Bones</button>
              <button type="button" class="btn-officer-adjust" style="padding: 0.4rem 0.8rem; font-size: 0.8rem;" data-officer-op="bountystats">Override Bounty Stats</button>
              <button type="button" class="btn-officer-hide" style="padding: 0.4rem 0.8rem; font-size: 0.8rem;" data-officer-op="hide">${w.officerHidden ? 'Unhide Member' : 'Hide from Leaderboard'}</button>
@@ -955,6 +966,7 @@
         const op = btn.getAttribute('data-officer-op');
         if (op === 'award') window.openBonesAdjustModal?.(discordId, name, 'award');
         else if (op === 'deduct') window.openBonesAdjustModal?.(discordId, name, 'deduct');
+        else if (op === 'spendable') window.quickAdjustSpendable?.(discordId, name, w.spendableBones || 0);
         else if (op === 'lifetime') window.quickAdjustLifetime?.(discordId, name, w.boneScore || 0);
         else if (op === 'bountystats') window.quickAdjustBountyStats?.(discordId, name, w.bountiesCompleted || 0, w.postedBountiesCompleted || 0);
         else if (op === 'hide') window.quickToggleHideMember?.(discordId, name, Boolean(w.officerHidden));

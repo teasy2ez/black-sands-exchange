@@ -191,6 +191,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     refreshBseState,
     getDiscordAvatarUrl,
     resolveRankTitle,
+    resolveClientMemberWeeklyStatus,
     switchTab,
     openCharacterModal
   });
@@ -340,45 +341,10 @@ function syncAuthenticatedWalletFromBseState(bse) {
   const weeklyCapBox = document.getElementById('walletWeeklyCapBox');
   const weeklyBarFill = document.getElementById('walletWeeklyBarFill');
   if (weeklyCapEl && weeklyCapBox) {
-    const capCfg = bse.config?.weeklyCap || {};
-    const enabled = capCfg.enabled !== false;
-    const baseCap = parseInt(capCfg.cap, 10) || 50;
-    const resetDay = Number.isInteger(parseInt(capCfg.resetDay, 10)) ? parseInt(capCfg.resetDay, 10) : 2;
-    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-    const now = new Date();
-    const utcStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0, 0));
-    const diff = (utcStart.getUTCDay() - resetDay + 7) % 7;
-    utcStart.setUTCDate(utcStart.getUTCDate() - diff);
-    const currentWindowIso = utcStart.toISOString();
+    const wk = resolveClientMemberWeeklyStatus(w, bse);
 
-    let weeklyEarned = 0;
-    let effectiveCap = baseCap;
-    if (w.weeklyWindowStart) {
-      const prevRollover = Math.max(0, w.weeklyCapRollover || 0);
-      const prevEarned = Math.max(0, w.weeklyBonesEarned || 0);
-      if (w.weeklyWindowStart === currentWindowIso) {
-        weeklyEarned = prevEarned;
-        effectiveCap = baseCap + prevRollover;
-      } else {
-        const currentMs = Date.parse(currentWindowIso);
-        const prevMs = Date.parse(w.weeklyWindowStart);
-        const weeksElapsed = (Number.isFinite(currentMs) && Number.isFinite(prevMs) && currentMs > prevMs)
-          ? Math.round((currentMs - prevMs) / (7 * 24 * 60 * 60 * 1000))
-          : 0;
-        if (weeksElapsed > 0) {
-          const unusedPrev = Math.max(0, (baseCap + prevRollover) - prevEarned);
-          const newRollover = unusedPrev + (weeksElapsed - 1) * baseCap;
-          weeklyEarned = 0;
-          effectiveCap = baseCap + newRollover;
-        } else {
-          weeklyEarned = prevEarned;
-          effectiveCap = baseCap + prevRollover;
-        }
-      }
-    }
-
-    if (!enabled) {
-      weeklyCapEl.textContent = `${weeklyEarned.toLocaleString()} / ∞`;
+    if (!wk.enabled) {
+      weeklyCapEl.textContent = `${wk.weeklyEarned.toLocaleString()} / ∞`;
       weeklyCapEl.style.color = 'var(--gold-200)';
       weeklyCapBox.title = 'Weekly Bone cap is currently disabled';
       if (weeklyBarFill) {
@@ -386,16 +352,65 @@ function syncAuthenticatedWalletFromBseState(bse) {
         weeklyBarFill.style.opacity = '0.35';
       }
     } else {
-      weeklyCapEl.textContent = `${weeklyEarned.toLocaleString()} / ${effectiveCap.toLocaleString()}`;
-      weeklyCapEl.style.color = weeklyEarned >= effectiveCap ? '#f87171' : 'var(--gold-200)';
-      weeklyCapBox.title = `Resets every ${dayNames[resetDay] || 'Tuesday'} at 00:00 UTC (Unused cap rolls over; Spendable Bones can exceed ${effectiveCap})`;
+      weeklyCapEl.textContent = `${wk.weeklyEarned.toLocaleString()} / ${wk.effectiveCap.toLocaleString()}`;
+      weeklyCapEl.style.color = wk.weeklyEarned >= wk.effectiveCap ? '#f87171' : 'var(--gold-200)';
+      weeklyCapBox.title = `Resets every ${wk.resetDayName} at 00:00 UTC (Unused cap rolls over; Spendable Bones can exceed ${wk.effectiveCap})`;
       if (weeklyBarFill) {
-        const pct = Math.min(100, Math.round((weeklyEarned / Math.max(1, effectiveCap)) * 100));
+        const pct = Math.min(100, Math.round((wk.weeklyEarned / Math.max(1, wk.effectiveCap)) * 100));
         weeklyBarFill.style.width = `${pct}%`;
         weeklyBarFill.style.opacity = '1';
       }
     }
   }
+}
+
+function resolveClientMemberWeeklyStatus(wallet = {}, bse = state.bseState) {
+  const capCfg = bse?.config?.weeklyCap || {};
+  const enabled = capCfg.enabled !== false;
+  const baseCap = parseInt(capCfg.cap, 10) || 50;
+  const resetDay = Number.isInteger(parseInt(capCfg.resetDay, 10)) ? parseInt(capCfg.resetDay, 10) : 2;
+  const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const now = new Date();
+  const utcStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0, 0));
+  const diff = (utcStart.getUTCDay() - resetDay + 7) % 7;
+  utcStart.setUTCDate(utcStart.getUTCDate() - diff);
+  const currentWindowIso = utcStart.toISOString();
+
+  let weeklyEarned = 0;
+  let effectiveCap = baseCap;
+  if (wallet && wallet.weeklyWindowStart) {
+    const prevRollover = Math.max(0, wallet.weeklyCapRollover || 0);
+    const prevEarned = Math.max(0, wallet.weeklyBonesEarned || 0);
+    if (wallet.weeklyWindowStart === currentWindowIso) {
+      weeklyEarned = prevEarned;
+      effectiveCap = baseCap + prevRollover;
+    } else {
+      const currentMs = Date.parse(currentWindowIso);
+      const prevMs = Date.parse(wallet.weeklyWindowStart);
+      const weeksElapsed = (Number.isFinite(currentMs) && Number.isFinite(prevMs) && currentMs > prevMs)
+        ? Math.round((currentMs - prevMs) / (7 * 24 * 60 * 60 * 1000))
+        : 0;
+      if (weeksElapsed > 0) {
+        const unusedPrev = Math.max(0, (baseCap + prevRollover) - prevEarned);
+        const newRollover = unusedPrev + (weeksElapsed - 1) * baseCap;
+        weeklyEarned = 0;
+        effectiveCap = baseCap + newRollover;
+      } else {
+        weeklyEarned = prevEarned;
+        effectiveCap = baseCap + prevRollover;
+      }
+    }
+  }
+
+  return {
+    enabled,
+    baseCap,
+    resetDay,
+    resetDayName: dayNames[resetDay] || 'Tuesday',
+    weeklyEarned,
+    effectiveCap,
+    label: enabled ? `${weeklyEarned.toLocaleString()} / ${effectiveCap.toLocaleString()}` : `${weeklyEarned.toLocaleString()} / ∞`
+  };
 }
 
 function renderBseDependentViews() {
@@ -1117,6 +1132,7 @@ window.inspectMemberProfile = function(discordId) {
     ? `<div class="guild-note-card">"${w.guildNote}"</div>`
     : `<div style="color:var(--text-dim); font-size:0.85rem; font-style:italic; margin:0.5rem 0;">No public guild note provided yet.</div>`;
 
+  const wkStatus = resolveClientMemberWeeklyStatus(w, state.bseState);
   const modalBody = document.getElementById('memberProfileModalBody');
   modalBody.innerHTML = `
     <div class="member-profile-header">
@@ -1145,13 +1161,17 @@ window.inspectMemberProfile = function(discordId) {
 
     ${state.user?.isOfficer ? `
       <div class="wow-inner-box" style="margin-top: 1.25rem; padding: 0.85rem;">
-        <div style="font-size: 0.75rem; color: var(--gold-300); font-weight: 700; text-transform: uppercase; margin-bottom: 0.5rem; display: flex; justify-content: space-between; align-items: center;">
+        <div style="font-size: 0.75rem; color: var(--gold-300); font-weight: 700; text-transform: uppercase; margin-bottom: 0.5rem; display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
           <span>Officer Controls</span>
-          ${w.officerHidden ? `<span class="badge-officer-hidden">Hidden from Leaderboard</span>` : ''}
+          <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+            <span style="font-size: 0.7rem; color: var(--text-muted); text-transform: none; font-weight: 500;">Weekly Cap: <strong style="color: ${wkStatus.enabled && wkStatus.weeklyEarned >= wkStatus.effectiveCap ? '#f87171' : 'var(--gold-200)'};">${wkStatus.label}</strong></span>
+            ${w.officerHidden ? `<span class="badge-officer-hidden">Hidden from Leaderboard</span>` : ''}
+          </div>
         </div>
         <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
           <button class="btn-officer-award" style="padding: 0.4rem 0.8rem; font-size: 0.8rem;" onclick="openBonesAdjustModal('${discordId}', '${escapeAttr(name)}', 'award')">+ Award Bones</button>
           <button class="btn-officer-deduct" style="padding: 0.4rem 0.8rem; font-size: 0.8rem;" onclick="openBonesAdjustModal('${discordId}', '${escapeAttr(name)}', 'deduct')">- Deduct Bones</button>
+          <button class="btn-officer-adjust" style="padding: 0.4rem 0.8rem; font-size: 0.8rem;" onclick="quickAdjustSpendable('${discordId}', '${escapeAttr(name)}', ${w.spendableBones || 0})">🪙 Override Spendable Bones</button>
           <button class="btn-officer-adjust" style="padding: 0.4rem 0.8rem; font-size: 0.8rem;" onclick="quickAdjustLifetime('${discordId}', '${escapeAttr(name)}', ${w.boneScore || 0})">⚙️ Adjust Lifetime Bones</button>
           <button class="btn-officer-adjust" style="padding: 0.4rem 0.8rem; font-size: 0.8rem;" onclick="quickAdjustBountyStats('${discordId}', '${escapeAttr(name)}', ${w.bountiesCompleted || 0}, ${w.postedBountiesCompleted || 0})">🎯 Override Bounty Stats</button>
           <button class="btn-officer-hide" style="padding: 0.4rem 0.8rem; font-size: 0.8rem;" onclick="quickToggleHideMember('${discordId}', '${escapeAttr(name)}', ${Boolean(w.officerHidden)})">${w.officerHidden ? '👁️ Unhide Member' : '👁️ Hide from Leaderboard'}</button>
@@ -1667,6 +1687,9 @@ function formatAuditBadge(action) {
   if (action === 'BOUNTY_REQUEST_ESCROW') return { cls: 'deduct', text: 'Escrow' };
   if (action === 'BOUNTY_REQUEST_APPROVED') return { cls: 'bounty', text: 'Sponsored' };
   if (action === 'BOUNTY_REQUEST_REFUND' || action === 'BOUNTY_ESCROW_REFUND') return { cls: 'award', text: 'Escrow Refund' };
+  if (action === 'SPENDABLE_BONES_OVERRIDE') return { cls: 'adjust', text: 'Spendable Override' };
+  if (action === 'LIFETIME_BONES_ADJUST') return { cls: 'adjust', text: 'Career Override' };
+  if (action === 'BOUNTY_STATS_ADJUST') return { cls: 'adjust', text: 'Bounty Override' };
   if (action === 'LEDGER_CORRECTION') return { cls: 'adjust', text: 'Correction' };
   if (action === 'MEMBER_DELETE') return { cls: 'purge', text: 'Purged' };
   return { cls: 'adjust', text: action || 'Event' };
@@ -1965,10 +1988,82 @@ window.quickDeleteMember = async function(userId, memberName, spendableBones, bo
   }
 };
 
+window.quickAdjustSpendable = async function(userId, memberName, currentSpendable = 0) {
+  const wallet = state.bseState?.wallets?.[userId] || {};
+  const wkStatus = resolveClientMemberWeeklyStatus(wallet, state.bseState);
+  const careerScore = wallet.boneScore || 0;
+
+  const decision = await openOfficerDecisionModal({
+    title: `Override Spendable Bones: ${memberName}`,
+    lead: `Current Spendable: ${(currentSpendable || 0).toLocaleString()} Bones • Career Score: ${careerScore.toLocaleString()} Pts • Weekly Cap: ${wkStatus.label}`,
+    submitLabel: 'Update Spendable Bones',
+    submitVariant: 'primary',
+    fields: [
+      {
+        name: 'spendableBones',
+        label: 'New Spendable Bones Balance',
+        type: 'number',
+        value: String(currentSpendable ?? 0),
+        min: 0,
+        hint: 'Sets Spendable Bones directly — separate from Career Score and does not count toward or get blocked by the Weekly Earn Cap.'
+      },
+      {
+        name: 'reason',
+        label: 'Audit Log Justification',
+        type: 'text',
+        value: 'Officer spendable balance override',
+        placeholder: 'Reason for overriding spendable bones...'
+      }
+    ]
+  });
+  if (!decision) return;
+
+  const newSpendable = parseInt(String(decision.spendableBones ?? '').trim(), 10);
+  if (isNaN(newSpendable) || newSpendable < 0) {
+    showToast('Invalid spendable bones amount (must be 0 or higher).');
+    return;
+  }
+
+  const reason = (decision.reason || '').trim() || 'Officer spendable balance override';
+
+  try {
+    const res = await fetch('/api/exchange/member/adjust', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        targetId: userId,
+        spendableBones: newSpendable,
+        reason
+      })
+    });
+    if (res.ok) {
+      showToast(`Overrode ${memberName}'s spendable bones to ${newSpendable.toLocaleString()} (separate from weekly cap).`);
+      await refreshBseState();
+      if (state.inspectedMemberId === userId) {
+        if (document.getElementById('modalMemberProfile')?.classList.contains('active')) {
+          inspectMemberProfile(userId);
+        }
+        if (document.getElementById('memberInspectorForm')?.style.display === 'block') {
+          loadMemberIntoInspector(userId);
+        }
+      }
+    } else {
+      const data = await res.json().catch(() => ({}));
+      showToast(`Failed: ${data.error || 'Server error'}`);
+    }
+  } catch (err) {
+    showToast(`Error: ${err.message}`);
+  }
+};
+
 window.quickAdjustLifetime = async function(userId, memberName, currentScore = 0) {
+  const wallet = state.bseState?.wallets?.[userId] || {};
+  const wkStatus = resolveClientMemberWeeklyStatus(wallet, state.bseState);
+  const spendable = wallet.spendableBones || 0;
+
   const decision = await openOfficerDecisionModal({
     title: `Adjust Lifetime Score: ${memberName}`,
-    lead: `Current Lifetime Bones (Career Score): ${(currentScore || 0).toLocaleString()} Pts`,
+    lead: `Current Career Score: ${(currentScore || 0).toLocaleString()} Pts • Spendable: ${spendable.toLocaleString()} Bones • Weekly Cap: ${wkStatus.label}`,
     submitLabel: 'Update Lifetime Score',
     submitVariant: 'primary',
     fields: [
@@ -1977,7 +2072,8 @@ window.quickAdjustLifetime = async function(userId, memberName, currentScore = 0
         label: 'New Lifetime Bones (Career Score)',
         type: 'number',
         value: String(currentScore ?? 0),
-        min: 0
+        min: 0,
+        hint: 'Sets Career Score directly — separate from Spendable Bones and the Weekly Earn Cap.'
       },
       {
         name: 'reason',
@@ -2012,10 +2108,15 @@ window.quickAdjustLifetime = async function(userId, memberName, currentScore = 0
       showToast(`Adjusted ${memberName}'s lifetime bones to ${newScore.toLocaleString()}.`);
       await refreshBseState();
       if (state.inspectedMemberId === userId) {
-        inspectMemberProfile(userId);
+        if (document.getElementById('modalMemberProfile')?.classList.contains('active')) {
+          inspectMemberProfile(userId);
+        }
+        if (document.getElementById('memberInspectorForm')?.style.display === 'block') {
+          loadMemberIntoInspector(userId);
+        }
       }
     } else {
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       showToast(`Failed: ${data.error || 'Server error'}`);
     }
   } catch (err) {
@@ -4016,8 +4117,8 @@ function setupOfficerTools() {
     const amount = parseInt(document.getElementById('awardAmountInput').value, 10);
     const reason = document.getElementById('awardReasonInput').value.trim();
 
-    if (!targetId || !amount) {
-      showToast('Please specify target member and amount.');
+    if (!targetId || !amount || amount < 1) {
+      showToast('Please specify target member and valid amount.');
       return;
     }
 
@@ -4026,14 +4127,17 @@ function setupOfficerTools() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ targetId, amount, reason })
     });
+    const data = await res.json().catch(() => ({}));
     if (res.ok) {
-      showToast(`Awarded +${amount}.`);
+      const granted = data.grantedAmount ?? amount;
+      const capSuffix = data.capped ? ` (capped at weekly limit ${data.weeklyEarned}/${data.weeklyCap})` : '';
+      showToast(`Awarded +${granted}${capSuffix}.`);
       document.getElementById('awardAmountInput').value = '';
       document.getElementById('awardReasonInput').value = '';
       await refreshBseState();
       loadMemberIntoInspector(targetId);
     } else {
-      showToast('Award failed.');
+      showToast(data.error || 'Award failed.');
     }
   });
 
@@ -4043,8 +4147,8 @@ function setupOfficerTools() {
     const amount = parseInt(document.getElementById('awardAmountInput').value, 10);
     const reason = document.getElementById('awardReasonInput').value.trim();
 
-    if (!targetId || !amount) {
-      showToast('Please specify target member and amount.');
+    if (!targetId || !amount || amount < 1) {
+      showToast('Please specify target member and valid amount.');
       return;
     }
 
@@ -4053,40 +4157,64 @@ function setupOfficerTools() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ targetId, amount, reason })
     });
+    const data = await res.json().catch(() => ({}));
     if (res.ok) {
       showToast(`Deducted -${amount}.`);
       await refreshBseState();
       loadMemberIntoInspector(targetId);
     } else {
-      showToast('Deduct failed.');
+      showToast(data.error || 'Deduct failed.');
     }
   });
 
   // Save Member Ledger Correction
   document.getElementById('btnSaveMemberAdjust').addEventListener('click', async () => {
     if (!state.inspectedMemberId) return;
-    const spendable = parseInt(document.getElementById('inspectorSpendable').value, 10);
-    const score = parseInt(document.getElementById('inspectorScore').value, 10);
-    const reason = document.getElementById('inspectorReason').value.trim();
+    const rawSpendable = document.getElementById('inspectorSpendable').value.trim();
+    const rawScore = document.getElementById('inspectorScore').value.trim();
+    const reasonEl = document.getElementById('inspectorReason');
+    const reason = reasonEl.value.trim();
     const officerHidden = inspectorOfficerHidden ? inspectorOfficerHidden.checked : false;
+
+    const payload = {
+      targetId: state.inspectedMemberId,
+      officerHidden,
+      reason
+    };
+
+    if (rawSpendable !== '') {
+      const spendable = parseInt(rawSpendable, 10);
+      if (isNaN(spendable) || spendable < 0) {
+        showToast('Invalid Spendable Balance override (must be 0 or higher).');
+        return;
+      }
+      payload.spendableBones = spendable;
+    }
+    if (rawScore !== '') {
+      const score = parseInt(rawScore, 10);
+      if (isNaN(score) || score < 0) {
+        showToast('Invalid Career Score override (must be 0 or higher).');
+        return;
+      }
+      payload.boneScore = score;
+    }
 
     const res = await fetch('/api/exchange/member/adjust', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        targetId: state.inspectedMemberId,
-        spendableBones: spendable,
-        boneScore: score,
-        officerHidden,
-        reason
-      })
+      body: JSON.stringify(payload)
     });
+    const data = await res.json().catch(() => ({}));
     if (res.ok) {
-      showToast('Member ledger corrected successfully.');
+      const toastMsg = data.action === 'SPENDABLE_BONES_OVERRIDE'
+        ? `Overrode Spendable Bones to ${(data.wallet?.spendableBones ?? 0).toLocaleString()} (separate from weekly cap).`
+        : 'Member ledger corrected successfully.';
+      showToast(toastMsg);
+      reasonEl.value = '';
       await refreshBseState();
       loadMemberIntoInspector(state.inspectedMemberId);
     } else {
-      showToast('Failed to update ledger.');
+      showToast(data.error || 'Failed to update ledger.');
     }
   });
 
@@ -4402,15 +4530,17 @@ function loadMemberIntoInspector(userId) {
   }
 
   const name = wallet.serverNickname || wallet.globalName || wallet.username || 'Member';
-  const charPart = wallet.primaryCharacter ? `Primary: <strong>${wallet.primaryCharacter}</strong>` : 'No primary character';
+  const charPart = wallet.primaryCharacter ? `Primary: <strong>${escapeHtml(wallet.primaryCharacter)}</strong>` : 'No primary character';
+  const wkStatus = resolveClientMemberWeeklyStatus(wallet, state.bseState);
 
   card.innerHTML = `
     <div style="background: var(--bg-primary); padding: 0.85rem; border-radius: var(--radius-sm); border: 1px solid var(--border-gold);">
-      <div style="font-size: 1.1rem; font-weight: 700; color: var(--gold-100);">${name} (@${wallet.username || ''})</div>
+      <div style="font-size: 1.1rem; font-weight: 700; color: var(--gold-100);">${escapeHtml(name)} (@${escapeHtml(wallet.username || '')})</div>
       <div style="font-size: 0.8rem; color: var(--text-muted); margin: 0.2rem 0;">${charPart}</div>
-      <div style="display: flex; gap: 1rem; margin-top: 0.5rem;">
-        <div>Spendable: <strong style="color:var(--gold-300);">${wallet.spendableBones || 0} ${currName}</strong></div>
-        <div>Score: <strong style="color:var(--amber);">${wallet.boneScore || 0} Pts</strong></div>
+      <div style="display: flex; gap: 1rem; margin-top: 0.5rem; flex-wrap: wrap;">
+        <div>Spendable: <strong style="color:var(--gold-300);">${(wallet.spendableBones || 0).toLocaleString()} ${escapeHtml(currName)}</strong></div>
+        <div>Score: <strong style="color:var(--amber);">${(wallet.boneScore || 0).toLocaleString()} Pts</strong></div>
+        <div>Weekly Cap: <strong style="color:${wkStatus.enabled && wkStatus.weeklyEarned >= wkStatus.effectiveCap ? '#f87171' : 'var(--gold-200)'};">${wkStatus.label}</strong></div>
       </div>
     </div>
   `;
