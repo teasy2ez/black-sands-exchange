@@ -1203,55 +1203,76 @@
   // #modalCharacters "VERIFY VIA ARMORY" INTEGRATION
   // =========================================================================
 
-  function bindCharacterVerifyControls() {
-    const verifyBtn = document.getElementById('btnVerifyNewCharArmory');
+  let pendingVerifyQuery = '';
+  let pendingVerifyPromise = null;
+  let verifyDebounceTimer = null;
+
+  function parseNameInputForLookup(raw) {
+    const clean = String(raw || '').trim();
+    if (!clean) return { raw: '', name: '', surname: '', normQuery: '' };
+    if (clean.includes('-')) {
+      const parts = clean.split('-').map(p => p.trim()).filter(Boolean);
+      if (parts.length >= 2) {
+        return { raw: clean, name: parts[0], surname: parts.slice(1).join('-'), normQuery: clean.toLowerCase() };
+      }
+    }
+    const ws = clean.split(/\s+/).filter(Boolean);
+    if (ws.length >= 2) {
+      return { raw: clean, name: ws[0], surname: ws.slice(1).join(' '), normQuery: clean.toLowerCase() };
+    }
+    return { raw: clean, name: clean, surname: '', normQuery: clean.toLowerCase() };
+  }
+
+  async function verifyCharacterInput(rawInput, { allowAutoPreview = false, forceRefresh = false } = {}) {
     const nameInput = document.getElementById('newCharName');
-    const surnameInput = document.getElementById('newCharSurname');
     const statusBox = document.getElementById('newCharArmoryStatus');
+    const parsed = parseNameInputForLookup(rawInput !== undefined ? rawInput : (nameInput?.value || ''));
 
-    const clearPending = () => {
-      uiState.pendingVerifiedChar = null;
-      if (statusBox) {
-        statusBox.style.display = 'none';
-        statusBox.className = 'armory-verify-status';
-        statusBox.textContent = '';
-      }
-    };
+    if (!parsed.name) {
+      return { found: false, reason: 'EMPTY' };
+    }
 
-    nameInput?.addEventListener('input', clearPending);
-    surnameInput?.addEventListener('input', clearPending);
+    // Reuse already-verified snapshot for identical input without re-fetching
+    if (uiState.pendingVerifiedChar && uiState.pendingVerifiedChar._sourceQuery === parsed.normQuery) {
+      return { found: true, verifiedMeta: uiState.pendingVerifiedChar };
+    }
 
-    verifyBtn?.addEventListener('click', async () => {
-      const name = String(nameInput?.value || '').trim();
-      const surname = String(surnameInput?.value || '').trim();
-      if (!name || !surname) {
-        hostCtx.showToast('Enter both Character Name and Forever Surname first.');
-        return;
-      }
+    // Deduplicate concurrent verification for identical input (e.g. debounce + immediate Add click)
+    if (pendingVerifyPromise && pendingVerifyQuery === parsed.normQuery) {
+      return pendingVerifyPromise;
+    }
 
-      verifyBtn.disabled = true;
-      verifyBtn.textContent = 'Verifying...';
-      if (statusBox) {
-        statusBox.style.display = 'block';
-        statusBox.className = 'armory-verify-status';
-        statusBox.textContent = 'Querying Battle.net WoW: Forever US Armory...';
-      }
+    pendingVerifyQuery = parsed.normQuery;
+    if (statusBox) {
+      statusBox.style.display = 'block';
+      statusBox.className = 'armory-verify-status';
+      statusBox.textContent = `Verifying "${parsed.raw}" with WoW: Forever Armory...`;
+    }
 
+    const run = (async () => {
       try {
-        const snapshot = await fetchCharacterArmoryClient({ name, surname, forceRefresh: true });
-        if (snapshot?.found) {
-          const classEl = document.getElementById('newCharClass');
-          const levelEl = document.getElementById('newCharLevel');
-          const profEl = document.getElementById('newCharProfessions');
-          if (classEl && snapshot.className) classEl.value = snapshot.className;
-          if (levelEl && snapshot.level) levelEl.value = String(snapshot.level);
-          if (profEl && snapshot.professions?.allSummary) profEl.value = snapshot.professions.allSummary;
+        const snapshot = await fetchCharacterArmoryClient({
+          name: parsed.name,
+          surname: parsed.surname,
+          forceRefresh
+        });
 
-          uiState.pendingVerifiedChar = {
-            name: snapshot.name || name,
-            surname: snapshot.surname || surname,
+        // Guard against stale async result if user modified the input while loading
+        const curNorm = parseNameInputForLookup(nameInput?.value || '').normQuery;
+        if (curNorm && curNorm !== parsed.normQuery) {
+          return { found: false, stale: true };
+        }
+
+        if (snapshot?.found) {
+          const verifiedMeta = {
+            _sourceQuery: parsed.normQuery,
+            name: snapshot.name || parsed.name,
+            surname: snapshot.surname || parsed.surname,
             slug: snapshot.slug,
-            ruleset: snapshot.ruleset?.name || document.getElementById('newCharRuleset')?.value || 'PvP',
+            className: snapshot.className || 'Warrior',
+            activeSpec: snapshot.activeSpec || null,
+            ruleset: snapshot.ruleset?.name || '',
+            professions: snapshot.professions?.allSummary || '',
             race: snapshot.race || '',
             level: snapshot.level || null,
             avgItemLevel: snapshot.avgItemLevel || null,
@@ -1260,28 +1281,138 @@
             armoryVerified: true,
             lastArmorySyncAt: snapshot.syncedAt || new Date().toISOString()
           };
+          uiState.pendingVerifiedChar = verifiedMeta;
 
           if (statusBox) {
+            statusBox.style.display = 'block';
             statusBox.className = 'armory-verify-status is-verified';
-            statusBox.innerHTML = `Verified: <strong>${escHtml(snapshot.displayName)}</strong> &mdash; Lv ${escHtml(String(snapshot.level || '?'))} ${escHtml(snapshot.race || '')} ${escHtml(snapshot.className || '')}${snapshot.guild?.name ? ` &lt;${escHtml(snapshot.guild.name)}&gt;` : ''}`;
+            const rulesetBit = verifiedMeta.ruleset ? ` &bull; ${escHtml(verifiedMeta.ruleset)}` : '';
+            const guildBit = verifiedMeta.guildName ? ` &bull; &lt;${escHtml(verifiedMeta.guildName)}&gt;` : '';
+            const profBit = verifiedMeta.professions ? ` &bull; ${escHtml(verifiedMeta.professions)}` : '';
+            statusBox.innerHTML = `Verified: <strong>${escHtml(snapshot.displayName)}</strong> &mdash; Lv ${escHtml(String(verifiedMeta.level || '?'))} ${escHtml(verifiedMeta.race)} ${escHtml(verifiedMeta.className)}${rulesetBit}${guildBit}${profBit}`;
           }
-          hostCtx.showToast(`Verified ${snapshot.displayName} on Forever Armory!`);
-        } else {
-          uiState.pendingVerifiedChar = null;
+          return { found: true, verifiedMeta, snapshot };
+        }
+
+        uiState.pendingVerifiedChar = null;
+
+        if (snapshot?.ambiguous && Array.isArray(snapshot.matches) && snapshot.matches.length > 0) {
           if (statusBox) {
+            statusBox.style.display = 'block';
             statusBox.className = 'armory-verify-status is-warning';
-            statusBox.textContent = snapshot?.message || 'Not found yet on Forever Armory (requires Level 10+ and at least 1 logout). You can still add manually.';
+            statusBox.innerHTML = `
+              <div>${escHtml(snapshot.message)}</div>
+              <div class="armory-match-picks">
+                ${snapshot.matches.map(m => `
+                  <button type="button" class="armory-match-chip" data-pick-char-name="${escAttr(m.displayName)}">
+                    ${escHtml(m.displayName)} (Lv ${escHtml(String(m.level || '?'))} ${escHtml(m.className || '')})
+                  </button>
+                `).join('')}
+              </div>
+            `;
+            statusBox.querySelectorAll('[data-pick-char-name]').forEach(btn => {
+              btn.addEventListener('click', async () => {
+                const chosen = btn.getAttribute('data-pick-char-name');
+                if (nameInput && chosen) {
+                  nameInput.value = chosen;
+                  await verifyCharacterInput(chosen, { forceRefresh: true });
+                }
+              });
+            });
+          }
+          return { found: false, ambiguous: true, matches: snapshot.matches, message: snapshot.message };
+        }
+
+        const missMsg = snapshot?.message || 'Character was not found on WoW: Forever Armory yet (requires Level 10+, 1 logout, or Name + Surname).';
+        if (statusBox) {
+          if (allowAutoPreview && !parsed.surname && snapshot?.configured !== false) {
+            // While typing a single name before hitting Enter/Add, keep hint gentle
+            statusBox.style.display = 'block';
+            statusBox.className = 'armory-verify-status';
+            statusBox.textContent = `${missMsg} Press Verify & Add or include Surname if needed.`;
+          } else {
+            statusBox.style.display = 'block';
+            statusBox.className = 'armory-verify-status is-warning';
+            statusBox.innerHTML = `
+              <div>${escHtml(missMsg)}</div>
+              <div class="armory-force-add-row">
+                <button type="button" class="btn-secondary btn-xs armory-force-add-btn">Add Unverified Anyway</button>
+              </div>
+            `;
+            statusBox.querySelector('.armory-force-add-btn')?.addEventListener('click', () => {
+              hostCtx.addUnverifiedCharacter?.();
+            });
           }
         }
+        return { found: false, message: missMsg };
       } catch (err) {
         uiState.pendingVerifiedChar = null;
         if (statusBox) {
+          statusBox.style.display = 'block';
           statusBox.className = 'armory-verify-status is-warning';
-          statusBox.textContent = `Armory check unavailable: ${err.message}`;
+          statusBox.innerHTML = `
+            <div>Armory check unavailable: ${escHtml(err.message)}</div>
+            <div class="armory-force-add-row">
+              <button type="button" class="btn-secondary btn-xs armory-force-add-btn">Add Unverified Anyway</button>
+            </div>
+          `;
+          statusBox.querySelector('.armory-force-add-btn')?.addEventListener('click', () => {
+            hostCtx.addUnverifiedCharacter?.();
+          });
         }
+        return { found: false, error: err.message };
       } finally {
-        verifyBtn.disabled = false;
-        verifyBtn.textContent = 'Verify via Armory';
+        if (pendingVerifyPromise === run) {
+          pendingVerifyPromise = null;
+          pendingVerifyQuery = '';
+        }
+      }
+    })();
+
+    pendingVerifyPromise = run;
+    return run;
+  }
+
+  function bindCharacterVerifyControls() {
+    const nameInput = document.getElementById('newCharName');
+    const statusBox = document.getElementById('newCharArmoryStatus');
+
+    const clearPending = () => {
+      uiState.pendingVerifiedChar = null;
+      if (verifyDebounceTimer) {
+        clearTimeout(verifyDebounceTimer);
+        verifyDebounceTimer = null;
+      }
+      if (statusBox) {
+        statusBox.style.display = 'none';
+        statusBox.className = 'armory-verify-status';
+        statusBox.textContent = '';
+      }
+    };
+
+    nameInput?.addEventListener('input', () => {
+      const val = String(nameInput.value || '').trim();
+      if (uiState.pendingVerifiedChar && uiState.pendingVerifiedChar._sourceQuery === parseNameInputForLookup(val).normQuery) {
+        return;
+      }
+      clearPending();
+      if (val.length >= 2) {
+        verifyDebounceTimer = setTimeout(() => {
+          if (document.getElementById('modalCharacters')?.classList.contains('active')) {
+            verifyCharacterInput(val, { allowAutoPreview: true, forceRefresh: false });
+          }
+        }, 550);
+      }
+    });
+
+    nameInput?.addEventListener('blur', () => {
+      const val = String(nameInput.value || '').trim();
+      if (verifyDebounceTimer) {
+        clearTimeout(verifyDebounceTimer);
+        verifyDebounceTimer = null;
+      }
+      if (val.length >= 2 && document.getElementById('modalCharacters')?.classList.contains('active')) {
+        verifyCharacterInput(val, { allowAutoPreview: true, forceRefresh: false });
       }
     });
   }
@@ -1289,6 +1420,12 @@
   function consumePendingVerifiedCharacter() {
     const out = uiState.pendingVerifiedChar;
     uiState.pendingVerifiedChar = null;
+    pendingVerifyQuery = '';
+    pendingVerifyPromise = null;
+    if (verifyDebounceTimer) {
+      clearTimeout(verifyDebounceTimer);
+      verifyDebounceTimer = null;
+    }
     const statusBox = document.getElementById('newCharArmoryStatus');
     if (statusBox) {
       statusBox.style.display = 'none';
@@ -1469,6 +1606,7 @@
     onBseStateUpdated() {},
 
     renderMemberProfileModal,
+    verifyCharacterInput,
     consumePendingVerifiedCharacter,
     syncOfficerArmoryForm,
     formatWowCoinsHtml

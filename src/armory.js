@@ -472,15 +472,57 @@ export async function getGuildCraftingDirectory({ firestore, query = '', profess
  * Retrieve cached or fresh WoW: Forever US Character Armory Snapshot
  */
 export async function getCharacterArmory({ name, surname = '', slug = '', forceRefresh = false, env, firestore, state = null, fetchImpl = fetch } = {}) {
-  const identity = parseCharacterIdentity(slug || name, surname);
+  let identity = parseCharacterIdentity(slug || name, surname);
   if (!identity.slug) {
-    throw new BlizzardApiError('Character name (and surname for Forever) is required.', { status: 400, code: 'INVALID_CHARACTER_SLUG' });
+    throw new BlizzardApiError('Character name is required.', { status: 400, code: 'INVALID_CHARACTER_SLUG' });
+  }
+
+  const armoryCfg = resolveArmoryConfig(state);
+  const now = Date.now();
+  const initialHadSurname = identity.hasSurname;
+
+  // If only first name was provided (no surname), resolve exact Name-Surname via guild roster first
+  if (!identity.hasSurname && isBlizzardConfigured(env)) {
+    try {
+      let roster = await getOrSyncGuildRoster({ forceRefresh: false, env, firestore, state, fetchImpl });
+      const findMatches = (members = []) => members.filter(m =>
+        String(m.name || '').trim().toLowerCase() === identity.name.toLowerCase() && m.slug
+      );
+      let matches = findMatches(roster?.members);
+      const rosterAgeMs = roster?.syncedAt ? (now - Date.parse(roster.syncedAt)) : Number.MAX_SAFE_INTEGER;
+      if (!matches.length && forceRefresh && rosterAgeMs > 120000) {
+        roster = await getOrSyncGuildRoster({ forceRefresh: true, env, firestore, state, fetchImpl });
+        matches = findMatches(roster?.members);
+      }
+
+      if (matches.length === 1) {
+        identity = parseCharacterIdentity(matches[0].slug, matches[0].surname || '');
+      } else if (matches.length > 1) {
+        return {
+          found: false,
+          configured: true,
+          ambiguous: true,
+          name: identity.name,
+          slug: identity.slug,
+          matches: matches.slice(0, 8).map(m => ({
+            name: m.name,
+            surname: m.surname,
+            displayName: m.displayName,
+            slug: m.slug,
+            level: m.level,
+            className: m.className,
+            raceName: m.raceName
+          })),
+          message: `Multiple guild members named "${identity.name}" found in <${roster?.guildName || armoryCfg.guildSlug}>. Pick yours below or enter Name + Surname.`
+        };
+      }
+    } catch (err) {
+      console.warn('Single-name guild roster resolution warning:', err.message);
+    }
   }
 
   const cacheKey = `char_${identity.slug}`;
   const docId = firestore ? firestore.sanitizeDocId(identity.slug) : identity.slug;
-  const armoryCfg = resolveArmoryConfig(state);
-  const now = Date.now();
 
   if (!forceRefresh) {
     const edgeHit = await readEdgeCache(cacheKey);
@@ -547,6 +589,9 @@ export async function getCharacterArmory({ name, surname = '', slug = '', forceR
   });
 
   if (!snapshot.found) {
+    if (!initialHadSurname && !identity.hasSurname) {
+      snapshot.message = `Character "${identity.name}" was not found via the guild roster or WoW: Forever Armory. Try including Surname (e.g. "${identity.name} Surname") or ensure Level 10+ and 1 logout.`;
+    }
     const negStub = {
       ...snapshot,
       configured: true,

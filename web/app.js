@@ -192,7 +192,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     getDiscordAvatarUrl,
     resolveRankTitle,
     resolveClientMemberWeeklyStatus,
-    openCharacterModal
+    openCharacterModal,
+    addUnverifiedCharacter: () => forceAddDraftCharacterFn?.()
   });
 
   // Concurrently fetch auth session and central BSE state
@@ -3513,6 +3514,8 @@ function renderAuditTrail() {
 /**
  * Character Management Modal Logic
  */
+let forceAddDraftCharacterFn = null;
+
 function setupCharacterManagement() {
   btnOpenCharModal?.addEventListener('click', () => {
     openCharacterModal();
@@ -3520,56 +3523,74 @@ function setupCharacterManagement() {
 
   const clearDraftInputs = () => {
     const nEl = document.getElementById('newCharName');
-    const sEl = document.getElementById('newCharSurname');
-    const lEl = document.getElementById('newCharLevel');
-    const pEl = document.getElementById('newCharProfessions');
+    const rEl = document.getElementById('newCharRole');
     if (nEl) nEl.value = '';
-    if (sEl) sEl.value = '';
-    if (lEl) lEl.value = '';
-    if (pEl) pEl.value = '';
+    if (rEl) rEl.value = 'auto';
   };
 
-  const addDraftCharacterToRoster = ({ quietIfEmpty = false } = {}) => {
+  const inferCharacterRole = (verifiedMeta, selectedRole = 'auto') => {
+    if (selectedRole && selectedRole !== 'auto') return selectedRole;
+    const spec = String(verifiedMeta?.activeSpec || '').toLowerCase();
+    if (spec.includes('protection') || spec.includes('feral') || spec.includes('bear')) return 'Tank';
+    if (spec.includes('holy') || spec.includes('restoration') || spec.includes('discipline')) return 'Healer';
+    return 'DPS';
+  };
+
+  const parseFallbackCharacterName = (raw) => {
+    const clean = String(raw || '').trim();
+    if (!clean) return { name: '', surname: '', slug: '' };
+    let first = clean;
+    let last = '';
+    if (clean.includes('-')) {
+      const parts = clean.split('-').map(s => s.trim()).filter(Boolean);
+      if (parts.length >= 2) {
+        first = parts[0];
+        last = parts.slice(1).join('-');
+      }
+    } else if (clean.includes(' ')) {
+      const parts = clean.split(/\s+/).filter(Boolean);
+      if (parts.length >= 2) {
+        first = parts[0];
+        last = parts.slice(1).join(' ');
+      }
+    }
+    const cleanWord = w => w.toLowerCase().replace(/\s+/g, '');
+    const slug = last ? `${cleanWord(first)}-${cleanWord(last)}` : cleanWord(first);
+    return { name: first, surname: last, slug };
+  };
+
+  const addDraftCharacterToRoster = async ({ quietIfEmpty = false, allowUnverified = false } = {}) => {
     const rawName = (document.getElementById('newCharName')?.value || '').trim();
-    const rawSurname = document.getElementById('newCharSurname')?.value.trim() || '';
-    const charClass = document.getElementById('newCharClass')?.value || 'Warrior';
-    const rawLevel = document.getElementById('newCharLevel')?.value.trim() || '';
-    const charRole = document.getElementById('newCharRole')?.value || 'DPS';
-    const charRuleset = document.getElementById('newCharRuleset')?.value || 'PvP';
-    const professions = document.getElementById('newCharProfessions')?.value.trim() || '';
+    const selectedRole = document.getElementById('newCharRole')?.value || 'auto';
 
     if (!rawName) {
-      if (!quietIfEmpty) showToast('Please enter a character name.');
+      if (!quietIfEmpty) showToast('Please enter your character name.');
       return { ok: quietIfEmpty, added: false };
     }
 
-    let manualLevel = null;
-    if (rawLevel !== '') {
-      const parsedLevel = parseInt(rawLevel, 10);
-      if (!Number.isFinite(parsedLevel) || parsedLevel < 1 || parsedLevel > 60) {
-        showToast('Character level must be between 1 and 60.');
+    let verifiedMeta = null;
+    if (!allowUnverified && window.BSEArmory?.verifyCharacterInput) {
+      const verifyRes = await window.BSEArmory.verifyCharacterInput(rawName, {
+        allowAutoPreview: false,
+        forceRefresh: true
+      });
+      if (!verifyRes?.found) {
+        if (!verifyRes?.ambiguous) {
+          showToast(verifyRes?.message || 'Character not found on WoW Armory yet — check name or click Add Unverified Anyway.');
+        } else {
+          showToast('Multiple guildmates share that name — pick yours below.');
+        }
         return { ok: false, added: false };
       }
-      manualLevel = parsedLevel;
+      verifiedMeta = window.BSEArmory?.consumePendingVerifiedCharacter?.() || verifyRes.verifiedMeta || null;
+    } else {
+      verifiedMeta = window.BSEArmory?.consumePendingVerifiedCharacter?.() || null;
     }
 
-    const verifiedMeta = window.BSEArmory?.consumePendingVerifiedCharacter?.() || null;
-
-    let cleanName = rawName;
-    let cleanSurname = rawSurname;
-    if (!cleanSurname && rawName.includes('-')) {
-      const parts = rawName.split('-').map(s => s.trim()).filter(Boolean);
-      if (parts.length >= 2) {
-        cleanName = parts[0];
-        cleanSurname = parts.slice(1).join('-');
-      }
-    }
-
-    const name = verifiedMeta?.name || cleanName;
-    const surname = verifiedMeta?.surname || cleanSurname;
-    const slug = verifiedMeta?.slug || (surname
-      ? `${name.toLowerCase().replace(/\s+/g, '')}-${surname.toLowerCase().replace(/\s+/g, '')}`
-      : name.toLowerCase().replace(/\s+/g, ''));
+    const parsedFallback = parseFallbackCharacterName(rawName);
+    const name = verifiedMeta?.name || parsedFallback.name;
+    const surname = verifiedMeta?.surname !== undefined ? verifiedMeta.surname : parsedFallback.surname;
+    const slug = verifiedMeta?.slug || parsedFallback.slug;
 
     const existingIdx = slug
       ? state.userCharacters.findIndex(c => {
@@ -3584,14 +3605,17 @@ function setupCharacterManagement() {
       name,
       surname,
       slug,
-      class: charClass,
-      role: charRole,
-      ruleset: verifiedMeta?.ruleset || charRuleset,
-      professions,
+      class: verifiedMeta?.className || existingEntry?.class || 'Warrior',
+      role: inferCharacterRole(verifiedMeta, selectedRole),
+      professions: verifiedMeta?.professions || existingEntry?.professions || '',
       isPrimary: existingEntry ? Boolean(existingEntry.isPrimary) : isFirst
     };
-    const resolvedLevel = manualLevel || verifiedMeta?.level || existingEntry?.level || null;
+
+    const resolvedLevel = verifiedMeta?.level || existingEntry?.level || null;
     if (resolvedLevel) entry.level = resolvedLevel;
+
+    const resolvedRuleset = verifiedMeta?.ruleset || existingEntry?.ruleset || '';
+    if (resolvedRuleset) entry.ruleset = resolvedRuleset;
 
     if (verifiedMeta) {
       if (verifiedMeta.race) entry.race = verifiedMeta.race;
@@ -3620,28 +3644,57 @@ function setupCharacterManagement() {
     return { ok: true, added: true, entry };
   };
 
-  document.getElementById('btnAddCharacter')?.addEventListener('click', () => {
-    const res = addDraftCharacterToRoster({ quietIfEmpty: false });
+  forceAddDraftCharacterFn = async () => {
+    const res = await addDraftCharacterToRoster({ quietIfEmpty: false, allowUnverified: true });
     if (res.ok && res.added && res.entry) {
       const displayFull = res.entry.surname ? `${res.entry.name} ${res.entry.surname}` : res.entry.name;
-      showToast(`Added ${displayFull} (${res.entry.class} ${res.entry.role}). Click "Save Changes" to store.`);
+      showToast(`Added ${displayFull} (Unverified). Click "Save Changes" to store.`);
+    }
+  };
+
+  const addBtn = document.getElementById('btnAddCharacter');
+  addBtn?.addEventListener('click', async () => {
+    addBtn.disabled = true;
+    const prevLabel = addBtn.textContent;
+    addBtn.textContent = 'Verifying Armory...';
+    try {
+      const res = await addDraftCharacterToRoster({ quietIfEmpty: false });
+      if (res.ok && res.added && res.entry) {
+        const displayFull = res.entry.surname ? `${res.entry.name} ${res.entry.surname}` : res.entry.name;
+        const lvBit = res.entry.level ? `Lv ${res.entry.level} ` : '';
+        showToast(`Verified & added ${displayFull} (${lvBit}${res.entry.class}). Click "Save Changes" to store.`);
+      }
+    } finally {
+      addBtn.disabled = false;
+      addBtn.textContent = prevLabel || 'Verify & Add to Roster';
+    }
+  });
+
+  document.getElementById('newCharName')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      addBtn?.click();
     }
   });
 
   const saveBtn = document.getElementById('btnSaveCharacters');
   saveBtn?.addEventListener('click', async () => {
-    // If user typed or verified a character without clicking "Add to Roster" first, stage it cleanly before saving
-    const draftRes = addDraftCharacterToRoster({ quietIfEmpty: true });
-    if (!draftRes.ok) return;
-
-    const primary = state.userCharacters.find(c => c.isPrimary)?.name || state.userCharacters[0]?.name || null;
-    const guildNote = (document.getElementById('modalGuildNoteInput')?.value || document.getElementById('memberGuildNoteInput')?.value || '').trim();
-
     saveBtn.disabled = true;
     const prevLabel = saveBtn.textContent;
     saveBtn.textContent = 'Saving...';
 
     try {
+      const hasDraft = Boolean((document.getElementById('newCharName')?.value || '').trim());
+      if (hasDraft) {
+        saveBtn.textContent = 'Verifying & Saving...';
+        const draftRes = await addDraftCharacterToRoster({ quietIfEmpty: true });
+        if (!draftRes.ok) return;
+        saveBtn.textContent = 'Saving...';
+      }
+
+      const primary = state.userCharacters.find(c => c.isPrimary)?.name || state.userCharacters[0]?.name || null;
+      const guildNote = (document.getElementById('modalGuildNoteInput')?.value || document.getElementById('memberGuildNoteInput')?.value || '').trim();
+
       const res = await fetch('/api/exchange/characters', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -3700,10 +3753,10 @@ function openCharacterModal() {
   const walletChars = (state.user?.id && state.bseState?.wallets?.[state.user.id]?.characters) || state.user?.characters || [];
   state.userCharacters = walletChars.map(c => ({ ...c }));
   window.BSEArmory?.consumePendingVerifiedCharacter?.();
-  ['newCharName', 'newCharSurname', 'newCharLevel', 'newCharProfessions'].forEach(id => {
-    const el = document.getElementById(id);
-    if (el) el.value = '';
-  });
+  const nEl = document.getElementById('newCharName');
+  const rEl = document.getElementById('newCharRole');
+  if (nEl) nEl.value = '';
+  if (rEl) rEl.value = 'auto';
   const savedNote = (state.user?.id && typeof state.bseState?.wallets?.[state.user.id]?.guildNote === 'string')
     ? state.bseState.wallets[state.user.id].guildNote
     : (state.user?.guildNote || '');
@@ -3717,7 +3770,7 @@ function openCharacterModal() {
 function renderCharacterModalList() {
   const container = document.getElementById('characterListContainer');
   if (!state.userCharacters.length) {
-    container.innerHTML = `<p style="color: var(--text-dim); font-size: 0.85rem; text-align: center; padding: 1rem;">No characters added yet. Add your main WoW: Forever character below!</p>`;
+    container.innerHTML = `<p style="color: var(--text-dim); font-size: 0.85rem; text-align: center; padding: 1rem;">No characters added yet. Enter your character name below to verify &amp; link!</p>`;
     return;
   }
 
@@ -3725,11 +3778,12 @@ function renderCharacterModalList() {
     const classCss = `class-${(c.class || 'warrior').toLowerCase().replace(/\s+/g, '-')}`;
     const roleCss = (c.role || 'dps').toLowerCase();
     const displayName = c.surname ? `${c.name} ${c.surname}` : c.name;
-    const lvTag = c.level ? `<span style="font-size:0.7rem; color:var(--gold-200); margin-left:0.35rem;">Lv ${escapeHtml(String(c.level))}</span>` : '';
+    const lvTag = c.level ? `<span class="ledger-char-lv">Lv ${escapeHtml(String(c.level))}</span>` : '';
+    const rulesetTag = c.ruleset ? `<span class="char-pill" style="font-size:0.65rem;">${escapeHtml(c.ruleset)}</span>` : '';
     const verifiedBadge = c.armoryVerified
-      ? `<span class="armory-verified-badge" style="margin-left:0.35rem;">Verified</span>`
+      ? `<span class="armory-verified-badge">Verified</span>`
       : '';
-    const profs = c.professions ? `<span style="font-size:0.7rem; color:var(--text-muted); margin-left:0.35rem;">(${escapeHtml(c.professions)})</span>` : '';
+    const profs = c.professions ? `<span style="font-size:0.7rem; color:var(--text-muted);">(${escapeHtml(c.professions)})</span>` : '';
 
     return `
       <div style="display: flex; justify-content: space-between; align-items: center; background: var(--bg-inner); padding: 0.6rem 0.85rem; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle); margin-bottom: 0.4rem; gap: 0.65rem;">
@@ -3739,6 +3793,7 @@ function renderCharacterModalList() {
             <span class="class-badge ${classCss}">${escapeHtml(displayName)}</span>
             ${lvTag}
             <span class="role-pill ${roleCss}">${escapeHtml(c.role || 'DPS')}</span>
+            ${rulesetTag}
             ${verifiedBadge}
             ${profs}
             ${c.isPrimary ? '<span class="char-pill" style="font-size: 0.65rem;">PRIMARY</span>' : ''}

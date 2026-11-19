@@ -1240,7 +1240,7 @@
         <button type="button" class="modal-close" data-close-modal="modalCharacters">✕</button>
       </div>
       <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 1rem;">
-        Link your <strong>WoW: Forever</strong> character using <strong>First Name + Surname</strong> to display your level, live Armory gear paperdoll, and professions directly from the Ledger.
+        Enter your <strong>WoW: Forever</strong> character name &mdash; Battle.net Armory automatically pulls your class, level, ruleset, gear, and professions.
       </p>
 
       <div id="characterListContainer" style="margin-bottom: 1.15rem;"></div>
@@ -1248,63 +1248,25 @@
       <div class="wow-inner-box" style="padding: 1rem; margin-bottom: 1rem;">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.6rem; gap: 0.5rem; flex-wrap: wrap;">
           <h5 style="color: var(--gold-100); font-size: 0.88rem; margin: 0;">Add Character (WoW: Forever US)</h5>
-          <button type="button" class="btn-secondary btn-xs" id="btnVerifyNewCharArmory" title="Auto-fill class, level &amp; professions from Battle.net Armory">
-            Verify via Armory
-          </button>
+          <span class="subview-hint" style="font-size: 0.72rem;">Auto-verified via WoW Armory</span>
         </div>
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; margin-bottom: 0.5rem;">
-          <div>
-            <label style="font-size: 0.75rem; color: var(--text-muted);">Character Name</label>
-            <input type="text" class="form-control" id="newCharName" placeholder="e.g. Grimfang" autocomplete="off">
+        <div class="char-add-streamlined-row">
+          <div style="flex: 1; min-width: 0;">
+            <label for="newCharName" style="font-size: 0.75rem; color: var(--text-muted);">Character Name</label>
+            <input type="text" class="form-control" id="newCharName" placeholder="e.g. Boblo Joblo or Boblo" autocomplete="off">
           </div>
-          <div>
-            <label style="font-size: 0.75rem; color: var(--text-muted);">Surname (Forever)</label>
-            <input type="text" class="form-control" id="newCharSurname" placeholder="e.g. Black" autocomplete="off">
-          </div>
-        </div>
-        <div id="newCharArmoryStatus" class="armory-verify-status" style="display: none; margin-bottom: 0.55rem;"></div>
-        <div class="char-add-meta-grid">
-          <div>
-            <label style="font-size: 0.75rem; color: var(--text-muted);">Classic Class</label>
-            <select class="form-control" id="newCharClass">
-              <option value="Warrior">Warrior</option>
-              <option value="Paladin">Paladin</option>
-              <option value="Hunter">Hunter</option>
-              <option value="Rogue">Rogue</option>
-              <option value="Priest">Priest</option>
-              <option value="Shaman">Shaman</option>
-              <option value="Mage">Mage</option>
-              <option value="Warlock">Warlock</option>
-              <option value="Druid">Druid</option>
-            </select>
-          </div>
-          <div>
-            <label style="font-size: 0.75rem; color: var(--text-muted);">Level</label>
-            <input type="number" class="form-control" id="newCharLevel" min="1" max="60" placeholder="60" autocomplete="off">
-          </div>
-          <div>
-            <label style="font-size: 0.75rem; color: var(--text-muted);">Role</label>
+          <div class="char-role-compact">
+            <label for="newCharRole" style="font-size: 0.75rem; color: var(--text-muted);">Role (Optional)</label>
             <select class="form-control" id="newCharRole">
+              <option value="auto">Auto</option>
               <option value="DPS">DPS</option>
               <option value="Tank">Tank</option>
               <option value="Healer">Healer</option>
             </select>
           </div>
-          <div>
-            <label style="font-size: 0.75rem; color: var(--text-muted);">Ruleset</label>
-            <select class="form-control" id="newCharRuleset">
-              <option value="PvP">PvP</option>
-              <option value="Normal">Normal</option>
-              <option value="Roleplay">Roleplay</option>
-              <option value="Roleplay PvP">Roleplay PvP</option>
-            </select>
-          </div>
         </div>
-        <div style="margin-bottom: 0.55rem;">
-          <label style="font-size: 0.75rem; color: var(--text-muted);">Professions</label>
-          <input type="text" class="form-control" id="newCharProfessions" placeholder="e.g. Alchemy 300, Herbalism 300 (auto-filled when verified)" autocomplete="off">
-        </div>
-        <button type="button" class="btn-secondary" id="btnAddCharacter" style="width: 100%; margin-top: 0.25rem;">Add to Roster</button>
+        <div id="newCharArmoryStatus" class="armory-verify-status" style="display: none; margin-bottom: 0.55rem;"></div>
+        <button type="button" class="btn-secondary" id="btnAddCharacter" style="width: 100%; margin-top: 0.25rem;">Verify &amp; Add to Roster</button>
       </div>
 
       <div class="form-group">

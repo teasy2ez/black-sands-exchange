@@ -1358,5 +1358,70 @@ describe('worker.js — Armory API Routes, Auth & Zero Secret Exposure', () => {
     assert.equal(rosterRes.source, 'blizzard-live');
     assert.equal(rosterRes.members.length, 1);
   });
+
+  it('resolves single first-name Armory queries via guild roster and returns choices when ambiguous', async () => {
+    resetBlizzardCaches();
+    const firestore = createMemoryFirestore();
+    const state = await firestore.getBseState();
+
+    const mockFetch = async (url) => {
+      if (url === 'https://oauth.battle.net/token') {
+        return makeJsonResponse({ access_token: 'tok_single', expires_in: 3600 });
+      }
+      const u = new URL(url);
+      if (u.pathname === '/data/wow/guild/black-sands/roster') {
+        return makeJsonResponse({
+          guild: { id: 34332, name: 'Black Sands' },
+          members: [
+            { character: { name: 'Ro', surname: 'Tund', level: 34, playable_class: { id: 11 }, playable_race: { id: 6 } }, rank: 0 },
+            { character: { name: 'Zul', surname: 'One', level: 45, playable_class: { id: 7 }, playable_race: { id: 8 } }, rank: 2 },
+            { character: { name: 'Zul', surname: 'Two', level: 22, playable_class: { id: 9 }, playable_race: { id: 5 } }, rank: 3 }
+          ]
+        });
+      }
+      if (u.pathname === '/profile/wow/character/ro-tund') {
+        return makeJsonResponse({
+          name: 'Ro',
+          surname: 'Tund',
+          level: 34,
+          race: { id: 6, name: 'Tauren' },
+          character_class: { id: 11, name: 'Druid' },
+          ruleset: { id: 15, name: 'Roleplay PvP' },
+          guild: { id: 34332, name: 'Black Sands' }
+        });
+      }
+      return makeJsonResponse({}, 404);
+    };
+
+    // Unique single-name lookup ("Ro") -> automatically resolves ro-tund & grabs level, class & ruleset
+    const uniqueRes = await getCharacterArmory({
+      name: 'Ro',
+      forceRefresh: true,
+      env: TEST_ENV,
+      firestore,
+      state,
+      fetchImpl: mockFetch
+    });
+    assert.equal(uniqueRes.found, true);
+    assert.equal(uniqueRes.slug, 'ro-tund');
+    assert.equal(uniqueRes.level, 34);
+    assert.equal(uniqueRes.className, 'Druid');
+    assert.equal(uniqueRes.ruleset?.name, 'Roleplay PvP');
+
+    // Ambiguous single-name lookup ("Zul") -> returns clickable roster choices cleanly
+    const ambigRes = await getCharacterArmory({
+      name: 'Zul',
+      forceRefresh: false,
+      env: TEST_ENV,
+      firestore,
+      state,
+      fetchImpl: mockFetch
+    });
+    assert.equal(ambigRes.found, false);
+    assert.equal(ambigRes.ambiguous, true);
+    assert.equal(ambigRes.matches.length, 2);
+    assert.deepEqual(ambigRes.matches.map(m => m.slug), ['zul-one', 'zul-two']);
+  });
 });
+
 
