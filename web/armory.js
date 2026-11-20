@@ -73,8 +73,316 @@
     modalMemberId: null,
     modalSelectedCharSlug: null,
     modalActiveInnerTab: 'paperdoll',
-    pendingVerifiedChar: null
+    pendingVerifiedChar: null,
+    recipeFilter: {
+      charSlug: null,
+      query: '',
+      profession: 'all',
+      category: 'all',
+      sort: 'category'
+    }
   };
+
+  const RECIPE_CATEGORY_ORDER = [
+    'Gear & Weapons',
+    'Bombs & Gadgets',
+    'Enchants & Enhancements',
+    'Consumables & Potions',
+    'Materials & Parts',
+    'Tools & Utility'
+  ];
+
+  function getRecipeCharKey(snapshot, memberCharMeta) {
+    return String(snapshot?.slug || memberCharMeta?.name || 'character').toLowerCase();
+  }
+
+  function syncRecipeFilterChar(snapshot, memberCharMeta) {
+    const key = getRecipeCharKey(snapshot, memberCharMeta);
+    if (uiState.recipeFilter.charSlug !== key) {
+      uiState.recipeFilter = {
+        charSlug: key,
+        query: '',
+        profession: 'all',
+        category: 'all',
+        sort: uiState.recipeFilter.sort || 'category'
+      };
+    }
+  }
+
+  function inferRecipeCategory(recipeName, profName) {
+    const name = String(recipeName || '').trim().toLowerCase();
+    const prof = String(profName || '').trim().toLowerCase();
+
+    if (!name) return 'Tools & Utility';
+
+    // Exact profession/base ability entries & crafting tools
+    if (
+      name === prof ||
+      /^(find minerals|find herbs|basic campfire|fishing|cooking|first aid|mining|herbalism|skinning|poisons)$/i.test(name) ||
+      /\b(runed .* rod|arclight spanner|gyromatic micro-adjustor|salt shaker|philosopher'?s stone|aquadynamic fish attractor|bright baubles|nightcrawlers|shiny bauble|flesh eating worm)\b/.test(name)
+    ) {
+      return 'Tools & Utility';
+    }
+
+    // Weapon/Armor Enchants, Scopes, Oils, Stones, Armor Kits, Spurs, Spikes
+    if (
+      /^enchant\b/.test(name) ||
+      /\b(sharpening stone|weightstone|armor kit|weapon chain|shield spike|mithril spurs|wizard oil|mana oil|frost oil|shadow oil|scope|accurascope)\b/.test(name)
+    ) {
+      return 'Enchants & Enhancements';
+    }
+
+    // Bombs, Explosives, Gadgets, Dummies, Dragonlings, Reflectors & Crafted Ammo
+    if (
+      /\b(bomb|dynamite|grenade|sapper|mortar|seaforium|target dummy|dummy|dragonling|alarm-o-bot|repair bot|teleporter|transporter|defibrillator|reflector|deflector|death ray|shrink ray|net-o-matic|discombobulator|explosive sheep|jumper cables|firework|flare|recombobulator|battle chicken|mechanical squirrel|snowmaster|world enlarger|voice amplification|ultrasonic|paralyzing|mithril gyro-shot|thorium shells|hi-impact mithril slugs|crafted .* shot|solid shot|heavy shot|light shot)\b/.test(name)
+    ) {
+      return 'Bombs & Gadgets';
+    }
+
+    // Equippable Gear, Weapons, Cloaks, Jewelry & Bags (check before Materials so Mooncloth Bag -> Gear)
+    if (
+      /\b(helm|helmet|goggles|visor|monocle|headpiece|crown|circlet|hood|mask|cowl|cap|pauldrons|shoulders|mantle|spaulders|epaulets|cloak|cape|shroud|drape|chestplate|breastplate|cuirass|hauberk|tunic|vest|robe|shirt|tuxedo|dress|jacket|bracers|vambraces|wristguards|bindings|gauntlets|gloves|handwraps|belt|girdle|sash|waistband|leggings|legplates|legguards|pants|kilt|trousers|greaves|boots|sabatons|slippers|shoes|footpads|ring|band|amulet|necklace|pendant|talisman|shield|buckler|aegis|bulwark|axe|cleaver|hatchet|blade|sword|claymore|sabre|scimitar|rapier|mace|hammer|maul|warhammer|dagger|dirk|shiv|knife|spear|lance|halberd|polearm|staff|wand|bow|crossbow|gun|rifle|shotgun|blunderbuss|boomstick|musket|bag|pack|pouch|satchel|knapsack|quiver|ammo pouch|harness)\b/.test(name)
+    ) {
+      return 'Gear & Weapons';
+    }
+
+    // Consumables, Potions, Elixirs, Flasks, Food & First Aid (checked before Materials so Oil of Immolation/etc. work cleanly)
+    if (
+      /\b(elixir|potion|flask|brew|restorative|free action|swiftness|living action|mighty rage|limited invulnerability|oil of immolation|stoneshield|bandage|anti-venom|tea|steak|chops|trout|sagefish|wolf|boar|bear|raptor|kodo|buzzard|hyena|crocolisk|turtle|crab|clam|murloc|snapjaw|soup|stew|feast|bisque|chili|chowder|delight|surprise|kabob|omelet|roast|fillet|cod|catfish|snapper|mackerel|smallfish|squid|salmon|yellowtail|sunscale|halibut|lobster|sausage|bat wing|gizzard|liver pie|beer basted|spiced|cured ham|herb baked egg|gingerbread|eggnog|gumbo|dragonbreath|nightfin|poached|smoked|grilled|charred|cooked|roasted|boiled|baked|crispy|crunchy|savory|seasoned|venison|mutton|pork|ribs)\b/.test(name)
+    ) {
+      return 'Consumables & Potions';
+    }
+
+    // Materials, Smelting, Transmutes, Cloth Bolts, Cured Hides & Engineering Parts
+    if (
+      /^smelt\b/.test(name) ||
+      /^transmute\b/.test(name) ||
+      /^bolt of\b/.test(name) ||
+      /\b(blasting powder|bolts|copper tube|bronze tube|mithril tube|thorium tube|framework|strut|contact|trigger|casing|widget|converter|power core|gyrochronatom|gizmo|modulator|wiring|grinding stone|flux|salt|thread|cured|enchanted leather|enchanted thorium|mooncloth|arcanite bar|lodestone|pearl|essence|refined|elemental earth|elemental fire|elemental water|elemental air)\b/.test(name) ||
+      prof === 'mining' ||
+      prof === 'herbalism' ||
+      prof === 'skinning'
+    ) {
+      return 'Materials & Parts';
+    }
+
+    // Profession-level fallbacks for remaining specialized names
+    if (prof === 'cooking' || prof === 'first aid' || prof === 'alchemy') {
+      return 'Consumables & Potions';
+    }
+    if (prof === 'blacksmithing' || prof === 'tailoring' || prof === 'leatherworking') {
+      return 'Gear & Weapons';
+    }
+    if (prof === 'engineering') {
+      return 'Bombs & Gadgets';
+    }
+
+    return 'Tools & Utility';
+  }
+
+  function dedupeProfRecipes(recipes) {
+    const seen = new Set();
+    const result = [];
+    for (const r of Array.isArray(recipes) ? recipes : []) {
+      const name = String(r?.name || '').trim();
+      if (!name) continue;
+      const key = name.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      result.push({ id: r.id ?? null, name });
+    }
+    return result;
+  }
+
+  function buildFlatLearnedRecipes(snapshot) {
+    const profs = [
+      ...(snapshot?.professions?.primaries || []).map(p => ({ ...p, kind: 'Primary' })),
+      ...(snapshot?.professions?.secondaries || []).map(p => ({ ...p, kind: 'Secondary' }))
+    ];
+    const seenGlobal = new Set();
+    const list = [];
+    let index = 0;
+
+    for (const p of profs) {
+      const profName = String(p?.name || '').trim();
+      const deduped = dedupeProfRecipes(p?.knownRecipes);
+      for (const r of deduped) {
+        const globalKey = `${profName.toLowerCase()}::${r.name.toLowerCase()}`;
+        if (seenGlobal.has(globalKey)) continue;
+        seenGlobal.add(globalKey);
+        list.push({
+          id: r.id,
+          name: r.name,
+          profession: profName,
+          profKind: p.kind,
+          category: inferRecipeCategory(r.name, profName),
+          orderIndex: index++
+        });
+      }
+    }
+    return list;
+  }
+
+  function filterAndSortRecipes(allRecipes, filterState) {
+    const query = String(filterState?.query || '').trim().toLowerCase();
+    const prof = filterState?.profession || 'all';
+    const cat = filterState?.category || 'all';
+    const sort = filterState?.sort || 'category';
+
+    // Base matches after profession + search query (used for dynamic category pill counts)
+    const afterProfAndQuery = allRecipes.filter(r => {
+      if (prof !== 'all' && r.profession.toLowerCase() !== prof.toLowerCase()) return false;
+      if (query) {
+        const hay = `${r.name} ${r.profession}`.toLowerCase();
+        if (!hay.includes(query)) return false;
+      }
+      return true;
+    });
+
+    const filtered = cat === 'all'
+      ? afterProfAndQuery.slice()
+      : afterProfAndQuery.filter(r => r.category === cat);
+
+    if (sort === 'name-asc') {
+      filtered.sort((a, b) => a.name.localeCompare(b.name));
+    } else if (sort === 'name-desc') {
+      filtered.sort((a, b) => b.name.localeCompare(a.name));
+    } else if (sort === 'profession') {
+      filtered.sort((a, b) => {
+        const pc = a.profession.localeCompare(b.profession);
+        if (pc !== 0) return pc;
+        return a.name.localeCompare(b.name);
+      });
+    } else if (sort === 'learned') {
+      filtered.sort((a, b) => a.orderIndex - b.orderIndex);
+    } else {
+      // 'category'
+      filtered.sort((a, b) => {
+        const ia = RECIPE_CATEGORY_ORDER.indexOf(a.category);
+        const ib = RECIPE_CATEGORY_ORDER.indexOf(b.category);
+        if (ia !== ib) return ia - ib;
+        return a.name.localeCompare(b.name);
+      });
+    }
+
+    return { afterProfAndQuery, filtered };
+  }
+
+  function renderRecipeChipHtml(r, showCategoryTag = false) {
+    const metaLabel = showCategoryTag ? `${r.profession} • ${r.category}` : r.profession;
+    return `
+      <button type="button" class="armory-recipe-chip" data-copy-recipe="${escAttr(r.name)}" title="${escAttr(`${r.name} — ${r.profession} (${r.category}). Click to copy recipe name.`)}">
+        <span class="armory-recipe-chip-name">${escHtml(r.name)}</span>
+        <span class="armory-recipe-chip-meta">${escHtml(metaLabel)}</span>
+      </button>
+    `;
+  }
+
+  function renderRecipeCategoryPillsHtml(afterProfAndQuery, activeCategory) {
+    const counts = new Map();
+    for (const r of afterProfAndQuery) {
+      counts.set(r.category, (counts.get(r.category) || 0) + 1);
+    }
+    const pills = [
+      `<button type="button" class="armory-recipe-cat-pill ${activeCategory === 'all' ? 'active' : ''}" data-recipe-cat="all">All <span class="armory-recipe-cat-count">${afterProfAndQuery.length}</span></button>`
+    ];
+    for (const cat of RECIPE_CATEGORY_ORDER) {
+      const count = counts.get(cat) || 0;
+      if (count === 0 && activeCategory !== cat) continue;
+      pills.push(
+        `<button type="button" class="armory-recipe-cat-pill ${activeCategory === cat ? 'active' : ''}" data-recipe-cat="${escAttr(cat)}">${escHtml(cat)} <span class="armory-recipe-cat-count">${count}</span></button>`
+      );
+    }
+    return pills.join('');
+  }
+
+  function renderRecipeResultsHtml(filtered, sortMode) {
+    if (!filtered.length) {
+      return `
+        <div class="armory-recipe-empty">
+          <p>No learned recipes match your current search or filters.</p>
+          <button type="button" class="btn btn-secondary btn-sm" data-reset-recipe-filters>Reset Filters</button>
+        </div>
+      `;
+    }
+
+    if (sortMode === 'category' || sortMode === 'profession') {
+      const groups = new Map();
+      const groupOrder = sortMode === 'category' ? RECIPE_CATEGORY_ORDER : [];
+      for (const r of filtered) {
+        const key = sortMode === 'category' ? r.category : r.profession;
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(r);
+      }
+
+      const orderedKeys = sortMode === 'category'
+        ? groupOrder.filter(k => groups.has(k))
+        : Array.from(groups.keys()).sort((a, b) => a.localeCompare(b));
+
+      return orderedKeys.map(groupName => {
+        const items = groups.get(groupName) || [];
+        return `
+          <div class="armory-recipe-group">
+            <div class="armory-recipe-group-header">
+              <span class="armory-recipe-group-title">${escHtml(groupName)}</span>
+              <span class="armory-recipe-group-count">${items.length}</span>
+            </div>
+            <div class="armory-recipe-chips">
+              ${items.map(r => renderRecipeChipHtml(r, sortMode === 'profession')).join('')}
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    return `
+      <div class="armory-recipe-chips">
+        ${filtered.map(r => renderRecipeChipHtml(r, true)).join('')}
+      </div>
+    `;
+  }
+
+  function updateRecipeExplorerUI(containerEl, allRecipes) {
+    const resultsEl = containerEl.querySelector('#armoryRecipeResults');
+    if (!resultsEl) return;
+
+    const { afterProfAndQuery, filtered } = filterAndSortRecipes(allRecipes, uiState.recipeFilter);
+
+    const pillsEl = containerEl.querySelector('#armoryRecipeCategoryPills');
+    if (pillsEl) {
+      pillsEl.innerHTML = renderRecipeCategoryPillsHtml(afterProfAndQuery, uiState.recipeFilter.category);
+    }
+
+    const countEl = containerEl.querySelector('#armoryRecipeCountLabel');
+    if (countEl) {
+      countEl.textContent = filtered.length === allRecipes.length
+        ? `${allRecipes.length} learned`
+        : `${filtered.length} of ${allRecipes.length}`;
+    }
+
+    const activeProfWrap = containerEl.querySelector('#armoryRecipeActiveProfWrap');
+    if (activeProfWrap) {
+      const prof = uiState.recipeFilter.profession;
+      activeProfWrap.innerHTML = prof && prof !== 'all'
+        ? `<button type="button" class="armory-active-prof-tag" data-clear-prof-filter title="Clear profession filter">${escHtml(prof)} &times;</button>`
+        : '';
+    }
+
+    const clearBtn = containerEl.querySelector('#btnClearArmoryRecipeSearch');
+    if (clearBtn) {
+      clearBtn.classList.toggle('hidden', !String(uiState.recipeFilter.query || '').trim());
+    }
+
+    containerEl.querySelectorAll('.armory-prof-card[data-filter-prof]').forEach(card => {
+      const cardProf = card.getAttribute('data-filter-prof') || '';
+      const isSelected = uiState.recipeFilter.profession !== 'all' &&
+        uiState.recipeFilter.profession.toLowerCase() === cardProf.toLowerCase();
+      card.classList.toggle('active', isSelected);
+      card.setAttribute('aria-pressed', isSelected ? 'true' : 'false');
+    });
+
+    resultsEl.innerHTML = renderRecipeResultsHtml(filtered, uiState.recipeFilter.sort);
+  }
 
   // Client-side memory cache & tooltip registry
   const characterCache = new Map();
@@ -482,8 +790,9 @@
 
     let bodyHtml = '';
     if (profs.length) {
+      const totalRecipes = buildFlatLearnedRecipes(snapshot).length;
       const totalExtraRecipes = profs.reduce((sum, p) => {
-        const recLen = Array.isArray(p.knownRecipes) ? p.knownRecipes.length : 0;
+        const recLen = dedupeProfRecipes(p.knownRecipes).length;
         return sum + Math.max(0, recLen - 6);
       }, 0);
       bodyHtml = `
@@ -514,9 +823,19 @@
             `;
           }).join('')}
         </div>
-        ${(totalExtraRecipes > 0 || (snapshot?.reputations || []).length > 0) && hasViewAllHandler
+        ${(totalRecipes > 0 || totalExtraRecipes > 0 || (snapshot?.reputations || []).length > 0) && hasViewAllHandler
           ? `<div class="armory-inline-profs-footer">
-               <button type="button" class="btn-link-subtle armory-view-all-profs-btn">View All Recipes &amp; Reputations &rarr;</button>
+               ${totalRecipes > 0
+                 ? `<div class="armory-inline-profs-jumps">
+                      ${profs.map(p => {
+                        const cnt = dedupeProfRecipes(p.knownRecipes).length;
+                        if (!cnt) return '';
+                        return `<button type="button" class="armory-inline-jump-pill" data-jump-prof="${escAttr(p.name)}" title="Browse & search ${escAttr(p.name)} recipes">${escHtml(p.name)} (${cnt})</button>`;
+                      }).join('')}
+                    </div>`
+                 : ''
+               }
+               <button type="button" class="btn-link-subtle armory-view-all-profs-btn">${totalRecipes > 0 ? `Search &amp; Browse All ${totalRecipes} Recipes &rarr;` : 'View All Recipes &amp; Reputations &rarr;'}</button>
              </div>`
           : ''
         }
@@ -691,19 +1010,25 @@
   }
 
   function renderProfessionsAndRepsTab(snapshot, memberCharMeta = null) {
+    syncRecipeFilterChar(snapshot, memberCharMeta);
     const profs = [
       ...(snapshot.professions?.primaries || []).map(p => ({ ...p, kind: 'Primary' })),
       ...(snapshot.professions?.secondaries || []).map(p => ({ ...p, kind: 'Secondary' }))
     ];
     const storedTags = parseStoredProfessions(memberCharMeta?.professions);
+    const allRecipes = buildFlatLearnedRecipes(snapshot);
 
     let profsHtml = '';
     if (profs.length) {
       profsHtml = profs.map(p => {
         const pct = p.maxSkillPoints > 0 ? Math.min(100, Math.round((p.skillPoints / p.maxSkillPoints) * 100)) : 0;
-        const recipes = Array.isArray(p.knownRecipes) ? p.knownRecipes : [];
+        const recipes = dedupeProfRecipes(p.knownRecipes);
+        const isFilterable = recipes.length > 0;
+        const isSelected = isFilterable &&
+          uiState.recipeFilter.profession !== 'all' &&
+          uiState.recipeFilter.profession.toLowerCase() === String(p.name || '').toLowerCase();
         return `
-          <div class="armory-prof-card">
+          <div class="armory-prof-card${isFilterable ? ' is-filterable' : ''}${isSelected ? ' active' : ''}"${isFilterable ? ` data-filter-prof="${escAttr(p.name)}" role="button" tabindex="0" aria-pressed="${isSelected ? 'true' : 'false'}"` : ''}>
             <div class="armory-prof-header">
               <div>
                 <strong>${escHtml(p.name)}</strong>
@@ -711,13 +1036,13 @@
               </div>
               <span class="gold" style="font-weight:700;">${escHtml(String(p.skillPoints))} / ${escHtml(String(p.maxSkillPoints))}</span>
             </div>
-            <div class="progress-bar-bg" style="height:6px; margin: 0.4rem 0 0.6rem;">
+            <div class="progress-bar-bg" style="height:6px; margin: 0.4rem 0 0.55rem;">
               <div class="progress-bar-fill" style="width:${pct}%;"></div>
             </div>
             ${recipes.length
-              ? `<div class="armory-recipe-chips">
-                   ${recipes.slice(0, 24).map(r => `<span class="armory-talent-pill">${escHtml(r.name)}</span>`).join('')}
-                   ${recipes.length > 24 ? `<span class="subview-hint">+${recipes.length - 24} more recipes recorded</span>` : ''}
+              ? `<div class="armory-prof-card-meta">
+                   <span>${recipes.length} learned ${recipes.length === 1 ? 'recipe' : 'recipes'}</span>
+                   <span class="armory-prof-filter-hint">${isSelected ? 'Filtered (click to show all)' : 'Click to filter'}</span>
                  </div>`
               : `<span class="subview-hint">No recipes synced yet for ${escHtml(p.name)}.</span>`
             }
@@ -770,9 +1095,73 @@
          </div>`
       : `<div class="armory-empty-note">No Classic faction reputations reported yet.</div>`;
 
+    let explorerHtml = '';
+    if (allRecipes.length) {
+      const { afterProfAndQuery, filtered } = filterAndSortRecipes(allRecipes, uiState.recipeFilter);
+      const countText = filtered.length === allRecipes.length
+        ? `${allRecipes.length} learned`
+        : `${filtered.length} of ${allRecipes.length}`;
+      const activeProf = uiState.recipeFilter.profession;
+      const sort = uiState.recipeFilter.sort || 'category';
+      explorerHtml = `
+        <div class="armory-recipe-explorer" style="margin-top: 1.1rem;">
+          <div class="armory-recipe-explorer-header">
+            <h5 class="armory-section-label" style="margin: 0;">
+              Learned Recipes
+              <span id="armoryRecipeCountLabel" class="armory-recipe-header-count">${escHtml(countText)}</span>
+            </h5>
+            <span id="armoryRecipeActiveProfWrap">
+              ${activeProf && activeProf !== 'all'
+                ? `<button type="button" class="armory-active-prof-tag" data-clear-prof-filter title="Clear profession filter">${escHtml(activeProf)} &times;</button>`
+                : ''
+              }
+            </span>
+          </div>
+          <div class="armory-recipe-toolbar">
+            <div class="armory-recipe-search-wrap">
+              <input
+                type="search"
+                id="armoryRecipeSearch"
+                class="armory-recipe-search-input"
+                placeholder="Search recipes or profession..."
+                value="${escAttr(uiState.recipeFilter.query || '')}"
+                autocomplete="off"
+                spellcheck="false"
+                aria-label="Search learned recipes"
+              />
+              <button
+                type="button"
+                id="btnClearArmoryRecipeSearch"
+                class="armory-recipe-clear-btn${String(uiState.recipeFilter.query || '').trim() ? '' : ' hidden'}"
+                aria-label="Clear recipe search"
+                title="Clear search"
+              >&times;</button>
+            </div>
+            <label class="armory-recipe-sort-wrap">
+              <span class="sr-only">Sort recipes</span>
+              <select id="armoryRecipeSort" class="armory-recipe-sort-select" aria-label="Sort learned recipes">
+                <option value="category"${sort === 'category' ? ' selected' : ''}>Sort: Category</option>
+                <option value="profession"${sort === 'profession' ? ' selected' : ''}>Sort: Profession</option>
+                <option value="name-asc"${sort === 'name-asc' ? ' selected' : ''}>Sort: A &rarr; Z</option>
+                <option value="name-desc"${sort === 'name-desc' ? ' selected' : ''}>Sort: Z &rarr; A</option>
+                <option value="learned"${sort === 'learned' ? ' selected' : ''}>Sort: Armory Order</option>
+              </select>
+            </label>
+          </div>
+          <div id="armoryRecipeCategoryPills" class="armory-recipe-cat-bar" role="group" aria-label="Recipe category filters">
+            ${renderRecipeCategoryPillsHtml(afterProfAndQuery, uiState.recipeFilter.category)}
+          </div>
+          <div id="armoryRecipeResults" class="armory-recipe-results">
+            ${renderRecipeResultsHtml(filtered, sort)}
+          </div>
+        </div>
+      `;
+    }
+
     return `
       <h5 class="armory-section-label">Professions &amp; Known Recipes</h5>
       <div class="armory-profs-grid">${profsHtml}</div>
+      ${explorerHtml}
       <h5 class="armory-section-label" style="margin-top: 1.15rem;">Classic Faction Reputations</h5>
       ${repsHtml}
     `;
@@ -892,6 +1281,7 @@
       return;
     }
 
+    syncRecipeFilterChar(snapshot, memberCharMeta);
     const classColor = CLASS_COLORS[snapshot.className] || '#ffd100';
     const armoryHref = sanitizeUrl(snapshot.armoryUrl || '');
     const avatarUrl = sanitizeUrl(snapshot.media?.avatar || '');
@@ -969,7 +1359,23 @@
       });
     });
 
+    containerEl.querySelectorAll('[data-jump-prof]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const prof = btn.getAttribute('data-jump-prof') || 'all';
+        uiState.recipeFilter.profession = prof;
+        uiState.recipeFilter.category = 'all';
+        uiState.recipeFilter.query = '';
+        hideTooltip(true);
+        if (onTabChange) {
+          onTabChange('profs');
+        } else {
+          renderSnapshotIntoContainer(containerEl, snapshot, { innerTab: 'profs', memberCharMeta, isSelf, onRefresh });
+        }
+      });
+    });
+
     containerEl.querySelector('.armory-view-all-profs-btn')?.addEventListener('click', () => {
+      uiState.recipeFilter.profession = 'all';
       hideTooltip(true);
       if (onTabChange) {
         onTabChange('profs');
@@ -977,6 +1383,106 @@
         renderSnapshotIntoContainer(containerEl, snapshot, { innerTab: 'profs', memberCharMeta, isSelf, onRefresh });
       }
     });
+
+    if (activeTab === 'profs') {
+      const allRecipes = buildFlatLearnedRecipes(snapshot);
+      const searchInput = containerEl.querySelector('#armoryRecipeSearch');
+      const clearSearchBtn = containerEl.querySelector('#btnClearArmoryRecipeSearch');
+      const sortSelect = containerEl.querySelector('#armoryRecipeSort');
+      const categoryPillsEl = containerEl.querySelector('#armoryRecipeCategoryPills');
+      const profGridEl = containerEl.querySelector('.armory-profs-grid');
+      const activeProfWrap = containerEl.querySelector('#armoryRecipeActiveProfWrap');
+      const resultsEl = containerEl.querySelector('#armoryRecipeResults');
+
+      if (searchInput) {
+        searchInput.addEventListener('input', () => {
+          uiState.recipeFilter.query = searchInput.value;
+          updateRecipeExplorerUI(containerEl, allRecipes);
+        });
+        searchInput.addEventListener('keydown', (e) => {
+          if (e.key === 'Escape' && searchInput.value) {
+            e.preventDefault();
+            e.stopPropagation();
+            searchInput.value = '';
+            uiState.recipeFilter.query = '';
+            updateRecipeExplorerUI(containerEl, allRecipes);
+          }
+        });
+      }
+
+      clearSearchBtn?.addEventListener('click', () => {
+        uiState.recipeFilter.query = '';
+        if (searchInput) {
+          searchInput.value = '';
+          searchInput.focus();
+        }
+        updateRecipeExplorerUI(containerEl, allRecipes);
+      });
+
+      sortSelect?.addEventListener('change', () => {
+        uiState.recipeFilter.sort = sortSelect.value || 'category';
+        updateRecipeExplorerUI(containerEl, allRecipes);
+      });
+
+      categoryPillsEl?.addEventListener('click', (e) => {
+        const pill = e.target.closest('[data-recipe-cat]');
+        if (!pill) return;
+        uiState.recipeFilter.category = pill.getAttribute('data-recipe-cat') || 'all';
+        updateRecipeExplorerUI(containerEl, allRecipes);
+      });
+
+      const toggleProfFilter = (profName) => {
+        if (!profName) return;
+        const current = String(uiState.recipeFilter.profession || 'all').toLowerCase();
+        const nextProf = current === profName.toLowerCase() ? 'all' : profName;
+        uiState.recipeFilter.profession = nextProf;
+        if (uiState.recipeFilter.category !== 'all') {
+          const { filtered } = filterAndSortRecipes(allRecipes, uiState.recipeFilter);
+          if (!filtered.length) {
+            uiState.recipeFilter.category = 'all';
+          }
+        }
+        updateRecipeExplorerUI(containerEl, allRecipes);
+      };
+
+      profGridEl?.addEventListener('click', (e) => {
+        const card = e.target.closest('.armory-prof-card[data-filter-prof]');
+        if (!card) return;
+        toggleProfFilter(card.getAttribute('data-filter-prof'));
+      });
+
+      profGridEl?.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        const card = e.target.closest('.armory-prof-card[data-filter-prof]');
+        if (!card) return;
+        e.preventDefault();
+        toggleProfFilter(card.getAttribute('data-filter-prof'));
+      });
+
+      activeProfWrap?.addEventListener('click', (e) => {
+        if (!e.target.closest('[data-clear-prof-filter]')) return;
+        uiState.recipeFilter.profession = 'all';
+        updateRecipeExplorerUI(containerEl, allRecipes);
+      });
+
+      resultsEl?.addEventListener('click', (e) => {
+        const resetBtn = e.target.closest('[data-reset-recipe-filters]');
+        if (resetBtn) {
+          uiState.recipeFilter.query = '';
+          uiState.recipeFilter.profession = 'all';
+          uiState.recipeFilter.category = 'all';
+          if (searchInput) searchInput.value = '';
+          updateRecipeExplorerUI(containerEl, allRecipes);
+          return;
+        }
+        const chip = e.target.closest('[data-copy-recipe]');
+        if (!chip) return;
+        const recipeName = chip.getAttribute('data-copy-recipe');
+        if (recipeName) {
+          copyToClipboard(recipeName, `Copied recipe "${recipeName}" to clipboard.`);
+        }
+      });
+    }
 
     containerEl.querySelector('.armory-refresh-btn')?.addEventListener('click', () => onRefresh?.());
   }
