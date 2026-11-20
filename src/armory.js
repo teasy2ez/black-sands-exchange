@@ -263,6 +263,363 @@ export function applyCharacterSummaryToWallets(state, snapshot) {
 }
 
 /**
+ * Sanitize packed delimiter characters from text fields stored inside `state.craftingIndex`
+ */
+function sanitizePackedField(val) {
+  return String(val || '').replace(/[\t\r\n]+/g, ' ').trim();
+}
+
+function encodePackedRecipeLine({ id, name, crafterSlugs }) {
+  const idPart = id ? String(Number(id) || 0) : '0';
+  const namePart = sanitizePackedField(name);
+  const uniqueSlugs = [...new Set((crafterSlugs || []).map(s => String(s || '').trim()).filter(Boolean))];
+  return `${idPart}\t${namePart}\t${uniqueSlugs.join(',')}`;
+}
+
+function parsePackedRecipeLine(line) {
+  const parts = String(line || '').split('\t');
+  if (parts.length < 2) return null;
+  const id = Number(parts[0]) || 0;
+  const name = String(parts[1] || '').trim();
+  if (!name) return null;
+  const crafterSlugs = parts[2]
+    ? String(parts[2]).split(',').map(s => s.trim()).filter(Boolean)
+    : [];
+  return { id: id || null, name, crafterSlugs };
+}
+
+function resolveSnapshotWalletOwner(state, snapshot) {
+  const targetSlug = String(snapshot?.slug || '').toLowerCase();
+  const targetFirst = String(snapshot?.name || '').trim().toLowerCase();
+  for (const w of Object.values(state?.wallets || {})) {
+    const hasMatch = (w.characters || []).some(c => {
+      const cSlug = String(c.slug || buildCharacterSlug(c.name, c.surname || '') || '').toLowerCase();
+      return (cSlug && cSlug === targetSlug) || (!c.surname && String(c.name || '').trim().toLowerCase() === targetFirst);
+    });
+    if (hasMatch) {
+      return {
+        discordId: w.discordId || '',
+        displayName: w.serverNickname || w.globalName || w.username || 'Guild Member'
+      };
+    }
+  }
+  return { discordId: '', displayName: '' };
+}
+
+function collectAllWalletCharacterSlugs(state) {
+  const valid = new Set();
+  for (const w of Object.values(state?.wallets || {})) {
+    for (const c of w.characters || []) {
+      const slug = c.slug || buildCharacterSlug(c.name, c.surname || '');
+      if (slug) valid.add(String(slug).toLowerCase());
+    }
+  }
+  return valid;
+}
+
+/**
+ * Deterministic signature of a character's learned recipes + owner/level metadata
+ * so repeated Armory views with identical recipes skip unnecessary Firestore writes.
+ */
+export function computeCharacterCraftingSignature(snapshot, ownerInfo = null) {
+  const primaries = snapshot?.professions?.primaries || [];
+  const secondaries = snapshot?.professions?.secondaries || [];
+  const allProfs = [...primaries, ...secondaries];
+  const tokens = [];
+
+  for (const pr of allProfs) {
+    const pName = sanitizePackedField(pr?.name);
+    if (!pName) continue;
+    tokens.push(`P:${pName}:${Number(pr.skillPoints) || 0}:${Number(pr.maxSkillPoints) || 300}`);
+    const seen = new Set();
+    for (const rec of pr?.knownRecipes || []) {
+      const rName = sanitizePackedField(rec?.name);
+      if (!rName) continue;
+      const key = rName.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      tokens.push(`R:${pName}:${key}`);
+    }
+  }
+  tokens.sort();
+
+  const ownerToken = [
+    ownerInfo?.discordId || '',
+    ownerInfo?.displayName || '',
+    sanitizePackedField(snapshot?.displayName || snapshot?.name || ''),
+    sanitizePackedField(snapshot?.className || ''),
+    Number(snapshot?.level) || 0
+  ].join(':');
+  tokens.unshift(ownerToken);
+
+  const raw = tokens.join('|');
+  let hash = 2166136261;
+  for (let i = 0; i < raw.length; i++) {
+    hash ^= raw.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `${allProfs.length}:${(hash >>> 0).toString(36)}`;
+}
+
+export function hasFreshCrafterInStateIndex(state, slug, snapshot = null) {
+  const cleanSlug = String(slug || '').trim().toLowerCase();
+  if (!cleanSlug) return false;
+  const entry = state?.craftingIndex?.crafters?.[cleanSlug];
+  if (!entry) return false;
+  if (!snapshot) return true;
+  const owner = resolveSnapshotWalletOwner(state, snapshot);
+  const sig = computeCharacterCraftingSignature(snapshot, owner);
+  return entry.sig === sig;
+}
+
+/**
+ * Merge a character's learned recipes into `state.craftingIndex` (stored inside writable `exchange/bse_state`).
+ * Only stores characters belonging to linked wallets (or when allowUnlinked is true).
+ * Returns `{ changed, totalRecipesForChar }`.
+ */
+export function mergeCharacterIntoCraftingState(state, snapshot, { allowUnlinked = false } = {}) {
+  if (!state || !snapshot?.found || !snapshot.slug) return { changed: false, totalRecipesForChar: 0 };
+
+  const slug = String(snapshot.slug).trim().toLowerCase();
+  const owner = resolveSnapshotWalletOwner(state, snapshot);
+  if (!allowUnlinked && !owner.discordId) {
+    return { changed: false, totalRecipesForChar: 0 };
+  }
+
+  const primaries = snapshot.professions?.primaries || [];
+  const secondaries = snapshot.professions?.secondaries || [];
+  const allProfs = [...primaries, ...secondaries];
+  if (!allProfs.length) return { changed: false, totalRecipesForChar: 0 };
+
+  const nextSig = computeCharacterCraftingSignature(snapshot, owner);
+  const existingCrafter = state.craftingIndex?.crafters?.[slug];
+  if (existingCrafter && existingCrafter.sig === nextSig) {
+    return { changed: false, totalRecipesForChar: 0 };
+  }
+
+  state.craftingIndex = state.craftingIndex && typeof state.craftingIndex === 'object'
+    ? state.craftingIndex
+    : { updatedAt: new Date().toISOString(), crafters: {}, byProf: {} };
+
+  const crafters = state.craftingIndex.crafters && typeof state.craftingIndex.crafters === 'object'
+    ? { ...state.craftingIndex.crafters }
+    : {};
+  const byProf = state.craftingIndex.byProf && typeof state.craftingIndex.byProf === 'object'
+    ? { ...state.craftingIndex.byProf }
+    : {};
+
+  // Parse all professions into mutable Map<profName, Map<recipeNameLower, { id, name, crafterSlugs }>>
+  const profMaps = new Map();
+  for (const [pName, lines] of Object.entries(byProf)) {
+    const map = new Map();
+    for (const line of Array.isArray(lines) ? lines : []) {
+      const parsed = parsePackedRecipeLine(line);
+      if (!parsed) continue;
+      // Remove previous memberships for this slug cleanly before re-inserting
+      const filteredSlugs = parsed.crafterSlugs.filter(s => s !== slug);
+      if (filteredSlugs.length > 0) {
+        map.set(parsed.name.toLowerCase(), {
+          id: parsed.id,
+          name: parsed.name,
+          crafterSlugs: filteredSlugs
+        });
+      }
+    }
+    if (map.size > 0) profMaps.set(pName, map);
+  }
+
+  let totalUniqueForChar = 0;
+  const primNames = new Set(primaries.map(p => sanitizePackedField(p.name)));
+  const compactProfs = [];
+
+  for (const prof of allProfs) {
+    const profName = sanitizePackedField(prof.name);
+    if (!profName) continue;
+    const recList = Array.isArray(prof.knownRecipes) ? prof.knownRecipes : [];
+    const seenForProf = new Set();
+    let profMap = profMaps.get(profName);
+
+    for (const rec of recList) {
+      const rName = sanitizePackedField(rec?.name);
+      if (!rName) continue;
+      const lower = rName.toLowerCase();
+      if (seenForProf.has(lower)) continue;
+      seenForProf.add(lower);
+      totalUniqueForChar++;
+
+      if (!profMap) {
+        profMap = new Map();
+        profMaps.set(profName, profMap);
+      }
+      const existingRec = profMap.get(lower);
+      if (!existingRec) {
+        profMap.set(lower, {
+          id: Number(rec?.id) || null,
+          name: rName,
+          crafterSlugs: [slug]
+        });
+      } else {
+        if (!existingRec.id && Number(rec?.id)) existingRec.id = Number(rec.id);
+        if (!existingRec.crafterSlugs.includes(slug)) {
+          existingRec.crafterSlugs.push(slug);
+        }
+      }
+    }
+
+    compactProfs.push(
+      `${profName.replace(/:/g, ' ')}:${Number(prof.skillPoints) || 0}:${Number(prof.maxSkillPoints) || 300}:${primNames.has(profName) ? 1 : 0}:${seenForProf.size}`
+    );
+  }
+
+  // Serialize back to compact sorted string arrays per profession
+  const nextByProf = {};
+  for (const [pName, map] of profMaps.entries()) {
+    if (!map.size) continue;
+    const sorted = Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
+    nextByProf[pName] = sorted.map(encodePackedRecipeLine);
+  }
+
+  crafters[slug] = {
+    did: owner.discordId || '',
+    dn: sanitizePackedField(owner.displayName),
+    cn: sanitizePackedField(snapshot.displayName || snapshot.name),
+    cl: sanitizePackedField(snapshot.className || 'Warrior'),
+    lv: Number(snapshot.level) || 0,
+    sig: nextSig,
+    ps: compactProfs,
+    at: snapshot.syncedAt || new Date().toISOString()
+  };
+
+  state.craftingIndex = {
+    updatedAt: new Date().toISOString(),
+    crafters,
+    byProf: nextByProf
+  };
+
+  return { changed: true, totalRecipesForChar: totalUniqueForChar };
+}
+
+/**
+ * Remove any crafter slugs from `state.craftingIndex` that no longer belong to any wallet character.
+ */
+export function pruneMissingCraftersFromCraftingState(state) {
+  if (!state?.craftingIndex) return false;
+  const validSlugs = collectAllWalletCharacterSlugs(state);
+  const crafters = state.craftingIndex.crafters || {};
+  const staleSlugs = new Set(
+    Object.keys(crafters).filter(slug => !validSlugs.has(slug.toLowerCase()))
+  );
+
+  // Also detect orphan slugs referenced in byProf that don't exist in validSlugs
+  const nextCrafters = {};
+  for (const [slug, info] of Object.entries(crafters)) {
+    if (validSlugs.has(slug.toLowerCase())) {
+      nextCrafters[slug] = info;
+    }
+  }
+
+  let modified = staleSlugs.size > 0;
+  const nextByProf = {};
+  for (const [profName, lines] of Object.entries(state.craftingIndex.byProf || {})) {
+    const nextLines = [];
+    for (const line of Array.isArray(lines) ? lines : []) {
+      const parsed = parsePackedRecipeLine(line);
+      if (!parsed) continue;
+      const keptSlugs = parsed.crafterSlugs.filter(s => validSlugs.has(s.toLowerCase()));
+      if (keptSlugs.length !== parsed.crafterSlugs.length) modified = true;
+      if (keptSlugs.length > 0) {
+        nextLines.push(encodePackedRecipeLine({ id: parsed.id, name: parsed.name, crafterSlugs: keptSlugs }));
+      }
+    }
+    if (nextLines.length > 0) nextByProf[profName] = nextLines;
+  }
+
+  if (!modified) return false;
+
+  state.craftingIndex = {
+    updatedAt: new Date().toISOString(),
+    crafters: nextCrafters,
+    byProf: nextByProf
+  };
+  return true;
+}
+
+/**
+ * Expand compact `state.craftingIndex` into the same API structure as `expandCraftingDirectory`.
+ */
+export function expandStateCraftingIndex(craftingIndex) {
+  if (!craftingIndex || typeof craftingIndex !== 'object') {
+    return { updatedAt: null, crafters: [], recipes: [], professions: [] };
+  }
+
+  const craftersMap = craftingIndex.crafters || {};
+  const byProf = craftingIndex.byProf || {};
+
+  const parseProfs = (ps = []) => (Array.isArray(ps) ? ps : []).map(token => {
+    const [name, sk, mx, pri, rc] = String(token || '').split(':');
+    return {
+      name: name || '',
+      skill: Number(sk) || 0,
+      maxSkill: Number(mx) || 300,
+      isPrimary: pri === '1',
+      recipeCount: Number(rc) || 0
+    };
+  }).filter(p => p.name);
+
+  const crafters = Object.entries(craftersMap).map(([slug, c]) => ({
+    slug,
+    displayName: c.cn || slug,
+    className: c.cl || 'Warrior',
+    level: c.lv || 0,
+    discordId: c.did || null,
+    discordName: c.dn || null,
+    professions: parseProfs(c.ps),
+    syncedAt: c.at || null
+  }));
+
+  const recipes = [];
+  const profSet = new Set();
+
+  for (const [profName, lines] of Object.entries(byProf)) {
+    if (profName) profSet.add(profName);
+    for (const line of Array.isArray(lines) ? lines : []) {
+      const parsed = parsePackedRecipeLine(line);
+      if (!parsed) continue;
+      const matchingCrafters = parsed.crafterSlugs.map(slug => {
+        const cr = craftersMap[slug];
+        if (!cr) return { slug, displayName: slug, className: 'Warrior', skill: 0 };
+        const profInfo = parseProfs(cr.ps).find(pr => pr.name === profName);
+        return {
+          slug,
+          displayName: cr.cn || slug,
+          className: cr.cl || 'Warrior',
+          discordId: cr.did || null,
+          discordName: cr.dn || null,
+          skill: profInfo?.skill || 0,
+          maxSkill: profInfo?.maxSkill || 300
+        };
+      });
+      recipes.push({
+        id: parsed.id,
+        name: parsed.name,
+        profession: profName,
+        crafters: matchingCrafters
+      });
+    }
+  }
+
+  recipes.sort((a, b) => a.name.localeCompare(b.name));
+  crafters.sort((a, b) => a.displayName.localeCompare(b.displayName));
+
+  return {
+    updatedAt: craftingIndex.updatedAt || null,
+    crafters,
+    recipes,
+    professions: Array.from(profSet).sort()
+  };
+}
+
+/**
  * Incrementally merge a character's synced professions & known recipes into `armory_crafting/directory`.
  * Uses ultra-compact storage schema so all guild recipes comfortably stay < 350 KB inside one Firestore doc.
  */
@@ -421,7 +778,7 @@ export function expandCraftingDirectory(doc) {
   };
 }
 
-export async function getGuildCraftingDirectory({ firestore, query = '', profession = '' } = {}) {
+export async function getGuildCraftingDirectory({ firestore, state = null, query = '', profession = '' } = {}) {
   let doc = await readEdgeCache('crafting_directory');
   if (!doc && firestore) {
     doc = await firestore.getCollectionDoc('armory_crafting', 'directory');
@@ -430,7 +787,14 @@ export async function getGuildCraftingDirectory({ firestore, query = '', profess
     }
   }
 
-  const expanded = expandCraftingDirectory(doc);
+  let expanded = expandCraftingDirectory(doc);
+  if (!expanded.recipes.length) {
+    const stateObj = state || (firestore ? await firestore.getBseState().catch(() => null) : null);
+    if (stateObj?.craftingIndex) {
+      expanded = expandStateCraftingIndex(stateObj.craftingIndex);
+    }
+  }
+
   const q = String(query || '').trim().toLowerCase();
   const profFilter = String(profession || '').trim().toLowerCase();
 
@@ -466,6 +830,39 @@ export async function getGuildCraftingDirectory({ firestore, query = '', profess
     recipes: filteredRecipes.slice(0, 120),
     crafters: filteredCrafters
   };
+}
+
+export async function getCachedCharacterArmorySnapshot(slug, { firestore = null } = {}) {
+  const cleanSlug = String(slug || '').trim().toLowerCase();
+  if (!cleanSlug) return null;
+  const edgeHit = await readEdgeCache(`char_${cleanSlug}`);
+  if (edgeHit?.found) return edgeHit;
+  if (firestore) {
+    const docId = firestore.sanitizeDocId(cleanSlug);
+    const fsDoc = await firestore.getCollectionDoc('armory_characters', docId).catch(() => null);
+    if (fsDoc?.found) return fsDoc;
+  }
+  return null;
+}
+
+async function syncCharacterSnapshotToState(snapshot, { state, firestore } = {}) {
+  if (!snapshot?.found || !state || !firestore) return false;
+  let stateDirty = applyCharacterSummaryToWallets(state, snapshot);
+  const craftRes = mergeCharacterIntoCraftingState(state, snapshot);
+  if (craftRes.changed) stateDirty = true;
+  if (snapshot.discoveredStaticNamespace && state.config?.armory?.staticNamespaceCache !== snapshot.discoveredStaticNamespace) {
+    state.config = state.config || {};
+    state.config.armory = state.config.armory || { ...DEFAULT_ARMORY_CONFIG };
+    state.config.armory.staticNamespaceCache = snapshot.discoveredStaticNamespace;
+    stateDirty = true;
+  }
+  if (stateDirty) {
+    state.updatedAt = new Date().toISOString();
+    await firestore.saveBseState(state).catch(err => {
+      console.warn('Non-fatal slim character metadata & crafting sync warning:', err.message);
+    });
+  }
+  return stateDirty;
 }
 
 /**
@@ -527,6 +924,9 @@ export async function getCharacterArmory({ name, surname = '', slug = '', forceR
   if (!forceRefresh) {
     const edgeHit = await readEdgeCache(cacheKey);
     if (edgeHit) {
+      if (edgeHit.found === true && state && firestore && !hasFreshCrafterInStateIndex(state, edgeHit.slug, edgeHit)) {
+        await syncCharacterSnapshotToState(edgeHit, { state, firestore });
+      }
       return { ...edgeHit, source: 'edge-cache' };
     }
   }
@@ -546,6 +946,9 @@ export async function getCharacterArmory({ name, surname = '', slug = '', forceR
         maxLiveFetches: 6,
         fetchImpl
       });
+      if (fsDoc.found === true && state && firestore && !hasFreshCrafterInStateIndex(state, fsDoc.slug, fsDoc)) {
+        await syncCharacterSnapshotToState(fsDoc, { state, firestore });
+      }
       return { ...fsDoc, source: 'firestore-cooldown' };
     }
 
@@ -563,6 +966,9 @@ export async function getCharacterArmory({ name, surname = '', slug = '', forceR
           fetchImpl
         });
         await writeEdgeCache(cacheKey, fsDoc, 1800);
+        if (state && firestore && !hasFreshCrafterInStateIndex(state, fsDoc.slug, fsDoc)) {
+          await syncCharacterSnapshotToState(fsDoc, { state, firestore });
+        }
         return { ...fsDoc, source: 'firestore-cache' };
       }
     }
@@ -630,19 +1036,7 @@ export async function getCharacterArmory({ name, surname = '', slug = '', forceR
 
   // Synchronize light summary + crafting recipes into BSE state if wallet exists
   if (state && firestore) {
-    let stateDirty = applyCharacterSummaryToWallets(state, snapshot);
-    if (snapshot.discoveredStaticNamespace && state.config?.armory?.staticNamespaceCache !== snapshot.discoveredStaticNamespace) {
-      state.config = state.config || {};
-      state.config.armory = state.config.armory || { ...DEFAULT_ARMORY_CONFIG };
-      state.config.armory.staticNamespaceCache = snapshot.discoveredStaticNamespace;
-      stateDirty = true;
-    }
-    if (stateDirty) {
-      state.updatedAt = new Date().toISOString();
-      await firestore.saveBseState(state).catch(err => {
-        console.warn('Non-fatal slim character metadata sync warning:', err.message);
-      });
-    }
+    await syncCharacterSnapshotToState(snapshot, { state, firestore });
     await mergeCharacterIntoCraftingDirectory(snapshot, state, firestore).catch(err => {
       console.warn('Non-fatal crafting directory merge warning:', err.message);
     });
@@ -1137,7 +1531,8 @@ export async function runScheduledArmoryTick(env, firestore, { state = null, fet
     }
   }
 
-  // 2. Refresh up to 2 stalest linked characters with a valid slug (> 12h old)
+  // 2. Refresh up to 2 unindexed or stalest linked characters with a valid slug (> 12h old)
+  const pruned = pruneMissingCraftersFromCraftingState(activeState);
   const candidates = [];
   const staleCutoffMs = 12 * 3600 * 1000;
   const now = Date.now();
@@ -1147,18 +1542,19 @@ export async function runScheduledArmoryTick(env, firestore, { state = null, fet
       const slug = ch.slug || (ch.surname ? buildCharacterSlug(ch.name, ch.surname) : '');
       if (!slug) continue;
       const lastSyncMs = ch.lastArmorySyncAt ? Date.parse(ch.lastArmorySyncAt) : 0;
-      if (!lastSyncMs || (now - lastSyncMs) > staleCutoffMs) {
-        candidates.push({ slug, lastSyncMs });
+      const indexed = hasFreshCrafterInStateIndex(activeState, slug);
+      if (!indexed || !lastSyncMs || (now - lastSyncMs) > staleCutoffMs) {
+        candidates.push({ slug, lastSyncMs, needsIndex: !indexed });
       }
     }
   }
 
-  candidates.sort((a, b) => a.lastSyncMs - b.lastSyncMs);
+  candidates.sort((a, b) => (Number(b.needsIndex) - Number(a.needsIndex)) || (a.lastSyncMs - b.lastSyncMs));
   for (const c of candidates.slice(0, 2)) {
     try {
       await getCharacterArmory({
         slug: c.slug,
-        forceRefresh: true,
+        forceRefresh: !c.needsIndex,
         env,
         firestore,
         state: activeState,
@@ -1168,6 +1564,11 @@ export async function runScheduledArmoryTick(env, firestore, { state = null, fet
     } catch (err) {
       console.warn(`Scheduled Armory char sync (${c.slug}) warning:`, err.message);
     }
+  }
+
+  if (pruned && firestore && report.charactersRefreshed === 0) {
+    activeState.updatedAt = new Date().toISOString();
+    await firestore.saveBseState(activeState).catch(() => {});
   }
 
   return report;

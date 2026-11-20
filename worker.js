@@ -47,6 +47,11 @@ import {
   buildCharacterSlug,
   parseCharacterIdentity,
   normalizeGuildSlug,
+  applyCharacterSummaryToWallets,
+  mergeCharacterIntoCraftingState,
+  pruneMissingCraftersFromCraftingState,
+  hasFreshCrafterInStateIndex,
+  getCachedCharacterArmorySnapshot,
   getCharacterArmory,
   getOrSyncGuildRoster,
   autoMatchGuildRosterToWallets,
@@ -534,7 +539,33 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
     wallet.updatedAt = new Date().toISOString();
     state.wallets[session.id] = wallet;
 
+    // Keep compact crafting index clean & immediately index any just-verified cached snapshots
+    pruneMissingCraftersFromCraftingState(state);
+    const pendingBackfillSlugs = [];
+    for (const ch of wallet.characters) {
+      if (!ch.slug) continue;
+      if (hasFreshCrafterInStateIndex(state, ch.slug)) continue;
+      const cachedSnap = await getCachedCharacterArmorySnapshot(ch.slug, { firestore }).catch(() => null);
+      if (cachedSnap?.found) {
+        applyCharacterSummaryToWallets(state, cachedSnap);
+        mergeCharacterIntoCraftingState(state, cachedSnap);
+      } else if (ch.armoryVerified) {
+        pendingBackfillSlugs.push(ch.slug);
+      }
+    }
+
     await firestore.saveBseState(state);
+
+    if (pendingBackfillSlugs.length > 0 && ctx?.waitUntil && isBlizzardConfigured(env)) {
+      ctx.waitUntil(
+        (async () => {
+          const freshState = await firestore.getBseState().catch(() => state);
+          for (const slug of pendingBackfillSlugs.slice(0, 2)) {
+            await getCharacterArmory({ slug, forceRefresh: false, env, firestore, state: freshState }).catch(() => {});
+          }
+        })()
+      );
+    }
 
     return jsonResponse({
       success: true,
@@ -974,7 +1005,8 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
       if (path === 'armory/crafting' && request.method === 'GET') {
         const q = url.searchParams.get('q') || '';
         const profession = url.searchParams.get('profession') || '';
-        const result = await getGuildCraftingDirectory({ firestore, query: q, profession });
+        const state = await firestore.getBseState().catch(() => null);
+        const result = await getGuildCraftingDirectory({ firestore, state, query: q, profession });
         return jsonResponse(result);
       }
 
@@ -2521,6 +2553,7 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
       const walletSnap = compactWalletSnapshot(oldWallet);
 
       delete state.wallets[targetId];
+      pruneMissingCraftersFromCraftingState(state);
       state.updatedAt = new Date().toISOString();
 
       await recordAuditLogAndSync(state, env, firestore, {
@@ -2855,6 +2888,9 @@ async function syncDiscordRoster(env, firestore, options = {}) {
     }
   }
 
+  if (removedCount > 0) {
+    pruneMissingCraftersFromCraftingState(state);
+  }
   state.lastRosterSyncAt = nowIso;
   const rosterChanged = newlyImported > 0 || removedCount > 0;
   const anyDataChanged = rosterChanged || updatedCount > 0;

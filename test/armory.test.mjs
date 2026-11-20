@@ -28,6 +28,10 @@ import {
 import {
   hydrateItemsMediaAndPrices,
   applyCharacterSummaryToWallets,
+  mergeCharacterIntoCraftingState,
+  pruneMissingCraftersFromCraftingState,
+  hasFreshCrafterInStateIndex,
+  expandStateCraftingIndex,
   mergeCharacterIntoCraftingDirectory,
   expandCraftingDirectory,
   getGuildCraftingDirectory,
@@ -1422,6 +1426,134 @@ describe('worker.js — Armory API Routes, Auth & Zero Secret Exposure', () => {
     assert.equal(ambigRes.matches.length, 2);
     assert.deepEqual(ambigRes.matches.map(m => m.slug), ['zul-one', 'zul-two']);
   });
+
+  it('stores compact learned recipes in bse_state.craftingIndex, survives Firestore 403 on armory_crafting, and prunes cleanly', async () => {
+    const baseFs = createMemoryFirestore();
+    const state = await baseFs.getBseState();
+    state.wallets = {
+      u_crafter: {
+        discordId: 'u_crafter',
+        serverNickname: 'Grimfang',
+        characters: [
+          { name: 'Grimfang', surname: 'Black', slug: 'grimfang-black', class: 'Warrior', isPrimary: true }
+        ]
+      }
+    };
+
+    const snap1 = makeSampleCharacterSnapshot({
+      slug: 'grimfang-black',
+      name: 'Grimfang',
+      surname: 'Black',
+      professions: {
+        primaries: [{
+          id: 164,
+          name: 'Blacksmithing',
+          skillPoints: 300,
+          maxSkillPoints: 300,
+          knownRecipes: [
+            { id: 16729, name: 'Lionheart Helm' },
+            { id: 16667, name: 'Stronghold Gauntlets' }
+          ]
+        }],
+        secondaries: [
+          { id: 186, name: 'Mining', skillPoints: 300, maxSkillPoints: 300, knownRecipes: [{ id: 1570, name: 'Mining' }, { id: 2036, name: 'Mining' }, { id: 1847, name: 'Smelt Iron' }] }
+        ],
+        allSummary: 'Blacksmithing 300'
+      }
+    });
+
+    const m1 = mergeCharacterIntoCraftingState(state, snap1);
+    assert.equal(m1.changed, true);
+    assert.equal(m1.totalRecipesForChar, 4); // Duplicate Mining collapsed to 1
+
+    // Signature check prevents redundant Firestore writes on identical re-merge
+    const mDup = mergeCharacterIntoCraftingState(state, snap1);
+    assert.equal(mDup.changed, false);
+    assert.equal(hasFreshCrafterInStateIndex(state, 'grimfang-black', snap1), true);
+
+    // Verify full Firestore REST serialization round-trip (no nested arrays)
+    const encoded = toFirestoreFields(state);
+    const decoded = fromFirestoreDoc({ name: 'projects/p/databases/(default)/documents/exchange/bse_state', ...encoded });
+    const expanded = expandStateCraftingIndex(decoded.craftingIndex);
+    assert.equal(expanded.crafters.length, 1);
+    assert.equal(expanded.recipes.find(r => r.name === 'Lionheart Helm')?.crafters[0]?.slug, 'grimfang-black');
+    assert.equal(expanded.recipes.filter(r => r.name === 'Mining').length, 1);
+
+    // Simulate Firestore 403 / empty armory_crafting/directory -> getGuildCraftingDirectory seamlessly falls back to state.craftingIndex
+    const restrictedFs = {
+      sanitizeDocId: (id) => id,
+      async getCollectionDoc() { return null; },
+      async getBseState() { return decoded; }
+    };
+    const dirRes = await getGuildCraftingDirectory({ firestore: restrictedFs, query: 'lionheart' });
+    assert.equal(dirRes.recipes.length, 1);
+    assert.equal(dirRes.recipes[0].name, 'Lionheart Helm');
+    assert.equal(dirRes.recipes[0].crafters[0].displayName, 'Grimfang Black');
+
+    // Prune deleted character removes crafter & empty recipes
+    state.wallets.u_crafter.characters = [];
+    const didPrune = pruneMissingCraftersFromCraftingState(state);
+    assert.equal(didPrune, true);
+    assert.deepEqual(Object.keys(state.craftingIndex.crafters), []);
+    assert.deepEqual(Object.keys(state.craftingIndex.byProf), []);
+  });
+
+  it('promotes cached character recipes on POST /api/exchange/characters & exposes them on /api/exchange/armory/crafting', async () => {
+    const initial = new FirestoreClient(TEST_ENV).getDefaultBseState();
+    initial.wallets = { m1: { discordId: 'm1', serverNickname: 'Ro', characters: [] } };
+    const docs = installFirestoreFetchMock(initial);
+
+    // Seed armory_characters cache doc from an earlier Verify check
+    docs.set('armory_characters/dalebert-pitman', makeSampleCharacterSnapshot({
+      slug: 'dalebert-pitman',
+      name: 'Dalebert',
+      surname: 'Pitman',
+      displayName: 'Dalebert Pitman',
+      className: 'Hunter',
+      level: 34,
+      professions: {
+        primaries: [{
+          id: 202,
+          name: 'Engineering',
+          skillPoints: 180,
+          maxSkillPoints: 225,
+          knownRecipes: [
+            { id: 3947, name: 'Small Bronze Bomb' },
+            { id: 3941, name: 'Heavy Blasting Powder' }
+          ]
+        }],
+        secondaries: [],
+        allSummary: 'Engineering 180'
+      }
+    }));
+
+    const memberCookie = signTestSession({ id: 'm1', username: 'ro', isOfficer: false, issuedAt: Date.now() });
+    const saveRes = await worker.fetch(
+      new Request('https://bse.teasy2ez.win/api/exchange/characters', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Cookie': memberCookie },
+        body: JSON.stringify({
+          characters: [{ name: 'Dalebert', surname: 'Pitman', class: 'Hunter', armoryVerified: true, isPrimary: true }]
+        })
+      }),
+      TEST_ENV,
+      { waitUntil: () => {} }
+    );
+    assert.equal(saveRes.status, 200);
+
+    // Query crafting endpoint directly -> backed seamlessly by bse_state.craftingIndex
+    const craftRes = await worker.fetch(
+      new Request('https://bse.teasy2ez.win/api/exchange/armory/crafting?q=Bronze%20Bomb'),
+      TEST_ENV,
+      { waitUntil: () => {} }
+    );
+    assert.equal(craftRes.status, 200);
+    const craftJson = await craftRes.json();
+    assert.equal(craftJson.recipes.length, 1);
+    assert.equal(craftJson.recipes[0].name, 'Small Bronze Bomb');
+    assert.equal(craftJson.recipes[0].crafters[0].slug, 'dalebert-pitman');
+  });
 });
+
 
 

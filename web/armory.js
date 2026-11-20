@@ -1491,7 +1491,7 @@
   // MEMBER PROFILE MODAL (#modalMemberProfile)
   // =========================================================================
 
-  function renderMemberProfileModal(discordId, providedWallet = null, preferredCharKey = null) {
+  function renderMemberProfileModal(discordId, providedWallet = null, preferredCharKey = null, options = null) {
     const appState = hostCtx.getState() || {};
     const w = providedWallet || appState.bseState?.wallets?.[discordId];
     if (!w) return;
@@ -1500,10 +1500,14 @@
     const modalOverlay = document.getElementById('modalMemberProfile');
     if (!modalBody || !modalOverlay) return;
 
+    const requestedTab = options && ['paperdoll', 'stats', 'profs'].includes(options.initialTab)
+      ? options.initialTab
+      : null;
+
     const isSwitchingMember = uiState.modalMemberId !== discordId;
     uiState.modalMemberId = discordId;
     if (isSwitchingMember) {
-      uiState.modalActiveInnerTab = 'paperdoll';
+      uiState.modalActiveInnerTab = requestedTab || 'paperdoll';
       uiState.modalSelectedCharSlug = null;
     }
 
@@ -1525,13 +1529,27 @@
 
     if (preferredCharKey && charKeys.some(c => c._key === preferredCharKey)) {
       uiState.modalSelectedCharSlug = preferredCharKey;
-      uiState.modalActiveInnerTab = 'paperdoll';
+      uiState.modalActiveInnerTab = requestedTab || 'paperdoll';
+    } else if (requestedTab) {
+      uiState.modalActiveInnerTab = requestedTab;
+      if (!uiState.modalSelectedCharSlug || !charKeys.some(c => c._key === uiState.modalSelectedCharSlug)) {
+        const def = charKeys.find(c => c.isPrimary) || charKeys[0];
+        uiState.modalSelectedCharSlug = def ? def._key : null;
+      }
     } else if (!uiState.modalSelectedCharSlug || !charKeys.some(c => c._key === uiState.modalSelectedCharSlug)) {
       const def = charKeys.find(c => c.isPrimary) || charKeys[0];
       uiState.modalSelectedCharSlug = def ? def._key : null;
     }
 
     const activeChar = charKeys.find(c => c._key === uiState.modalSelectedCharSlug) || charKeys[0] || null;
+    if (options && (typeof options.initialRecipeQuery === 'string' || typeof options.initialRecipeProf === 'string')) {
+      uiState.pendingRecipeDeepLink = {
+        query: String(options.initialRecipeQuery || ''),
+        profession: String(options.initialRecipeProf || 'all')
+      };
+    } else {
+      uiState.pendingRecipeDeepLink = null;
+    }
 
     const switcherHtml = charKeys.length
       ? `<div class="armory-char-switcher">
@@ -1681,6 +1699,18 @@
         surname: ch.surname || '',
         forceRefresh
       });
+
+      if (uiState.pendingRecipeDeepLink) {
+        const dl = uiState.pendingRecipeDeepLink;
+        uiState.pendingRecipeDeepLink = null;
+        uiState.recipeFilter = {
+          charSlug: getRecipeCharKey(snapshot, ch),
+          query: dl.query || '',
+          profession: dl.profession || 'all',
+          category: 'all',
+          sort: uiState.recipeFilter.sort || 'category'
+        };
+      }
 
       const handleRender = (nextTab) => {
         uiState.modalActiveInnerTab = nextTab;

@@ -422,8 +422,34 @@ function resolveClientMemberWeeklyStatus(wallet = {}, bse = state.bseState) {
   };
 }
 
+let fallbackCraftingCache = null;
+let fallbackCraftingFetchPromise = null;
+
+function ensureFallbackCraftingIndexIfNeeded(bse) {
+  if (bse?.craftingIndex?.byProf && Object.keys(bse.craftingIndex.byProf).length > 0) {
+    return;
+  }
+  if (fallbackCraftingFetchPromise || fallbackCraftingCache) return;
+  fallbackCraftingFetchPromise = fetch('/api/exchange/armory/crafting')
+    .then(r => (r.ok ? r.json() : null))
+    .then(data => {
+      if (data && Array.isArray(data.recipes) && data.recipes.length > 0) {
+        fallbackCraftingCache = data;
+        buildLedgerRecipeIndex();
+        if (String(searchLeaderboard?.value || '').trim().length >= 2) {
+          renderLeaderboard();
+        }
+      }
+    })
+    .catch(() => {})
+    .finally(() => {
+      fallbackCraftingFetchPromise = null;
+    });
+}
+
 function renderBseDependentViews() {
   if (!state.bseState) return;
+  buildLedgerRecipeIndex();
   renderLeaderboard();
   renderMemberHistory();
   renderBounties();
@@ -463,6 +489,7 @@ async function refreshBseState() {
     // Refresh wallet if logged in
     syncAuthenticatedWalletFromBseState(bse);
     renderBseDependentViews();
+    ensureFallbackCraftingIndexIfNeeded(bse);
   } catch (err) {
     console.error('State refresh error:', err);
   }
@@ -648,7 +675,68 @@ function resolveMemberPrimaryChar(w) {
   };
 }
 
-function findCharacterMatchForLedgerQuery(w, query) {
+let ledgerRecipesBySlug = new Map();
+
+function buildLedgerRecipeIndex() {
+  const bySlug = new Map();
+  const byProf = state.bseState?.craftingIndex?.byProf;
+
+  const pushRecipe = (slug, rec) => {
+    const key = String(slug || '').trim().toLowerCase();
+    if (!key || !rec?.name) return;
+    let list = bySlug.get(key);
+    if (!list) {
+      list = [];
+      bySlug.set(key, list);
+    }
+    list.push(rec);
+  };
+
+  if (byProf && typeof byProf === 'object' && Object.keys(byProf).length > 0) {
+    for (const [profession, lines] of Object.entries(byProf)) {
+      for (const line of Array.isArray(lines) ? lines : []) {
+        const parts = String(line || '').split('\t');
+        if (parts.length < 2) continue;
+        const id = Number(parts[0]) || null;
+        const name = String(parts[1] || '').trim();
+        if (!name) continue;
+        const nameLower = name.toLowerCase();
+        const slugs = parts[2] ? String(parts[2]).split(',').map(s => s.trim()).filter(Boolean) : [];
+        for (const s of slugs) {
+          pushRecipe(s, { id, name, nameLower, profession });
+        }
+      }
+    }
+  } else if (Array.isArray(fallbackCraftingCache?.recipes)) {
+    for (const rec of fallbackCraftingCache.recipes) {
+      const name = String(rec?.name || '').trim();
+      if (!name) continue;
+      const nameLower = name.toLowerCase();
+      for (const cr of rec.crafters || []) {
+        if (cr?.slug) {
+          pushRecipe(cr.slug, { id: rec.id || null, name, nameLower, profession: rec.profession || '' });
+        }
+      }
+    }
+  }
+
+  ledgerRecipesBySlug = bySlug;
+}
+
+function getClientRecipesForSlug(slug) {
+  const key = String(slug || '').trim().toLowerCase();
+  return key ? (ledgerRecipesBySlug.get(key) || []) : [];
+}
+
+function scoreRecipeMatchClient(nameLower, query) {
+  if (nameLower === query) return 3;
+  if (nameLower.startsWith(query)) return 2;
+  if (nameLower.includes(` ${query}`)) return 1;
+  return 0;
+}
+
+function findCharacterMatchForLedgerQuery(w, rawQuery) {
+  const query = String(rawQuery || '').trim().toLowerCase();
   if (!query) return null;
   const chars = Array.isArray(w?.characters) ? w.characters : [];
   if (!chars.length) return null;
@@ -662,6 +750,7 @@ function findCharacterMatchForLedgerQuery(w, query) {
   });
   ordered.sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary));
 
+  let metaHit = null;
   for (const item of ordered) {
     const c = item.char;
     const haystack = [
@@ -674,14 +763,58 @@ function findCharacterMatchForLedgerQuery(w, query) {
       c.professions
     ].filter(Boolean).join(' ').toLowerCase();
     if (haystack.includes(query)) {
-      return {
+      metaHit = {
         char: c,
         key: item.key,
         isAlt: !item.isPrimary
       };
+      break;
     }
   }
-  return null;
+
+  const recipeMatches = [];
+  if (query.length >= 2 && ledgerRecipesBySlug.size > 0) {
+    for (const item of ordered) {
+      const slugKey = String(item.char.slug || item.key || '').trim().toLowerCase();
+      const charRecipes = getClientRecipesForSlug(slugKey);
+      for (const r of charRecipes) {
+        if (!r.nameLower.includes(query)) continue;
+        recipeMatches.push({
+          id: r.id,
+          name: r.name,
+          profession: r.profession,
+          char: item.char,
+          key: item.key,
+          isAlt: !item.isPrimary,
+          score: scoreRecipeMatchClient(r.nameLower, query)
+        });
+      }
+    }
+    recipeMatches.sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      if (a.isAlt !== b.isAlt) return Number(a.isAlt) - Number(b.isAlt);
+      return a.name.localeCompare(b.name);
+    });
+  }
+
+  if (!metaHit && recipeMatches.length === 0) return null;
+
+  if (metaHit) {
+    return {
+      ...metaHit,
+      metaMatch: true,
+      recipeMatches
+    };
+  }
+
+  const bestRec = recipeMatches[0];
+  return {
+    char: bestRec.char,
+    key: bestRec.key,
+    isAlt: bestRec.isAlt,
+    metaMatch: false,
+    recipeMatches
+  };
 }
 
 /**
@@ -713,6 +846,19 @@ function setupLedgerControls() {
       searchLeaderboard.focus();
     });
   }
+
+  const recipeStripEl = document.getElementById('ledgerRecipeMatchStrip');
+  recipeStripEl?.addEventListener('click', (e) => {
+    const pill = e.target.closest('[data-select-recipe]');
+    if (!pill || !searchLeaderboard) return;
+    const picked = pill.getAttribute('data-select-recipe') || '';
+    if (!picked) return;
+    const isAlready = searchLeaderboard.value.trim().toLowerCase() === picked.toLowerCase();
+    searchLeaderboard.value = isAlready ? '' : picked;
+    if (clearBtn) clearBtn.style.display = searchLeaderboard.value ? 'block' : 'none';
+    state.ledgerPage = 1;
+    renderLeaderboard();
+  });
 
   if (roleFilters) {
     roleFilters.addEventListener('click', (e) => {
@@ -785,13 +931,90 @@ function setupLedgerControls() {
   }
 }
 
+function renderLedgerRecipeMatchStrip(filteredRows, rawQuery, lowerQuery) {
+  const stripEl = document.getElementById('ledgerRecipeMatchStrip');
+  if (!stripEl) return;
+
+  if (!lowerQuery || lowerQuery.length < 2) {
+    stripEl.style.display = 'none';
+    stripEl.innerHTML = '';
+    return;
+  }
+
+  const agg = new Map();
+  let matchingCrafters = 0;
+
+  for (const row of filteredRows) {
+    const matches = row.charMatch?.recipeMatches;
+    if (!Array.isArray(matches) || !matches.length) continue;
+    matchingCrafters++;
+    const seenForWallet = new Set();
+    for (const r of matches) {
+      const key = `${String(r.profession || '').toLowerCase()}::${r.name.toLowerCase()}`;
+      if (seenForWallet.has(key)) continue;
+      seenForWallet.add(key);
+      let entry = agg.get(key);
+      if (!entry) {
+        entry = {
+          name: r.name,
+          profession: r.profession || '',
+          score: r.score || 0,
+          crafterCount: 0
+        };
+        agg.set(key, entry);
+      } else if ((r.score || 0) > entry.score) {
+        entry.score = r.score;
+      }
+      entry.crafterCount++;
+    }
+  }
+
+  if (!agg.size) {
+    stripEl.style.display = 'none';
+    stripEl.innerHTML = '';
+    return;
+  }
+
+  const sortedRecipes = Array.from(agg.values()).sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    if (b.crafterCount !== a.crafterCount) return b.crafterCount - a.crafterCount;
+    return a.name.localeCompare(b.name);
+  });
+
+  const maxPills = 14;
+  const shown = sortedRecipes.slice(0, maxPills);
+  const extraCount = sortedRecipes.length - shown.length;
+
+  stripEl.style.display = 'flex';
+  stripEl.innerHTML = `
+    <div class="ledger-recipe-strip-head">
+      <span class="ledger-recipe-strip-label">Recipe Matches (${sortedRecipes.length})</span>
+      <span class="ledger-recipe-strip-sub">${matchingCrafters} guildmate${matchingCrafters === 1 ? '' : 's'} learned matching recipes &bull; Click a recipe to narrow</span>
+    </div>
+    <div class="ledger-recipe-strip-pills">
+      ${shown.map(rec => {
+        const isSelected = lowerQuery === rec.name.toLowerCase();
+        return `
+          <button type="button" class="ledger-recipe-pill${isSelected ? ' active' : ''}" data-select-recipe="${escapeAttr(rec.name)}" title="Filter Ledger to guildmates who know ${escapeAttr(rec.name)}">
+            <span class="ledger-recipe-pill-name">${escapeHtml(rec.name)}</span>
+            ${rec.profession ? `<span class="ledger-recipe-pill-prof">${escapeHtml(rec.profession)}</span>` : ''}
+            <span class="ledger-recipe-pill-cnt">${rec.crafterCount}</span>
+          </button>
+        `;
+      }).join('')}
+      ${extraCount > 0 ? `<span class="ledger-recipe-strip-more">+${extraCount} more recipes</span>` : ''}
+    </div>
+  `;
+}
+
 /**
  * Render Leaderboard with Dual Desktop Table & Mobile Roster Stream
  */
 function renderLeaderboard() {
   if (!state.bseState || !leaderboardTbody) return;
   const allWallets = Object.values(state.bseState.wallets || {});
-  const query = (searchLeaderboard?.value || '').toLowerCase().trim();
+  const rawQuery = (searchLeaderboard?.value || '').trim();
+  const query = rawQuery.toLowerCase();
   const clearBtn = document.getElementById('btnClearLeaderboardSearch');
   if (clearBtn) clearBtn.style.display = query ? 'block' : 'none';
 
@@ -908,8 +1131,9 @@ function renderLeaderboard() {
     totalBonesEl.textContent = totalGuildCareerBones.toLocaleString();
   }
 
-  // Apply Role, Class, and Search query filters (matching member identity, note, OR any linked character/profession)
+  // Apply Role, Class, and Search query filters (matching member identity, note, character, profession, OR learned recipe)
   const filtered = [];
+  const includedDiscordIds = new Set();
   for (const item of rankedPool) {
     const { w } = item;
     const prim = resolveMemberPrimaryChar(w);
@@ -928,8 +1152,45 @@ function renderLeaderboard() {
       const textHit = name.includes(query) || handle.includes(query) || primName.includes(query) || note.includes(query);
       if (!textHit && !charMatch) continue;
     }
-    filtered.push({ ...item, prim, charMatch });
+    includedDiscordIds.add(w.discordId);
+    filtered.push({ ...item, isZeroRecipeMatch: false, prim, charMatch });
   }
+
+  // When actively searching by recipe (>= 2 chars), include non-hidden 0-Bones guildmates who learned matching recipes
+  if (query.length >= 2 && ledgerRecipesBySlug.size > 0 && (!isOfficer || state.officerLeaderboardFilter !== 'hidden')) {
+    const extraCrafters = [];
+    for (const w of allWallets) {
+      if (!w || includedDiscordIds.has(w.discordId)) continue;
+      if (w.officerHidden || !isZeroBones(w)) continue;
+      const prim = resolveMemberPrimaryChar(w);
+      if (roleFilter !== 'all') {
+        if (!prim.name || prim.charRole.toLowerCase() !== roleFilter) continue;
+      }
+      if (classFilter !== 'all') {
+        if (!prim.name || prim.charClass.toLowerCase() !== classFilter) continue;
+      }
+      const charMatch = findCharacterMatchForLedgerQuery(w, query);
+      if (charMatch?.recipeMatches?.length > 0) {
+        extraCrafters.push({
+          w,
+          isHidden: false,
+          isZero: true,
+          rankNumber: null,
+          isZeroRecipeMatch: true,
+          prim,
+          charMatch
+        });
+      }
+    }
+    extraCrafters.sort((a, b) => {
+      const scoreDiff = (b.charMatch.recipeMatches[0]?.score || 0) - (a.charMatch.recipeMatches[0]?.score || 0);
+      if (scoreDiff !== 0) return scoreDiff;
+      return compareByName(a.w, b.w);
+    });
+    filtered.push(...extraCrafters);
+  }
+
+  renderLedgerRecipeMatchStrip(filtered, rawQuery, query);
 
   // Pagination slice (skip paging when typing search query or Show All toggled)
   const pageSize = state.ledgerPageSize || 20;
@@ -1033,7 +1294,7 @@ function renderLeaderboard() {
   }
 
   // 1. Render Desktop Table (>= 768px)
-  leaderboardTbody.innerHTML = displayedRows.map(({ w, isHidden, isZero, rankNumber, prim, charMatch }) => {
+  leaderboardTbody.innerHTML = displayedRows.map(({ w, isHidden, isZero, isZeroRecipeMatch, rankNumber, prim, charMatch }) => {
     const rankDisplay = rankNumber !== null ? `#${rankNumber}` : '—';
     const rankTopCls = (rankNumber !== null && rankNumber <= 3) ? ` rank-top-${rankNumber}` : '';
 
@@ -1053,14 +1314,27 @@ function renderLeaderboard() {
 
     const matchedAlt = (charMatch && charMatch.isAlt) ? charMatch.char : null;
     const matchedAltProf = matchedAlt ? formatProfessionsBrief(matchedAlt.professions, 2) : '';
+    const recipeHits = charMatch?.recipeMatches || [];
+    const topRec = recipeHits[0] || null;
+    const isRecipeOnlyMatch = Boolean(topRec && !charMatch?.metaMatch);
 
     const lvPill = prim.level ? `<span class="ledger-char-lv">Lv ${escapeHtml(String(prim.level))}</span>` : '';
     const verifiedDot = prim.armoryVerified ? `<span class="armory-verified-dot" title="Verified on WoW: Forever Armory">&#10003;</span>` : '';
     const altPill = prim.altCount > 0 ? `<span class="ledger-alt-count" title="${prim.altCount} additional character${prim.altCount > 1 ? 's' : ''} linked">+${prim.altCount}</span>` : '';
 
-    const charSublineHtml = matchedAlt
-      ? `<button type="button" class="ledger-char-match-btn" onclick="event.stopPropagation(); inspectMemberProfile('${w.discordId}', '${escapeAttr(charMatch.key)}')" title="Open ${escapeAttr(matchedAlt.name)}'s Character Armory">Alt match: <strong>${escapeHtml(matchedAlt.name)}</strong>${matchedAltProf ? ` &bull; ${escapeHtml(matchedAltProf)}` : ''}</button>`
-      : (profSummary ? `<div class="ledger-char-profs" title="${escapeAttr(prim.professions)}">${escapeHtml(profSummary)}</div>` : '');
+    let charSublineHtml = '';
+    if (topRec) {
+      const recCharKey = topRec.key || targetCharKey;
+      const recCharName = topRec.char?.name || charName;
+      const extraRecCount = recipeHits.length - 1;
+      const extraLabel = extraRecCount > 0 ? ` <span class="ledger-rec-more">(+${extraRecCount})</span>` : '';
+      const charPrefix = topRec.isAlt ? `Alt: <strong>${escapeHtml(recCharName)}</strong> &bull; ` : '';
+      charSublineHtml = `<button type="button" class="ledger-recipe-match-btn" onclick="event.stopPropagation(); inspectMemberRecipeMatch('${w.discordId}', '${escapeAttr(recCharKey)}', '${escapeAttr(rawQuery)}')" title="Open ${escapeAttr(recCharName)}'s Recipes &amp; Reps filtered to ${escapeAttr(rawQuery)}">${charPrefix}Knows: <strong>${escapeHtml(topRec.name)}</strong>${topRec.profession ? ` (${escapeHtml(topRec.profession)})` : ''}${extraLabel}</button>`;
+    } else if (matchedAlt) {
+      charSublineHtml = `<button type="button" class="ledger-char-match-btn" onclick="event.stopPropagation(); inspectMemberProfile('${w.discordId}', '${escapeAttr(charMatch.key)}')" title="Open ${escapeAttr(matchedAlt.name)}'s Character Armory">Alt match: <strong>${escapeHtml(matchedAlt.name)}</strong>${matchedAltProf ? ` &bull; ${escapeHtml(matchedAltProf)}` : ''}</button>`;
+    } else if (profSummary) {
+      charSublineHtml = `<div class="ledger-char-profs" title="${escapeAttr(prim.professions)}">${escapeHtml(profSummary)}</div>`;
+    }
 
     const charDisplay = charName
       ? `<div class="ledger-char-cell">
@@ -1086,20 +1360,26 @@ function renderLeaderboard() {
       </td>
     ` : '';
 
+    const rowActionCall = isRecipeOnlyMatch
+      ? `inspectMemberRecipeMatch('${w.discordId}', '${escapeAttr(topRec.key || targetCharKey)}', '${escapeAttr(rawQuery)}')`
+      : `inspectMemberProfile('${w.discordId}', '${escapeAttr(targetCharKey)}')`;
+
     const armoryActionBtn = charName
-      ? `<button type="button" class="btn-ledger-armory" onclick="event.stopPropagation(); inspectMemberProfile('${w.discordId}', '${escapeAttr(targetCharKey)}')" title="Open ${escapeAttr(name)}'s Character Armory">Armory &rsaquo;</button>`
+      ? `<button type="button" class="btn-ledger-armory" onclick="event.stopPropagation(); ${rowActionCall}" title="Open ${escapeAttr(name)}'s Character Armory">Armory &rsaquo;</button>`
       : `<button type="button" class="btn-ledger-armory is-muted" onclick="event.stopPropagation(); inspectMemberProfile('${w.discordId}')" title="Open ${escapeAttr(name)}'s Member Profile">Profile &rsaquo;</button>`;
 
     const statusBadge = isHidden
       ? `<span class="badge-officer-hidden">Hidden</span>`
-      : (isZero ? `<span class="badge-zero-bones">0 Bones</span>` : '');
+      : (isZeroRecipeMatch
+        ? `<span class="badge-crafter-match">Crafter</span>`
+        : (isZero ? `<span class="badge-zero-bones">0 Bones</span>` : ''));
 
     const isSelf = Boolean(state.user?.id && w.discordId === state.user.id);
     const rowClasses = [isHidden ? 'officer-hidden-row' : '', isSelf ? 'is-self-row' : ''].filter(Boolean).join(' ');
     const rowClassAttr = rowClasses ? `class="${rowClasses}"` : '';
 
     return `
-      <tr ${rowClassAttr} onclick="inspectMemberProfile('${w.discordId}', '${escapeAttr(targetCharKey)}')" title="Click to open ${escapeAttr(name)}'s Character Armory (Level, Gear &amp; Professions)">
+      <tr ${rowClassAttr} onclick="${rowActionCall}" title="Click to open ${escapeAttr(name)}'s Character Armory (Level, Gear &amp; Professions)">
         <td class="table-rank-cell${rankTopCls}">${rankDisplay}</td>
         <td>
           <div class="member-cell">
@@ -1125,7 +1405,7 @@ function renderLeaderboard() {
 
   // 2. Render Mobile Roster Stream (< 768px)
   if (mobileLeaderboardList) {
-    mobileLeaderboardList.innerHTML = displayedRows.map(({ w, isHidden, isZero, rankNumber, prim, charMatch }) => {
+    mobileLeaderboardList.innerHTML = displayedRows.map(({ w, isHidden, isZero, isZeroRecipeMatch, rankNumber, prim, charMatch }) => {
       const rankNum = rankNumber !== null ? `#${rankNumber}` : '—';
       const rankHighlightClass = rankNumber !== null && rankNumber <= 3 ? ` rank-${rankNumber}` : '';
 
@@ -1142,12 +1422,25 @@ function renderLeaderboard() {
 
       const matchedAlt = (charMatch && charMatch.isAlt) ? charMatch.char : null;
       const matchedAltProf = matchedAlt ? formatProfessionsBrief(matchedAlt.professions, 2) : '';
+      const recipeHits = charMatch?.recipeMatches || [];
+      const topRec = recipeHits[0] || null;
+      const isRecipeOnlyMatch = Boolean(topRec && !charMatch?.metaMatch);
 
       const mobLvPill = prim.level ? `<span class="ledger-char-lv">Lv ${escapeHtml(String(prim.level))}</span>` : '';
       const mobAltPill = prim.altCount > 0 ? `<span class="ledger-alt-count">+${prim.altCount}</span>` : '';
-      const mobileProfsLine = matchedAlt
-        ? `<div class="mobile-roster-profs">Alt match: <strong>${escapeHtml(matchedAlt.name)}</strong>${matchedAltProf ? ` &bull; ${escapeHtml(matchedAltProf)}` : ''}</div>`
-        : (profSummary ? `<div class="mobile-roster-profs">${escapeHtml(profSummary)}</div>` : '');
+      let mobileProfsLine = '';
+      if (topRec) {
+        const recCharKey = topRec.key || targetCharKey;
+        const recCharName = topRec.char?.name || charName;
+        const extraRecCount = recipeHits.length - 1;
+        const extraLabel = extraRecCount > 0 ? ` (+${extraRecCount})` : '';
+        const charPrefix = topRec.isAlt ? `Alt: <strong>${escapeHtml(recCharName)}</strong> &bull; ` : '';
+        mobileProfsLine = `<button type="button" class="mobile-recipe-match-badge" onclick="event.stopPropagation(); inspectMemberRecipeMatch('${w.discordId}', '${escapeAttr(recCharKey)}', '${escapeAttr(rawQuery)}')">${charPrefix}Knows: <strong>${escapeHtml(topRec.name)}</strong>${extraLabel}</button>`;
+      } else if (matchedAlt) {
+        mobileProfsLine = `<div class="mobile-roster-profs">Alt match: <strong>${escapeHtml(matchedAlt.name)}</strong>${matchedAltProf ? ` &bull; ${escapeHtml(matchedAltProf)}` : ''}</div>`;
+      } else if (profSummary) {
+        mobileProfsLine = `<div class="mobile-roster-profs">${escapeHtml(profSummary)}</div>`;
+      }
 
       const mobileOfficerStrip = isOfficer ? `
         <div class="mobile-card-officer-strip" onclick="event.stopPropagation()">
@@ -1158,7 +1451,9 @@ function renderLeaderboard() {
 
       const statusBadge = isHidden
         ? `<span class="badge-officer-hidden">Hidden</span>`
-        : (isZero ? `<span class="badge-zero-bones">0 Bones</span>` : '');
+        : (isZeroRecipeMatch
+          ? `<span class="badge-crafter-match">Crafter</span>`
+          : (isZero ? `<span class="badge-zero-bones">0 Bones</span>` : ''));
 
       const isSelf = Boolean(state.user?.id && w.discordId === state.user.id);
       const cardClass = [
@@ -1167,8 +1462,12 @@ function renderLeaderboard() {
         isSelf ? 'is-self-row' : ''
       ].filter(Boolean).join(' ');
 
+      const mobCardAction = isRecipeOnlyMatch
+        ? `inspectMemberRecipeMatch('${w.discordId}', '${escapeAttr(topRec.key || targetCharKey)}', '${escapeAttr(rawQuery)}')`
+        : `inspectMemberProfile('${w.discordId}', '${escapeAttr(targetCharKey)}')`;
+
       return `
-        <div class="${cardClass}" data-discord-id="${escapeAttr(w.discordId)}" onclick="inspectMemberProfile('${w.discordId}', '${escapeAttr(targetCharKey)}')">
+        <div class="${cardClass}" data-discord-id="${escapeAttr(w.discordId)}" onclick="${mobCardAction}">
           <div style="display: flex; align-items: center; gap: 0.65rem;">
             <div class="mobile-roster-rank${rankHighlightClass}">${rankNum}</div>
             <img src="${avatarUrl}" class="mobile-roster-avatar" alt="${escapeAttr(name)}" onerror="this.onerror=null;this.src='assets/favicon.svg';">
@@ -1197,15 +1496,22 @@ function renderLeaderboard() {
   }
 }
 
+window.inspectMemberRecipeMatch = function(discordId, preferredCharKey = null, recipeQuery = '') {
+  return window.inspectMemberProfile(discordId, preferredCharKey || null, {
+    initialTab: 'profs',
+    initialRecipeQuery: String(recipeQuery || '')
+  });
+};
+
 /**
  * Inspect Member Profile & Character Armory Modal (Click from Leaderboard)
  */
-window.inspectMemberProfile = function(discordId, preferredCharKey = null) {
+window.inspectMemberProfile = function(discordId, preferredCharKey = null, armoryOptions = null) {
   const w = state.bseState?.wallets?.[discordId];
   if (!w) return;
 
   if (window.BSEArmory?.renderMemberProfileModal) {
-    window.BSEArmory.renderMemberProfileModal(discordId, w, preferredCharKey || null);
+    window.BSEArmory.renderMemberProfileModal(discordId, w, preferredCharKey || null, armoryOptions || null);
     return;
   }
 

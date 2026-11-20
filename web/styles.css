@@ -1673,6 +1673,140 @@ code {
   background: rgba(255, 209, 0, 0.14);
 }
 
+.ledger-recipe-match-btn,
+.mobile-recipe-match-badge {
+  appearance: none;
+  font: inherit;
+  text-align: left;
+  background: rgba(251, 191, 36, 0.1);
+  border: 1px solid rgba(251, 191, 36, 0.34);
+  border-radius: 3px;
+  padding: 0.12rem 0.42rem;
+  color: var(--gold-100);
+  font-size: 0.69rem;
+  line-height: 1.25;
+  cursor: pointer;
+  max-width: 230px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: border-color 0.14s ease, background 0.14s ease;
+}
+
+.mobile-recipe-match-badge {
+  margin-top: 0.25rem;
+  max-width: 100%;
+  font-size: 0.68rem;
+}
+
+.ledger-recipe-match-btn:hover,
+.mobile-recipe-match-badge:hover {
+  border-color: var(--gold-300);
+  background: rgba(251, 191, 36, 0.18);
+}
+
+.ledger-rec-more {
+  color: var(--gold-300);
+  font-weight: 700;
+}
+
+.ledger-recipe-strip {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  margin-bottom: 0.75rem;
+  padding: 0.65rem 0.85rem;
+  background: rgba(251, 191, 36, 0.05);
+  border: 1px solid rgba(251, 191, 36, 0.24);
+  border-radius: var(--radius-sm);
+}
+
+.ledger-recipe-strip-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.75rem;
+}
+
+.ledger-recipe-strip-label {
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--gold-300);
+}
+
+.ledger-recipe-strip-sub {
+  font-size: 0.71rem;
+  color: var(--text-dim);
+}
+
+.ledger-recipe-strip-pills {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.ledger-recipe-pill {
+  appearance: none;
+  font: inherit;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.34rem;
+  max-width: 100%;
+  font-size: 0.72rem;
+  padding: 0.2rem 0.54rem;
+  border-radius: 999px;
+  border: 1px solid var(--border-hairline);
+  background: var(--bg-card);
+  color: var(--text-main);
+  cursor: pointer;
+  transition: border-color 0.14s ease, background 0.14s ease, color 0.14s ease;
+}
+
+.ledger-recipe-pill:hover,
+.ledger-recipe-pill:focus-visible {
+  border-color: var(--border-gold-accent);
+  color: var(--gold-100);
+  outline: none;
+}
+
+.ledger-recipe-pill.active {
+  border-color: var(--gold-300);
+  background: rgba(251, 191, 36, 0.16);
+  color: var(--gold-100);
+}
+
+.ledger-recipe-pill-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ledger-recipe-pill-prof {
+  font-size: 0.66rem;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.ledger-recipe-pill-cnt {
+  font-size: 0.66rem;
+  font-weight: 700;
+  color: var(--gold-300);
+  background: rgba(251, 191, 36, 0.12);
+  border-radius: 999px;
+  padding: 0.04rem 0.36rem;
+}
+
+.ledger-recipe-strip-more {
+  font-size: 0.7rem;
+  color: var(--text-dim);
+  padding-left: 0.25rem;
+}
+
 .ledger-no-char {
   color: var(--text-dim);
   font-size: 0.76rem;
@@ -1780,7 +1914,8 @@ code {
   }
 
   .desktop-roster-table .ledger-char-profs,
-  .desktop-roster-table .ledger-char-match-btn {
+  .desktop-roster-table .ledger-char-match-btn,
+  .desktop-roster-table .ledger-recipe-match-btn {
     max-width: 132px;
     font-size: 0.63rem;
   }
@@ -3079,6 +3214,19 @@ tr.audit-row-undone td,
   border: 1px solid #475569;
   font-size: 0.64rem;
   font-weight: 600;
+  padding: 0.1rem 0.38rem;
+  border-radius: 3px;
+  text-transform: uppercase;
+  margin-left: 0.35rem;
+}
+
+.badge-crafter-match {
+  display: inline-block;
+  background: rgba(251, 191, 36, 0.15);
+  color: var(--gold-300);
+  border: 1px solid rgba(251, 191, 36, 0.38);
+  font-size: 0.64rem;
+  font-weight: 700;
   padding: 0.1rem 0.38rem;
   border-radius: 3px;
   text-transform: uppercase;
