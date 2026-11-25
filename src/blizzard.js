@@ -718,14 +718,16 @@ export function normalizeReputationsResponse(repJson) {
  * Normalize Blizzard /character-media response (gracefully handles missing assets on Forever launch)
  */
 export function normalizeCharacterMediaResponse(mediaJson) {
-  if (!mediaJson || !Array.isArray(mediaJson.assets)) {
+  if (!mediaJson || typeof mediaJson !== 'object') {
     return { avatar: null, inset: null, mainRaw: null };
   }
-  const byKey = new Map(mediaJson.assets.map(a => [a.key, a.value]));
+  const byKey = Array.isArray(mediaJson.assets)
+    ? new Map(mediaJson.assets.map(a => [a?.key, a?.value]))
+    : new Map();
   return {
-    avatar: byKey.get('avatar') || null,
-    inset: byKey.get('inset') || null,
-    mainRaw: byKey.get('main-raw') || byKey.get('main') || null
+    avatar: byKey.get('avatar') || mediaJson.avatar_url || null,
+    inset: byKey.get('inset') || mediaJson.bust_url || null,
+    mainRaw: byKey.get('main-raw') || byKey.get('main') || mediaJson.render_url || null
   };
 }
 

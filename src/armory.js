@@ -184,6 +184,32 @@ export async function hydrateItemsMedia(items = [], { env, firestore, stateConfi
  * Sync lightweight character verification metadata onto any matching wallet inside bse_state
  * without ever saving bloated gear/recipe blobs inside bse_state.
  */
+export function walletNeedsCharacterSummarySync(state, snapshot) {
+  if (!state?.wallets || !snapshot?.found || !snapshot.slug) return false;
+  const targetSlug = String(snapshot.slug || '').toLowerCase();
+  const targetFirst = String(snapshot.name || '').trim().toLowerCase();
+  const snapAvatar = snapshot.media?.avatar || '';
+  const snapProf = snapshot.professions?.allSummary || '';
+  const snapLevel = Number(snapshot.level) || null;
+
+  for (const wallet of Object.values(state.wallets)) {
+    if (!Array.isArray(wallet.characters)) continue;
+    for (const ch of wallet.characters) {
+      const chSlug = buildCharacterSlug(ch.name, ch.surname || '');
+      const exactSlug = chSlug && chSlug === targetSlug;
+      const legacyFirstMatch = !ch.surname && String(ch.name || '').trim().toLowerCase() === targetFirst;
+      if (!exactSlug && !legacyFirstMatch) continue;
+
+      if (!ch.armoryVerified) return true;
+      if ((ch.slug || '') !== snapshot.slug) return true;
+      if (snapAvatar && (ch.avatarThumbUrl || '') !== snapAvatar) return true;
+      if (snapLevel && Number(ch.level || 0) !== snapLevel) return true;
+      if (snapProf && (ch.professions || '') !== snapProf) return true;
+    }
+  }
+  return false;
+}
+
 export function applyCharacterSummaryToWallets(state, snapshot) {
   if (!state?.wallets || !snapshot?.found || !snapshot.slug) return false;
 
@@ -199,26 +225,40 @@ export function applyCharacterSummaryToWallets(state, snapshot) {
       const legacyFirstMatch = !ch.surname && String(ch.name || '').trim().toLowerCase() === targetFirst;
       if (!exactSlug && !legacyFirstMatch) continue;
 
-      ch.name = snapshot.name || ch.name;
-      ch.surname = snapshot.surname || ch.surname || '';
-      ch.slug = snapshot.slug;
-      ch.class = snapshot.className || ch.class;
-      ch.race = snapshot.race || ch.race || '';
-      ch.level = snapshot.level || ch.level || null;
-      ch.avgItemLevel = snapshot.avgItemLevel || ch.avgItemLevel || null;
-      ch.guildName = snapshot.guild?.name || ch.guildName || '';
-      ch.armoryVerified = true;
-      ch.lastArmorySyncAt = snapshot.syncedAt || new Date().toISOString();
+      let rowChanged = false;
+      const setIfDiff = (obj, key, nextVal) => {
+        if (nextVal !== undefined && nextVal !== null && obj[key] !== nextVal) {
+          obj[key] = nextVal;
+          rowChanged = true;
+        }
+      };
+
+      setIfDiff(ch, 'name', snapshot.name || ch.name);
+      setIfDiff(ch, 'surname', snapshot.surname || ch.surname || '');
+      setIfDiff(ch, 'slug', snapshot.slug);
+      setIfDiff(ch, 'class', snapshot.className || ch.class);
+      setIfDiff(ch, 'race', snapshot.race || ch.race || '');
+      if (snapshot.level) setIfDiff(ch, 'level', snapshot.level);
+      if (snapshot.avgItemLevel) setIfDiff(ch, 'avgItemLevel', snapshot.avgItemLevel);
+      if (snapshot.guild?.name) setIfDiff(ch, 'guildName', snapshot.guild.name);
+      setIfDiff(ch, 'armoryVerified', true);
       if (snapshot.media?.avatar) {
-        ch.avatarThumbUrl = snapshot.media.avatar;
+        setIfDiff(ch, 'avatarThumbUrl', snapshot.media.avatar);
       }
       if (snapshot.professions?.allSummary) {
-        ch.professions = snapshot.professions.allSummary;
+        setIfDiff(ch, 'professions', snapshot.professions.allSummary);
       }
-      if (ch.isPrimary) {
+      if (ch.isPrimary && snapshot.name && wallet.primaryCharacter !== snapshot.name) {
         wallet.primaryCharacter = snapshot.name;
+        rowChanged = true;
       }
-      changed = true;
+
+      if (rowChanged || !ch.lastArmorySyncAt) {
+        ch.lastArmorySyncAt = snapshot.syncedAt || new Date().toISOString();
+      }
+      if (rowChanged) {
+        changed = true;
+      }
     }
   }
   return changed;
@@ -886,7 +926,12 @@ export async function getCharacterArmory({ name, surname = '', slug = '', forceR
   if (!forceRefresh) {
     const edgeHit = await readEdgeCache(cacheKey);
     if (edgeHit) {
-      if (edgeHit.found === true && state && firestore && !hasFreshCrafterInStateIndex(state, edgeHit.slug, edgeHit)) {
+      if (
+        edgeHit.found === true &&
+        state &&
+        firestore &&
+        (walletNeedsCharacterSummarySync(state, edgeHit) || !hasFreshCrafterInStateIndex(state, edgeHit.slug, edgeHit))
+      ) {
         await syncCharacterSnapshotToState(edgeHit, { state, firestore });
       }
       return { ...edgeHit, source: 'edge-cache' };
@@ -907,7 +952,12 @@ export async function getCharacterArmory({ name, surname = '', slug = '', forceR
         maxLiveFetches: 6,
         fetchImpl
       });
-      if (fsDoc.found === true && state && firestore && !hasFreshCrafterInStateIndex(state, fsDoc.slug, fsDoc)) {
+      if (
+        fsDoc.found === true &&
+        state &&
+        firestore &&
+        (walletNeedsCharacterSummarySync(state, fsDoc) || !hasFreshCrafterInStateIndex(state, fsDoc.slug, fsDoc))
+      ) {
         await syncCharacterSnapshotToState(fsDoc, { state, firestore });
       }
       return { ...fsDoc, source: 'firestore-cooldown' };
@@ -926,7 +976,11 @@ export async function getCharacterArmory({ name, surname = '', slug = '', forceR
           fetchImpl
         });
         await writeEdgeCache(cacheKey, fsDoc, 1800);
-        if (state && firestore && !hasFreshCrafterInStateIndex(state, fsDoc.slug, fsDoc)) {
+        if (
+          state &&
+          firestore &&
+          (walletNeedsCharacterSummarySync(state, fsDoc) || !hasFreshCrafterInStateIndex(state, fsDoc.slug, fsDoc))
+        ) {
           await syncCharacterSnapshotToState(fsDoc, { state, firestore });
         }
         return { ...fsDoc, source: 'firestore-cache' };
@@ -1337,10 +1391,11 @@ export async function runScheduledArmoryTick(env, firestore, { state = null, fet
     }
   }
 
-  // 2. Refresh up to 2 unindexed or stalest linked characters with a valid slug (> 12h old)
+  // 2. Refresh up to 2 unindexed, missing-headshot, or stalest linked characters (> 6h old)
   const pruned = pruneMissingCraftersFromCraftingState(activeState);
   const candidates = [];
-  const staleCutoffMs = 12 * 3600 * 1000;
+  const staleCutoffMs = 6 * 3600 * 1000;
+  const missingAvatarRetryMs = 30 * 60 * 1000;
   const now = Date.now();
 
   for (const w of Object.values(activeState.wallets || {})) {
@@ -1349,18 +1404,28 @@ export async function runScheduledArmoryTick(env, firestore, { state = null, fet
       if (!slug) continue;
       const lastSyncMs = ch.lastArmorySyncAt ? Date.parse(ch.lastArmorySyncAt) : 0;
       const indexed = hasFreshCrafterInStateIndex(activeState, slug);
-      if (!indexed || !lastSyncMs || (now - lastSyncMs) > staleCutoffMs) {
-        candidates.push({ slug, lastSyncMs, needsIndex: !indexed });
+      const missingHeadshot = !ch.avatarThumbUrl && (!lastSyncMs || (now - lastSyncMs) > missingAvatarRetryMs);
+      if (!indexed || missingHeadshot || !lastSyncMs || (now - lastSyncMs) > staleCutoffMs) {
+        candidates.push({
+          slug,
+          lastSyncMs,
+          needsIndex: !indexed,
+          missingHeadshot
+        });
       }
     }
   }
 
-  candidates.sort((a, b) => (Number(b.needsIndex) - Number(a.needsIndex)) || (a.lastSyncMs - b.lastSyncMs));
+  candidates.sort((a, b) =>
+    (Number(b.missingHeadshot) - Number(a.missingHeadshot)) ||
+    (Number(b.needsIndex) - Number(a.needsIndex)) ||
+    (a.lastSyncMs - b.lastSyncMs)
+  );
   for (const c of candidates.slice(0, 2)) {
     try {
       await getCharacterArmory({
         slug: c.slug,
-        forceRefresh: !c.needsIndex,
+        forceRefresh: !c.needsIndex || c.missingHeadshot,
         env,
         firestore,
         state: activeState,

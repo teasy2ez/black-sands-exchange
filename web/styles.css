@@ -1886,9 +1886,15 @@ code {
     font-size: 0.82rem;
   }
 
-  .desktop-roster-table .table-avatar {
+  .desktop-roster-table .table-avatar,
+  .desktop-roster-table .ledger-char-headshot {
     width: 26px;
     height: 26px;
+    font-size: 0.72rem;
+  }
+
+  .desktop-roster-table .ledger-avatar-pair {
+    gap: 0.22rem;
   }
 
   .desktop-roster-table .member-cell {
@@ -5528,6 +5534,281 @@ button.armory-slot-row.equipped:hover {
   color: #fcd34d;
   background: rgba(245, 158, 11, 0.12);
   border-color: rgba(245, 158, 11, 0.35);
+}
+
+/* ==========================================================================
+   GUILD LEDGER CHARACTER HEADSHOTS & OFFICER CHARACTER LINKING
+   ========================================================================== */
+.ledger-avatar-pair {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex-shrink: 0;
+}
+
+.ledger-char-headshot {
+  width: 30px;
+  height: 30px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-warm);
+  object-fit: cover;
+  background: var(--bg-primary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.38);
+}
+
+.ledger-char-headshot.is-mobile {
+  width: 36px;
+  height: 36px;
+  font-size: 0.9rem;
+}
+
+.ledger-char-headshot.is-mini {
+  width: 24px;
+  height: 24px;
+  font-size: 0.68rem;
+}
+
+.ledger-char-headshot.is-fallback {
+  font-family: var(--font-serif);
+  font-weight: 800;
+  font-size: 0.8rem;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  background: radial-gradient(circle at 30% 25%, rgba(255, 209, 0, 0.14), rgba(9, 11, 16, 0.96));
+  color: var(--gold-200);
+  user-select: none;
+}
+
+.ledger-char-headshot.class-border-warrior { border-color: rgba(198, 155, 109, 0.75); color: #c69b6d; }
+.ledger-char-headshot.class-border-paladin { border-color: rgba(244, 140, 186, 0.75); color: #f48cba; }
+.ledger-char-headshot.class-border-hunter  { border-color: rgba(170, 211, 114, 0.75); color: #aad372; }
+.ledger-char-headshot.class-border-rogue   { border-color: rgba(255, 244, 104, 0.75); color: #fff468; }
+.ledger-char-headshot.class-border-priest  { border-color: rgba(248, 250, 252, 0.7);  color: #f8fafc; }
+.ledger-char-headshot.class-border-shaman  { border-color: rgba(56, 189, 248, 0.75);  color: #38bdf8; }
+.ledger-char-headshot.class-border-mage    { border-color: rgba(63, 199, 235, 0.75);  color: #3fc7eb; }
+.ledger-char-headshot.class-border-warlock { border-color: rgba(135, 136, 238, 0.75); color: #a5b4fc; }
+.ledger-char-headshot.class-border-druid   { border-color: rgba(255, 124, 10, 0.78);  color: #ff7c0a; }
+
+.inspector-char-box {
+  background: var(--bg-inner);
+  border: 1px solid var(--border-warm);
+  border-radius: var(--radius-sm);
+  padding: 0.75rem 0.85rem;
+  margin-bottom: 0.85rem;
+}
+
+.inspector-char-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.55rem;
+}
+
+.inspector-char-title {
+  font-family: var(--font-serif);
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--gold-200);
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.inspector-char-sub {
+  font-size: 0.7rem;
+  color: var(--text-dim);
+}
+
+.inspector-char-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.38rem;
+  margin-bottom: 0.65rem;
+}
+
+.inspector-char-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.38rem 0.5rem;
+  background: rgba(9, 11, 16, 0.55);
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius-sm);
+  flex-wrap: wrap;
+}
+
+.inspector-char-row.is-primary {
+  border-color: rgba(255, 209, 0, 0.32);
+  background: rgba(229, 169, 59, 0.06);
+}
+
+.inspector-char-row-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.42rem;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.inspector-char-main-pill {
+  font-size: 0.62rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 0.08rem 0.34rem;
+  border-radius: 3px;
+  background: rgba(255, 209, 0, 0.16);
+  border: 1px solid rgba(255, 209, 0, 0.42);
+  color: var(--gold-300);
+}
+
+.inspector-char-verified-pill {
+  font-size: 0.63rem;
+  color: #86efac;
+  background: rgba(34, 197, 94, 0.12);
+  border: 1px solid rgba(34, 197, 94, 0.3);
+  padding: 0.06rem 0.32rem;
+  border-radius: 3px;
+}
+
+.inspector-char-row-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.inspector-char-link-form {
+  display: flex;
+  gap: 0.45rem;
+  align-items: stretch;
+  flex-wrap: wrap;
+}
+
+.inspector-char-input-wrap {
+  position: relative;
+  flex: 1 1 180px;
+  min-width: 160px;
+}
+
+.inspector-char-role-select {
+  flex: 0 0 105px;
+  width: 105px;
+  padding-left: 0.45rem;
+  padding-right: 0.45rem;
+}
+
+.inspector-char-suggestions {
+  position: absolute;
+  top: calc(100% + 3px);
+  left: 0;
+  right: 0;
+  z-index: 60;
+  background: #10141f;
+  border: 1px solid var(--border-gold);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-elevated);
+  max-height: 210px;
+  overflow-y: auto;
+}
+
+.inspector-char-suggestion-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--border-hairline);
+  padding: 0.45rem 0.6rem;
+  color: var(--text-main);
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.inspector-char-suggestion-item:last-child {
+  border-bottom: 0;
+}
+
+.inspector-char-suggestion-item:hover {
+  background: rgba(255, 209, 0, 0.1);
+}
+
+.inspector-char-status {
+  margin-top: 0.5rem;
+  padding: 0.45rem 0.6rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+  background: rgba(9, 11, 16, 0.65);
+  font-size: 0.76rem;
+  color: var(--text-muted);
+}
+
+.ambiguous-char-chips {
+  display: flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+  margin-top: 0.4rem;
+}
+
+.ambiguous-char-chip {
+  font-size: 0.73rem;
+  font-weight: 600;
+  padding: 0.22rem 0.5rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-gold);
+  background: rgba(255, 209, 0, 0.1);
+  color: var(--gold-200);
+  cursor: pointer;
+}
+
+.ambiguous-char-chip:hover {
+  background: rgba(255, 209, 0, 0.2);
+}
+
+.btn-link-main-inline {
+  font-size: 0.68rem;
+  font-weight: 700;
+  padding: 0.18rem 0.45rem;
+  border-radius: var(--radius-sm);
+  border: 1px dashed rgba(255, 209, 0, 0.38);
+  background: rgba(255, 209, 0, 0.06);
+  color: var(--gold-200);
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.btn-link-main-inline:hover {
+  background: rgba(255, 209, 0, 0.15);
+  border-color: var(--gold-300);
+}
+
+.armory-roster-linker-wrap {
+  max-height: 480px;
+  overflow-y: auto;
+}
+
+.armory-linker-action-cell {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.armory-linker-member-select {
+  min-width: 195px;
+  max-width: 260px;
+  font-size: 0.78rem;
+  padding: 0.3rem 0.5rem;
+  height: auto;
 }
 
 /* ==========================================================================

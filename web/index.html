@@ -706,6 +706,28 @@
                 <p style="color: var(--text-dim); font-size: 0.85rem;">Select a member via search or the Roster Browser below to perform direct ledger overrides.</p>
               </div>
               <div id="memberInspectorForm" style="display: none; margin-top: 1rem;">
+                <div class="inspector-char-box" id="inspectorCharactersBox">
+                  <div class="inspector-char-head">
+                    <span class="inspector-char-title">Connected Characters (Main &amp; Alts)</span>
+                    <span class="inspector-char-sub">Verified via WoW: Forever Armory</span>
+                  </div>
+                  <div id="inspectorCharactersList" class="inspector-char-list"></div>
+                  <div class="inspector-char-link-form">
+                    <div class="inspector-char-input-wrap">
+                      <input type="text" class="form-control" id="inspectorCharNameInput" autocomplete="off" placeholder="Character Name or Name Surname...">
+                      <div id="inspectorCharSuggestions" class="inspector-char-suggestions" style="display: none;"></div>
+                    </div>
+                    <select class="form-control inspector-char-role-select" id="inspectorCharRoleSelect" title="Role preference (Auto detects from Armory spec)">
+                      <option value="">Auto Role</option>
+                      <option value="DPS">DPS</option>
+                      <option value="Tank">Tank</option>
+                      <option value="Healer">Healer</option>
+                    </select>
+                    <button type="button" class="btn-secondary btn-sm" id="btnOfficerLinkMainChar">Verify &amp; Link Main</button>
+                  </div>
+                  <div id="inspectorCharStatus" class="inspector-char-status" style="display: none;"></div>
+                </div>
+
                 <p style="font-size: 0.78rem; color: var(--text-muted); margin-bottom: 0.75rem; background: rgba(255, 209, 0, 0.05); border: 1px solid rgba(255, 209, 0, 0.16); padding: 0.5rem 0.65rem; border-radius: var(--radius-sm);">
                   Direct overrides update Spendable Bones, Career Score, or Bounty counters independently and are <strong>separate from the Weekly Earn Cap</strong>.
                 </p>
@@ -1225,6 +1247,42 @@
               <div id="officerArmoryActionResult" class="wow-inner-box" style="padding: 0.85rem; font-size: 0.82rem; color: var(--text-muted);">
                 Ready. Configure your guild slug and click Test Blizzard API or Sync Guild Roster.
               </div>
+            </div>
+          </div>
+
+          <div class="officer-box" id="officerGuildRosterLinkerBox" style="margin-top: 1rem;">
+            <div class="officer-roster-browser-head">
+              <div>
+                <h4 style="margin-bottom: 0.15rem;">Guild Roster Character Linker</h4>
+                <span class="subview-hint">Connect in-game WoW: Forever guild characters directly to Discord members who haven't linked their main character yet.</span>
+              </div>
+              <button type="button" class="btn-secondary btn-sm" id="btnRefreshArmoryRosterLinker">Refresh Roster View</button>
+            </div>
+
+            <div class="officer-roster-toolbar">
+              <div class="officer-filter-group" id="armoryRosterLinkerFilterPills">
+                <button type="button" class="filter-pill active" data-filter="unlinked" id="btnArmoryRosterUnlinked">Unlinked Only (<span id="cntArmoryRosterUnlinked">0</span>)</button>
+                <button type="button" class="filter-pill" data-filter="all" id="btnArmoryRosterAll">All Guild Roster (<span id="cntArmoryRosterAll">0</span>)</button>
+              </div>
+              <input type="text" class="form-control officer-roster-search" id="searchOfficerArmoryRoster" placeholder="Filter by character, class, or Discord member...">
+            </div>
+
+            <div class="officer-roster-table-wrap armory-roster-linker-wrap">
+              <table class="leaderboard-table officer-roster-table">
+                <thead>
+                  <tr>
+                    <th>In-Game Character</th>
+                    <th>Level &amp; Class</th>
+                    <th>Current Link</th>
+                    <th style="text-align: right;">Connect to Discord Member</th>
+                  </tr>
+                </thead>
+                <tbody id="officerArmoryRosterTbody">
+                  <tr>
+                    <td colspan="4" style="text-align: center; color: var(--text-dim); padding: 1.5rem;">Open this tab or click Refresh Roster View to load synced Forever guild characters.</td>
+                  </tr>
+                </tbody>
+              </table>
             </div>
           </div>
         </div>

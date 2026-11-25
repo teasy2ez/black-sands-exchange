@@ -710,10 +710,14 @@ function resolveMemberPrimaryChar(w) {
   const resolvedIdx = primIdx >= 0 ? primIdx : (fallbackIdx >= 0 ? fallbackIdx : (chars.length ? 0 : -1));
   const primChar = resolvedIdx >= 0 ? chars[resolvedIdx] : null;
   const name = primChar ? primChar.name : (w?.primaryCharacter || null);
+  const surname = primChar?.surname || '';
+  const rawAvatar = String(primChar?.avatarThumbUrl || '').trim();
+  const avatarThumbUrl = /^https?:\/\//i.test(rawAvatar) ? rawAvatar : '';
 
   return {
     name,
-    surname: primChar?.surname || '',
+    surname,
+    displayName: name ? (surname ? `${name} ${surname}` : name) : '',
     slug: primChar?.slug || '',
     key: primChar ? buildCharKeyClient(primChar, resolvedIdx) : (name ? buildCharKeyClient({ name }, 0) : null),
     charClass: primChar ? (primChar.class || 'Warrior') : '',
@@ -721,8 +725,61 @@ function resolveMemberPrimaryChar(w) {
     level: primChar?.level ? Number(primChar.level) : null,
     professions: primChar?.professions || '',
     armoryVerified: Boolean(primChar?.armoryVerified),
+    avatarThumbUrl,
     altCount: Math.max(0, chars.length - (primChar ? 1 : 0))
   };
+}
+
+function buildLedgerCharacterHeadshotHtml(prim, sizeVariant = 'desktop') {
+  if (!prim || !prim.name) return '';
+  const classSlug = String(prim.charClass || 'warrior').toLowerCase().replace(/[^a-z0-9]+/g, '-') || 'warrior';
+  const sizeCls = sizeVariant === 'mobile' ? ' is-mobile' : (sizeVariant === 'mini' ? ' is-mini' : '');
+  const baseCls = `ledger-char-headshot${sizeCls} class-border-${classSlug}`;
+  const initial = String(prim.name).trim().charAt(0).toUpperCase() || '?';
+  const label = prim.displayName || prim.name;
+  const tooltip = `${label}${prim.charClass ? ` (${prim.charClass})` : ''}`;
+
+  if (prim.avatarThumbUrl) {
+    return `<img src="${escapeAttr(prim.avatarThumbUrl)}" class="${baseCls}" alt="${escapeAttr(label)}" title="${escapeAttr(tooltip)}" loading="lazy" onerror="this.style.display='none'; if(this.nextElementSibling) this.nextElementSibling.style.display='inline-flex';"><span class="${baseCls} is-fallback" style="display:none;" title="${escapeAttr(tooltip)}">${escapeHtml(initial)}</span>`;
+  }
+  return `<span class="${baseCls} is-fallback" title="${escapeAttr(`${label} (Armory portrait pending)`)}">${escapeHtml(initial)}</span>`;
+}
+
+const attemptedHeadshotBackfillSlugs = new Set();
+let headshotBackfillInFlight = false;
+
+function backfillMissingLedgerHeadshots(displayedRows) {
+  if (headshotBackfillInFlight || !Array.isArray(displayedRows) || !displayedRows.length) return;
+  const slugsToFetch = [];
+  for (const row of displayedRows) {
+    const prim = row?.prim;
+    if (!prim?.name || prim.avatarThumbUrl) continue;
+    const slug = String(prim.slug || '').trim().toLowerCase();
+    if (!slug || !slug.includes('-')) continue;
+    if (attemptedHeadshotBackfillSlugs.has(slug)) continue;
+    attemptedHeadshotBackfillSlugs.add(slug);
+    slugsToFetch.push(slug);
+    if (slugsToFetch.length >= 3) break;
+  }
+  if (!slugsToFetch.length) return;
+
+  headshotBackfillInFlight = true;
+  Promise.all(
+    slugsToFetch.map(slug =>
+      fetch(`/api/exchange/armory/character?slug=${encodeURIComponent(slug)}`)
+        .then(r => (r.ok ? r.json() : null))
+        .catch(() => null)
+    )
+  )
+    .then(results => {
+      const anyAvatarFound = results.some(snap => Boolean(snap?.media?.avatar));
+      if (anyAvatarFound) {
+        return refreshBseState();
+      }
+    })
+    .finally(() => {
+      headshotBackfillInFlight = false;
+    });
 }
 
 let ledgerRecipesBySlug = new Map();
@@ -1359,7 +1416,10 @@ function renderLeaderboard() {
         <td class="table-rank-cell${rankTopCls}">${rankDisplay}</td>
         <td>
           <div class="member-cell">
-            <img src="${avatarUrl}" class="table-avatar" alt="${escapeAttr(name)}" onerror="this.onerror=null;this.src='assets/favicon.svg';">
+            <div class="ledger-avatar-pair">
+              <img src="${avatarUrl}" class="table-avatar" alt="${escapeAttr(name)}" onerror="this.onerror=null;this.src='assets/favicon.svg';">
+              ${buildLedgerCharacterHeadshotHtml(prim, 'desktop')}
+            </div>
             <div>
               <div style="font-weight: 700; color: var(--gold-100); display: flex; align-items: center; flex-wrap: wrap;">
                 ${escapeHtml(name)} ${statusBadge}
@@ -1432,7 +1492,10 @@ function renderLeaderboard() {
         <div class="${cardClass}" data-discord-id="${escapeAttr(w.discordId)}" onclick="${mobCardAction}">
           <div style="display: flex; align-items: center; gap: 0.65rem;">
             <div class="mobile-roster-rank${rankHighlightClass}">${rankNum}</div>
-            <img src="${avatarUrl}" class="mobile-roster-avatar" alt="${escapeAttr(name)}" onerror="this.onerror=null;this.src='assets/favicon.svg';">
+            <div class="ledger-avatar-pair">
+              <img src="${avatarUrl}" class="mobile-roster-avatar" alt="${escapeAttr(name)}" onerror="this.onerror=null;this.src='assets/favicon.svg';">
+              ${buildLedgerCharacterHeadshotHtml(prim, 'mobile')}
+            </div>
             <div class="mobile-roster-info">
               <div class="mobile-roster-name" style="display: flex; align-items: center; flex-wrap: wrap;">
                 ${escapeHtml(name)} ${statusBadge}
@@ -1455,6 +1518,8 @@ function renderLeaderboard() {
       `;
     }).join('');
   }
+
+  backfillMissingLedgerHeadshots(displayedRows);
 }
 
 window.inspectMemberRecipeMatch = function(discordId, preferredCharKey = null, recipeQuery = '') {
@@ -2177,6 +2242,7 @@ function formatAuditBadge(action) {
   if (action === 'MEMBER_HIDE') return { cls: 'deduct', text: 'Hidden' };
   if (action === 'MEMBER_UNHIDE') return { cls: 'award', text: 'Unhidden' };
   if (action === 'ROSTER_DISCORD_SYNC' || action === 'ROSTER_AUTO_SYNC') return { cls: 'adjust', text: 'Roster Sync' };
+  if (action === 'OFFICER_CHARACTER_LINK') return { cls: 'adjust', text: 'Character Link' };
   if (action === 'DATA_BACKUP_RESTORED') return { cls: 'adjust', text: 'Backup Restored' };
   if (action === 'DATA_BACKUP_CREATED') return { cls: 'award', text: 'Snapshot Saved' };
   if (action === 'MEMBER_DELETE') return { cls: 'purge', text: 'Purged' };
@@ -5087,6 +5153,39 @@ function setupOfficerTools() {
     window.quickDeleteMember?.(state.inspectedMemberId, name, w.spendableBones || 0, w.boneScore || 0);
   });
 
+  // Officer Connect Member Main Character (Inspector)
+  const inspectorCharInput = document.getElementById('inspectorCharNameInput');
+  const inspectorCharSuggestions = document.getElementById('inspectorCharSuggestions');
+  document.getElementById('btnOfficerLinkMainChar')?.addEventListener('click', () => {
+    window.officerSubmitMemberCharLink?.();
+  });
+  inspectorCharInput?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (inspectorCharSuggestions) inspectorCharSuggestions.style.display = 'none';
+      window.officerSubmitMemberCharLink?.();
+    } else if (e.key === 'Escape') {
+      if (inspectorCharSuggestions) inspectorCharSuggestions.style.display = 'none';
+    }
+  });
+  inspectorCharInput?.addEventListener('input', () => {
+    renderInspectorCharSuggestions(inspectorCharInput.value);
+  });
+  inspectorCharInput?.addEventListener('focus', () => {
+    if (inspectorCharInput.value.trim().length >= 2) {
+      renderInspectorCharSuggestions(inspectorCharInput.value);
+    } else {
+      // Warm up cached guild roster silently for fast autocomplete
+      fetchOfficerGuildRosterForAutocomplete().catch(() => {});
+    }
+  });
+  document.addEventListener('click', (e) => {
+    if (!inspectorCharSuggestions || inspectorCharSuggestions.style.display === 'none') return;
+    if (!e.target.closest('.inspector-char-input-wrap')) {
+      inspectorCharSuggestions.style.display = 'none';
+    }
+  });
+
   // Open Create Guild Bounty Modal
   document.getElementById('btnOpenCreateBountyModal')?.addEventListener('click', () => {
     const titleEl = document.getElementById('newBountyTitle');
@@ -5392,7 +5491,304 @@ function setupOfficerTools() {
   }
 }
 
+let cachedOfficerRosterMembers = null;
+let cachedOfficerRosterFetchedAt = 0;
+
+async function fetchOfficerGuildRosterForAutocomplete(forceRefresh = false) {
+  const now = Date.now();
+  if (!forceRefresh && Array.isArray(cachedOfficerRosterMembers) && (now - cachedOfficerRosterFetchedAt) < 120000) {
+    return cachedOfficerRosterMembers;
+  }
+  const res = await fetch(`/api/exchange/armory/guild-roster${forceRefresh ? '?refresh=1' : ''}`);
+  if (!res.ok) return cachedOfficerRosterMembers || [];
+  const data = await res.json().catch(() => ({}));
+  cachedOfficerRosterMembers = Array.isArray(data.members) ? data.members : [];
+  cachedOfficerRosterFetchedAt = now;
+  return cachedOfficerRosterMembers;
+}
+
+window.invalidateOfficerRosterCache = function(nextMembers = null) {
+  if (Array.isArray(nextMembers)) {
+    cachedOfficerRosterMembers = nextMembers;
+    cachedOfficerRosterFetchedAt = Date.now();
+  } else {
+    cachedOfficerRosterMembers = null;
+    cachedOfficerRosterFetchedAt = 0;
+  }
+};
+
+async function renderInspectorCharSuggestions(rawQuery) {
+  const box = document.getElementById('inspectorCharSuggestions');
+  if (!box) return;
+  const q = String(rawQuery || '').trim().toLowerCase();
+  if (q.length < 2) {
+    box.style.display = 'none';
+    box.innerHTML = '';
+    return;
+  }
+
+  const members = await fetchOfficerGuildRosterForAutocomplete().catch(() => []);
+  if (document.getElementById('inspectorCharNameInput')?.value.trim().toLowerCase() !== q) return;
+  if (!Array.isArray(members) || !members.length) {
+    box.style.display = 'none';
+    return;
+  }
+
+  const matches = members
+    .filter(m => {
+      const disp = String(m.displayName || `${m.name || ''} ${m.surname || ''}`).toLowerCase();
+      const slug = String(m.slug || '').toLowerCase();
+      return disp.includes(q) || slug.includes(q);
+    })
+    .sort((a, b) => {
+      const aUnlinked = a.matchType === 'unlinked' ? 0 : 1;
+      const bUnlinked = b.matchType === 'unlinked' ? 0 : 1;
+      if (aUnlinked !== bUnlinked) return aUnlinked - bUnlinked;
+      return (Number(b.level) || 0) - (Number(a.level) || 0);
+    })
+    .slice(0, 8);
+
+  if (!matches.length) {
+    box.style.display = 'none';
+    box.innerHTML = '';
+    return;
+  }
+
+  box.innerHTML = matches.map(m => {
+    const label = m.displayName || (m.surname ? `${m.name} ${m.surname}` : m.name);
+    const classCss = `class-${String(m.className || 'warrior').toLowerCase().replace(/\s+/g, '-')}`;
+    const linkNote = m.matchedDiscordName
+      ? `<span style="font-size:0.68rem; color:var(--text-dim);">Linked: ${escapeHtml(m.matchedDiscordName)}</span>`
+      : `<span style="font-size:0.68rem; color:#86efac;">Unlinked</span>`;
+    return `
+      <button type="button" class="inspector-char-suggestion-item" onclick="officerPickRosterSuggestion('${escapeAttr(m.name || '')}', '${escapeAttr(m.surname || '')}', '${escapeAttr(m.slug || '')}', '${escapeAttr(m.className || '')}', ${Number(m.level) || 0}, '${escapeAttr(m.raceName || '')}')">
+        <span>
+          <span class="class-badge ${classCss}" style="padding:0.08rem 0.34rem; font-size:0.72rem;">${escapeHtml(label)}</span>
+          ${m.level ? `<span style="font-size:0.7rem; color:var(--text-muted); margin-left:0.3rem;">Lv ${escapeHtml(String(m.level))}</span>` : ''}
+        </span>
+        ${linkNote}
+      </button>
+    `;
+  }).join('');
+  box.style.display = 'block';
+}
+
+window.officerPickRosterSuggestion = function(name, surname, slug, className, level, race) {
+  const input = document.getElementById('inspectorCharNameInput');
+  const box = document.getElementById('inspectorCharSuggestions');
+  const fullLabel = surname ? `${name} ${surname}` : name;
+  if (input) input.value = fullLabel;
+  if (box) box.style.display = 'none';
+  window.officerSubmitMemberCharLink({
+    characterName: name,
+    surname,
+    slug,
+    className,
+    level: Number(level) || 0,
+    race,
+    fromGuildRoster: true
+  });
+};
+
+function renderInspectorCharactersList(userId, wallet) {
+  const listEl = document.getElementById('inspectorCharactersList');
+  if (!listEl) return;
+
+  const chars = Array.isArray(wallet?.characters) && wallet.characters.length
+    ? wallet.characters
+    : (wallet?.primaryCharacter ? [{ name: wallet.primaryCharacter, class: 'Warrior', role: 'DPS', isPrimary: true }] : []);
+
+  if (!chars.length) {
+    listEl.innerHTML = `<div style="font-size: 0.78rem; color: var(--text-dim); padding: 0.2rem 0;">No character connected yet. Enter a character name below to link their main.</div>`;
+    return;
+  }
+
+  const primIdx = chars.findIndex(c => c.isPrimary);
+  const resolvedPrimIdx = primIdx >= 0 ? primIdx : 0;
+
+  listEl.innerHTML = chars.map((c, idx) => {
+    const isPrimary = idx === resolvedPrimIdx;
+    const fullLabel = c.surname ? `${c.name} ${c.surname}` : c.name;
+    const className = c.class || 'Warrior';
+    const classCss = `class-${String(className).toLowerCase().replace(/\s+/g, '-')}`;
+    const keyOrName = c.slug || c.name;
+    const rawAvatar = String(c.avatarThumbUrl || '').trim();
+    const miniHeadshot = buildLedgerCharacterHeadshotHtml({
+      name: c.name,
+      displayName: fullLabel,
+      charClass: className,
+      avatarThumbUrl: /^https?:\/\//i.test(rawAvatar) ? rawAvatar : ''
+    }, 'mini');
+
+    return `
+      <div class="inspector-char-row${isPrimary ? ' is-primary' : ''}">
+        <div class="inspector-char-row-meta">
+          ${miniHeadshot}
+          <span class="class-badge ${classCss}" style="padding: 0.1rem 0.38rem; font-size: 0.74rem;">${escapeHtml(fullLabel)}</span>
+          ${c.level ? `<span class="ledger-char-lv">Lv ${escapeHtml(String(c.level))}</span>` : ''}
+          <span class="role-pill ${String(c.role || 'dps').toLowerCase()}">${escapeHtml(c.role || 'DPS')}</span>
+          ${isPrimary ? '<span class="inspector-char-main-pill">Main</span>' : ''}
+          ${c.armoryVerified ? '<span class="inspector-char-verified-pill" title="Verified on WoW: Forever Armory">Armory</span>' : ''}
+        </div>
+        <div class="inspector-char-row-actions">
+          ${!isPrimary ? `<button type="button" class="btn-secondary btn-xs" onclick="officerSetMemberPrimaryChar('${escapeAttr(userId)}', '${escapeAttr(keyOrName)}')">Set Main</button>` : ''}
+          <button type="button" class="btn-danger btn-xs" title="Unlink ${escapeAttr(fullLabel)}" onclick="officerRemoveMemberChar('${escapeAttr(userId)}', '${escapeAttr(keyOrName)}', '${escapeAttr(fullLabel)}')">&times;</button>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+window.officerSubmitMemberCharLink = async function(overrides = {}) {
+  const targetId = overrides.targetId || state.inspectedMemberId;
+  if (!targetId) return;
+
+  const inputEl = document.getElementById('inspectorCharNameInput');
+  const roleEl = document.getElementById('inspectorCharRoleSelect');
+  const btnEl = document.getElementById('btnOfficerLinkMainChar');
+  const statusEl = document.getElementById('inspectorCharStatus');
+
+  const rawName = String(overrides.characterName ?? inputEl?.value ?? '').trim();
+  if (!rawName && !overrides.slug) {
+    showToast('Enter a character name first.');
+    inputEl?.focus();
+    return;
+  }
+
+  const payload = {
+    action: 'link_main',
+    targetId,
+    characterName: rawName,
+    surname: overrides.surname || '',
+    slug: overrides.slug || '',
+    role: overrides.role ?? (roleEl?.value || ''),
+    className: overrides.className || '',
+    level: overrides.level || 0,
+    race: overrides.race || '',
+    allowUnverified: Boolean(overrides.allowUnverified),
+    fromGuildRoster: Boolean(overrides.fromGuildRoster)
+  };
+
+  if (btnEl) {
+    btnEl.disabled = true;
+    btnEl.textContent = 'Verifying...';
+  }
+  if (statusEl) {
+    statusEl.style.display = 'block';
+    statusEl.innerHTML = `<span style="color: var(--gold-200);">Checking WoW: Forever Armory and linking character...</span>`;
+  }
+
+  try {
+    const res = await fetch('/api/exchange/member/characters', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json().catch(() => ({}));
+
+    if (res.ok) {
+      if (inputEl && targetId === state.inspectedMemberId) inputEl.value = '';
+      if (statusEl && targetId === state.inspectedMemberId) {
+        statusEl.style.display = 'none';
+        statusEl.innerHTML = '';
+      }
+      window.invalidateOfficerRosterCache();
+      showToast(`Connected main character "${data.primaryCharacter || rawName}"!`);
+      await refreshBseState();
+      if (state.inspectedMemberId === targetId) {
+        loadMemberIntoInspector(targetId);
+      }
+      window.BSEArmory?.refreshOfficerRosterLinker?.();
+      return;
+    }
+
+    if (res.status === 409 && data.code === 'AMBIGUOUS_CHARACTER' && Array.isArray(data.matches) && statusEl) {
+      const chips = data.matches.map(m => {
+        const label = m.displayName || (m.surname ? `${m.name} ${m.surname}` : m.name);
+        const detail = [m.level ? `Lv ${m.level}` : '', m.className || ''].filter(Boolean).join(' ');
+        return `<button type="button" class="ambiguous-char-chip" onclick="officerSubmitMemberCharLink({ targetId: '${escapeAttr(targetId)}', characterName: '${escapeAttr(m.name || rawName)}', surname: '${escapeAttr(m.surname || '')}', slug: '${escapeAttr(m.slug || '')}' })">${escapeHtml(label)}${detail ? ` &bull; ${escapeHtml(detail)}` : ''}</button>`;
+      }).join('');
+      statusEl.style.display = 'block';
+      statusEl.innerHTML = `
+        <div style="color: #fcd34d; font-weight: 600;">${escapeHtml(data.error || 'Multiple guild characters share that name. Pick one:')}</div>
+        <div class="ambiguous-char-chips">${chips}</div>
+      `;
+      return;
+    }
+
+    if (data.canForceUnverified && statusEl) {
+      statusEl.style.display = 'block';
+      statusEl.innerHTML = `
+        <div style="color: #fca5a5; margin-bottom: 0.35rem;">${escapeHtml(data.error || 'Character not found on Armory yet.')}</div>
+        <button type="button" class="btn-secondary btn-xs" onclick="officerSubmitMemberCharLink({ targetId: '${escapeAttr(targetId)}', characterName: '${escapeAttr(rawName)}', allowUnverified: true })">Link "${escapeHtml(rawName)}" Unverified Anyway</button>
+      `;
+      return;
+    }
+
+    if (statusEl) {
+      statusEl.style.display = 'block';
+      statusEl.innerHTML = `<span style="color: #fca5a5;">${escapeHtml(data.error || 'Failed to link character.')}</span>`;
+    }
+    showToast(data.error || 'Failed to link character.');
+  } catch (err) {
+    if (statusEl) {
+      statusEl.style.display = 'block';
+      statusEl.innerHTML = `<span style="color: #fca5a5;">${escapeHtml(err.message || 'Network error linking character.')}</span>`;
+    }
+    showToast(`Error: ${err.message}`);
+  } finally {
+    if (btnEl) {
+      btnEl.disabled = false;
+      btnEl.textContent = 'Verify & Link Main';
+    }
+  }
+};
+
+window.officerSetMemberPrimaryChar = async function(targetId, slugOrName) {
+  if (!targetId || !slugOrName) return;
+  const res = await fetch('/api/exchange/member/characters', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'set_primary', targetId, slugOrName })
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    showToast(data.error || 'Failed to update main character.');
+    return;
+  }
+  window.invalidateOfficerRosterCache();
+  showToast(`Main character set to "${data.primaryCharacter || slugOrName}".`);
+  await refreshBseState();
+  if (state.inspectedMemberId === targetId) {
+    loadMemberIntoInspector(targetId);
+  }
+  window.BSEArmory?.refreshOfficerRosterLinker?.();
+};
+
+window.officerRemoveMemberChar = async function(targetId, slugOrName, displayLabel) {
+  if (!targetId || !slugOrName) return;
+  if (!confirm(`Unlink character "${displayLabel || slugOrName}" from this member's wallet?`)) return;
+  const res = await fetch('/api/exchange/member/characters', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'remove_character', targetId, slugOrName })
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    showToast(data.error || 'Failed to unlink character.');
+    return;
+  }
+  window.invalidateOfficerRosterCache();
+  showToast(`Unlinked "${displayLabel || slugOrName}".`);
+  await refreshBseState();
+  if (state.inspectedMemberId === targetId) {
+    loadMemberIntoInspector(targetId);
+  }
+  window.BSEArmory?.refreshOfficerRosterLinker?.();
+};
+
 function loadMemberIntoInspector(userId) {
+  const prevInspected = state.inspectedMemberId;
   state.inspectedMemberId = userId;
   const wallet = state.bseState?.wallets?.[userId];
   const card = document.getElementById('memberInspectorCard');
@@ -5406,20 +5802,43 @@ function loadMemberIntoInspector(userId) {
   }
 
   const name = wallet.serverNickname || wallet.globalName || wallet.username || 'Member';
-  const charPart = wallet.primaryCharacter ? `Primary: <strong>${escapeHtml(wallet.primaryCharacter)}</strong>` : 'No primary character';
+  const prim = resolveMemberPrimaryChar(wallet);
+  const charPart = prim.name
+    ? `Main Character: <strong style="color: var(--gold-200);">${escapeHtml(prim.displayName || prim.name)}</strong>${prim.charClass ? ` (${escapeHtml(prim.charClass)})` : ''}`
+    : '<span style="color: var(--amber);">No main character connected yet</span>';
   const wkStatus = resolveClientMemberWeeklyStatus(wallet, state.bseState);
+  const avatarUrl = getDiscordAvatarUrl(wallet.discordId || userId, wallet.avatarHash, 64);
 
   card.innerHTML = `
     <div style="background: var(--bg-primary); padding: 0.85rem; border-radius: var(--radius-sm); border: 1px solid var(--border-gold);">
-      <div style="font-size: 1.1rem; font-weight: 700; color: var(--gold-100);">${escapeHtml(name)} (@${escapeHtml(wallet.username || '')})</div>
-      <div style="font-size: 0.8rem; color: var(--text-muted); margin: 0.2rem 0;">${charPart}</div>
-      <div style="display: flex; gap: 1rem; margin-top: 0.5rem; flex-wrap: wrap;">
+      <div style="display: flex; align-items: center; gap: 0.65rem;">
+        <div class="ledger-avatar-pair">
+          <img src="${avatarUrl}" class="table-avatar" alt="${escapeAttr(name)}" onerror="this.onerror=null;this.src='assets/favicon.svg';">
+          ${buildLedgerCharacterHeadshotHtml(prim, 'desktop')}
+        </div>
+        <div>
+          <div style="font-size: 1.05rem; font-weight: 700; color: var(--gold-100);">${escapeHtml(name)} (@${escapeHtml(wallet.username || '')})</div>
+          <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.1rem;">${charPart}</div>
+        </div>
+      </div>
+      <div style="display: flex; gap: 1rem; margin-top: 0.6rem; flex-wrap: wrap;">
         <div>Spendable: <strong style="color:var(--gold-300);">${(wallet.spendableBones || 0).toLocaleString()} ${escapeHtml(currName)}</strong></div>
         <div>Score: <strong style="color:var(--amber);">${(wallet.boneScore || 0).toLocaleString()} Pts</strong></div>
         <div>Weekly Cap: <strong style="color:${wkStatus.enabled && wkStatus.weeklyEarned >= wkStatus.effectiveCap ? '#f87171' : 'var(--gold-200)'};">${wkStatus.label}</strong></div>
       </div>
     </div>
   `;
+
+  renderInspectorCharactersList(userId, wallet);
+  if (prevInspected !== userId) {
+    const statusEl = document.getElementById('inspectorCharStatus');
+    if (statusEl) {
+      statusEl.style.display = 'none';
+      statusEl.innerHTML = '';
+    }
+    const charIn = document.getElementById('inspectorCharNameInput');
+    if (charIn) charIn.value = '';
+  }
 
   const spendIn = document.getElementById('inspectorSpendable');
   if (spendIn) spendIn.value = wallet.spendableBones || 0;
@@ -5438,6 +5857,15 @@ function loadMemberIntoInspector(userId) {
 window.selectOfficerRosterMember = function(userId) {
   loadMemberIntoInspector(userId);
   document.getElementById('memberInspectorCard')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+};
+
+window.focusOfficerMemberCharLink = function(userId) {
+  loadMemberIntoInspector(userId);
+  const box = document.getElementById('inspectorCharactersBox') || document.getElementById('memberInspectorCard');
+  box?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  setTimeout(() => {
+    document.getElementById('inspectorCharNameInput')?.focus();
+  }, 150);
 };
 
 function renderOfficerRosterManager() {
@@ -5493,7 +5921,10 @@ function renderOfficerRosterManager() {
       const name = (w.serverNickname || w.globalName || w.username || '').toLowerCase();
       const handle = (w.username || '').toLowerCase();
       const char = (w.primaryCharacter || '').toLowerCase();
-      return name.includes(q) || handle.includes(q) || char.includes(q);
+      const charHit = (w.characters || []).some(c =>
+        `${c.name || ''} ${c.surname || ''}`.toLowerCase().includes(q)
+      );
+      return name.includes(q) || handle.includes(q) || char.includes(q) || charHit;
     });
   }
 
@@ -5509,6 +5940,9 @@ function renderOfficerRosterManager() {
     const wkStatus = resolveClientMemberWeeklyStatus(w, state.bseState);
     const hiddenBadge = w.officerHidden ? ` <span class="badge-officer-hidden">Hidden</span>` : '';
     const zeroBadge = (!w.officerHidden && isZeroBones(w)) ? ` <span class="badge-zero-bones">0 Bones</span>` : '';
+    const mainCharCellHtml = prim.name
+      ? `<div style="display: inline-flex; align-items: center; gap: 0.35rem;">${buildLedgerCharacterHeadshotHtml(prim, 'mini')}<span class="class-badge class-${(prim.charClass || 'warrior').toLowerCase().replace(/\s+/g, '-')}">${escapeHtml(prim.displayName || prim.name)}</span></div>`
+      : `<button type="button" class="btn-link-main-inline" onclick="focusOfficerMemberCharLink('${escapeAttr(w.discordId)}')" title="Connect a main character to ${escapeAttr(name)}">+ Link Main</button>`;
 
     return `
       <tr>
@@ -5516,7 +5950,7 @@ function renderOfficerRosterManager() {
           <div style="font-weight: 700; color: var(--gold-100);">${escapeHtml(name)}${hiddenBadge}${zeroBadge}</div>
           <div style="font-size: 0.72rem; color: var(--text-muted);">${escapeHtml(handle)}</div>
         </td>
-        <td>${prim.name ? `<span class="class-badge class-${(prim.charClass || 'warrior').toLowerCase().replace(/\s+/g, '-')}">${escapeHtml(prim.name)}</span>` : '<span style="color:var(--text-dim);">—</span>'}</td>
+        <td>${mainCharCellHtml}</td>
         <td style="font-weight: 700; color: var(--gold-300);">${(w.spendableBones || 0).toLocaleString()}</td>
         <td style="font-weight: 700; color: var(--amber);">${(w.boneScore || 0).toLocaleString()}</td>
         <td style="font-size: 0.78rem; color: ${wkStatus.enabled && wkStatus.weeklyEarned >= wkStatus.effectiveCap ? '#f87171' : 'var(--text-muted)'};">${escapeHtml(wkStatus.label)}</td>

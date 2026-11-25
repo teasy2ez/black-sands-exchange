@@ -1921,6 +1921,208 @@
   // OFFICER HALL FOREVER ARMORY CONTROLS (#subview-armory)
   // =========================================================================
 
+  let officerRosterMembersCache = null;
+  let officerRosterFilter = 'unlinked';
+  let officerRosterSearch = '';
+  let officerRosterLoading = false;
+  let renderedRosterRowsRef = [];
+
+  function resolveLiveRosterMatches(rawMembers, wallets) {
+    if (!Array.isArray(rawMembers)) return [];
+    const slugMap = new Map();
+    const firstMap = new Map();
+    for (const w of Object.values(wallets || {})) {
+      const display = w.serverNickname || w.globalName || w.username || w.discordId;
+      for (const ch of w.characters || []) {
+        const s = String(ch.slug || '').trim().toLowerCase();
+        if (s) slugMap.set(s, { id: w.discordId, display });
+        const f = String(ch.name || '').trim().toLowerCase();
+        if (f && !ch.surname) {
+          if (!firstMap.has(f)) firstMap.set(f, []);
+          firstMap.get(f).push({ id: w.discordId, display });
+        }
+      }
+    }
+
+    const firstCounts = new Map();
+    for (const m of rawMembers) {
+      const f = String(m.name || '').trim().toLowerCase();
+      firstCounts.set(f, (firstCounts.get(f) || 0) + 1);
+    }
+
+    return rawMembers.map(m => {
+      const mSlug = String(m.slug || '').trim().toLowerCase();
+      const mFirst = String(m.name || '').trim().toLowerCase();
+      const exact = mSlug ? slugMap.get(mSlug) : null;
+      if (exact) {
+        return { ...m, matchedDiscordId: exact.id, matchedDiscordName: exact.display, matchType: 'exact' };
+      }
+      const cands = firstMap.get(mFirst) || [];
+      if (cands.length === 1 && firstCounts.get(mFirst) === 1) {
+        return { ...m, matchedDiscordId: cands[0].id, matchedDiscordName: cands[0].display, matchType: 'unique-first-name' };
+      }
+      return { ...m, matchedDiscordId: null, matchedDiscordName: null, matchType: 'unlinked' };
+    });
+  }
+
+  function buildDiscordMemberOptionsHtml(wallets, selectedDiscordId = '') {
+    const list = Object.values(wallets || {}).map(w => {
+      const display = w.serverNickname || w.globalName || w.username || w.discordId;
+      const handle = w.username ? ` (@${w.username})` : '';
+      const chars = Array.isArray(w.characters) ? w.characters : [];
+      const primChar = chars.find(c => c.isPrimary) || chars[0] || null;
+      const mainLabel = primChar
+        ? (primChar.surname ? `${primChar.name} ${primChar.surname}` : primChar.name)
+        : (w.primaryCharacter || '');
+      return {
+        id: w.discordId,
+        display,
+        label: `${display}${handle}`,
+        mainLabel,
+        hasMain: Boolean(mainLabel)
+      };
+    }).sort((a, b) => a.display.toLowerCase().localeCompare(b.display.toLowerCase()));
+
+    const unlinkedWallets = list.filter(x => !x.hasMain);
+    const linkedWallets = list.filter(x => x.hasMain);
+
+    let html = `<option value="">Select Discord member...</option>`;
+    if (unlinkedWallets.length) {
+      html += `<optgroup label="No Main Character Linked (${unlinkedWallets.length})">`;
+      for (const m of unlinkedWallets) {
+        const sel = m.id === selectedDiscordId ? ' selected' : '';
+        html += `<option value="${escAttr(m.id)}"${sel}>${escHtml(m.label)}</option>`;
+      }
+      html += `</optgroup>`;
+    }
+    if (linkedWallets.length) {
+      html += `<optgroup label="Already Has Main Character (${linkedWallets.length})">`;
+      for (const m of linkedWallets) {
+        const sel = m.id === selectedDiscordId ? ' selected' : '';
+        html += `<option value="${escAttr(m.id)}"${sel}>${escHtml(`${m.label} — Main: ${m.mainLabel}`)}</option>`;
+      }
+      html += `</optgroup>`;
+    }
+    return html;
+  }
+
+  function renderOfficerGuildRosterLinker() {
+    const tbody = document.getElementById('officerArmoryRosterTbody');
+    if (!tbody) return;
+
+    const bse = hostCtx.getState()?.bseState;
+    const wallets = bse?.wallets || {};
+
+    if (officerRosterLoading && !Array.isArray(officerRosterMembersCache)) {
+      tbody.innerHTML = `<tr><td colspan="4" style="text-align: center; color: var(--gold-200); padding: 1.5rem;">Loading synced WoW: Forever guild roster...</td></tr>`;
+      return;
+    }
+
+    if (!Array.isArray(officerRosterMembersCache)) {
+      tbody.innerHTML = `<tr><td colspan="4" style="text-align: center; color: var(--text-dim); padding: 1.5rem;">Click <strong>Refresh Roster View</strong> or <strong>Sync Guild Roster</strong> to load guild characters.</td></tr>`;
+      return;
+    }
+
+    const hydrated = resolveLiveRosterMatches(officerRosterMembersCache, wallets);
+    const unlinkedList = hydrated.filter(m => m.matchType === 'unlinked');
+
+    const cntUnlinkedEl = document.getElementById('cntArmoryRosterUnlinked');
+    if (cntUnlinkedEl) cntUnlinkedEl.textContent = String(unlinkedList.length);
+    const cntAllEl = document.getElementById('cntArmoryRosterAll');
+    if (cntAllEl) cntAllEl.textContent = String(hydrated.length);
+
+    if (!hydrated.length) {
+      tbody.innerHTML = `<tr><td colspan="4" style="text-align: center; color: var(--text-dim); padding: 1.5rem;">No synced Forever guild characters cached yet. Click <strong>Sync Guild Roster</strong> above first.</td></tr>`;
+      return;
+    }
+
+    let pool = officerRosterFilter === 'unlinked' ? unlinkedList : hydrated;
+    const q = officerRosterSearch.trim().toLowerCase();
+    if (q) {
+      pool = pool.filter(m => {
+        const disp = String(m.displayName || `${m.name || ''} ${m.surname || ''}`).toLowerCase();
+        const cls = String(m.className || '').toLowerCase();
+        const disc = String(m.matchedDiscordName || '').toLowerCase();
+        return disp.includes(q) || cls.includes(q) || disc.includes(q);
+      });
+    }
+
+    pool = [...pool].sort((a, b) => {
+      const lvDiff = (Number(b.level) || 0) - (Number(a.level) || 0);
+      if (lvDiff !== 0) return lvDiff;
+      return String(a.displayName || a.name || '').localeCompare(String(b.displayName || b.name || ''));
+    });
+
+    if (!pool.length) {
+      tbody.innerHTML = `<tr><td colspan="4" style="text-align: center; color: var(--text-dim); padding: 1.5rem;">${officerRosterFilter === 'unlinked' && !q ? 'Every synced Forever guild character is already connected to a Discord member!' : 'No guild characters match your filter.'}</td></tr>`;
+      renderedRosterRowsRef = [];
+      return;
+    }
+
+    renderedRosterRowsRef = pool.slice(0, 150);
+    tbody.innerHTML = renderedRosterRowsRef.map((m, idx) => {
+      const fullLabel = m.displayName || (m.surname ? `${m.name} ${m.surname}` : m.name);
+      const className = m.className || 'Warrior';
+      const classCss = `class-${String(className).toLowerCase().replace(/\s+/g, '-')}`;
+      const isLinked = m.matchType !== 'unlinked' && Boolean(m.matchedDiscordId);
+      const linkBadge = isLinked
+        ? `<span style="color: #86efac; font-weight: 600; font-size: 0.78rem;">&#10003; ${escHtml(m.matchedDiscordName || 'Linked')}</span>`
+        : `<span style="color: var(--amber); font-size: 0.76rem;">Unlinked</span>`;
+      const optionsHtml = buildDiscordMemberOptionsHtml(wallets, m.matchedDiscordId || '');
+
+      return `
+        <tr>
+          <td>
+            <div style="font-weight: 700; color: var(--gold-100);">${escHtml(fullLabel)}</div>
+            ${m.slug ? `<div style="font-size: 0.68rem; color: var(--text-dim);"><code>${escHtml(m.slug)}</code></div>` : ''}
+          </td>
+          <td>
+            <span class="class-badge ${classCss}">${escHtml(className)}</span>
+            ${m.level ? `<span class="ledger-char-lv" style="margin-left: 0.25rem;">Lv ${escHtml(String(m.level))}</span>` : ''}
+            ${m.raceName ? `<div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 0.15rem;">${escHtml(m.raceName)}</div>` : ''}
+          </td>
+          <td>${linkBadge}</td>
+          <td style="text-align: right;">
+            <div class="armory-linker-action-cell">
+              <select class="form-control armory-linker-member-select" id="armoryRosterMemberSelect_${idx}">
+                ${optionsHtml}
+              </select>
+              <button type="button" class="btn-primary btn-xs" data-armory-link-idx="${idx}">${isLinked ? 'Reassign' : 'Link Main'}</button>
+            </div>
+          </td>
+        </tr>
+      `;
+    }).join('');
+  }
+
+  async function loadOfficerGuildRosterLinker({ forceRefresh = false } = {}) {
+    if (officerRosterLoading) return;
+    officerRosterLoading = true;
+    renderOfficerGuildRosterLinker();
+    try {
+      const guildSlug = document.getElementById('officerArmoryGuildSlug')?.value.trim() || '';
+      const params = new URLSearchParams();
+      if (guildSlug) params.set('guildSlug', guildSlug);
+      if (forceRefresh) params.set('refresh', '1');
+      const qs = params.toString();
+      const res = await fetch(`/api/exchange/armory/guild-roster${qs ? `?${qs}` : ''}`);
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && Array.isArray(data.members)) {
+        officerRosterMembersCache = data.members;
+        window.invalidateOfficerRosterCache?.(data.members);
+      } else if (!Array.isArray(officerRosterMembersCache)) {
+        officerRosterMembersCache = [];
+      }
+    } catch {
+      if (!Array.isArray(officerRosterMembersCache)) {
+        officerRosterMembersCache = [];
+      }
+    } finally {
+      officerRosterLoading = false;
+      renderOfficerGuildRosterLinker();
+    }
+  }
+
   function syncOfficerArmoryForm() {
     const bse = hostCtx.getState()?.bseState;
     if (!bse) return;
@@ -1951,6 +2153,15 @@
           Static NS: <code>${escHtml(cfg.staticNamespaceCache || 'auto')}</code>
         </span>
       `;
+    }
+
+    const subviewEl = document.getElementById('subview-armory');
+    if (subviewEl?.classList.contains('active')) {
+      if (!Array.isArray(officerRosterMembersCache) && !officerRosterLoading) {
+        loadOfficerGuildRosterLinker();
+      } else {
+        renderOfficerGuildRosterLinker();
+      }
     }
   }
 
@@ -2020,7 +2231,15 @@
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Roster sync failed');
-        const count = data.roster?.memberCount || data.roster?.members?.length || 0;
+        const members = data.roster?.members || [];
+        const count = data.roster?.memberCount || members.length || 0;
+        if (Array.isArray(data.roster?.members)) {
+          officerRosterMembersCache = data.roster.members;
+          window.invalidateOfficerRosterCache?.(data.roster.members);
+          renderOfficerGuildRosterLinker();
+        } else {
+          await loadOfficerGuildRosterLinker();
+        }
         setResult(`Synced "${data.roster?.guildName || guildSlug}": ${count} in-game characters indexed.`);
         hostCtx.showToast(`Synced ${count} Forever roster characters.`);
       } catch (err) {
@@ -2049,12 +2268,87 @@
         setResult(`Matched ${data.matchedCount || 0} new legacy characters (${data.alreadyLinkedCount || 0} already linked across ${data.totalRosterMembers || 0} roster members).`);
         hostCtx.showToast(`Auto-matched ${data.matchedCount || 0} Forever characters!`);
         await hostCtx.refreshBseState();
+        renderOfficerGuildRosterLinker();
       } catch (err) {
         setResult(`Auto-match failed: ${err.message}`, false);
         hostCtx.showToast(`Auto-match failed: ${err.message}`);
       } finally {
         btn.disabled = false;
         btn.textContent = 'Auto-Match Wallets';
+      }
+    });
+
+    // Guild Roster Character Linker controls
+    document.getElementById('btnRefreshArmoryRosterLinker')?.addEventListener('click', () => {
+      loadOfficerGuildRosterLinker({ forceRefresh: false });
+    });
+
+    const btnUnlinked = document.getElementById('btnArmoryRosterUnlinked');
+    const btnAll = document.getElementById('btnArmoryRosterAll');
+    [
+      { btn: btnUnlinked, filter: 'unlinked' },
+      { btn: btnAll, filter: 'all' }
+    ].forEach(({ btn, filter }) => {
+      btn?.addEventListener('click', () => {
+        officerRosterFilter = filter;
+        document.querySelectorAll('#armoryRosterLinkerFilterPills .filter-pill').forEach(p => p.classList.remove('active'));
+        btn.classList.add('active');
+        renderOfficerGuildRosterLinker();
+      });
+    });
+
+    const searchIn = document.getElementById('searchOfficerArmoryRoster');
+    searchIn?.addEventListener('input', () => {
+      officerRosterSearch = searchIn.value || '';
+      renderOfficerGuildRosterLinker();
+    });
+
+    document.getElementById('officerArmoryRosterTbody')?.addEventListener('click', async (e) => {
+      const btn = e.target.closest('[data-armory-link-idx]');
+      if (!btn) return;
+      const idx = parseInt(btn.getAttribute('data-armory-link-idx'), 10);
+      const member = renderedRosterRowsRef[idx];
+      if (!member) return;
+
+      const selectEl = document.getElementById(`armoryRosterMemberSelect_${idx}`);
+      const targetId = String(selectEl?.value || '').trim();
+      if (!targetId) {
+        hostCtx.showToast('Select a Discord member from the dropdown first.');
+        selectEl?.focus();
+        return;
+      }
+
+      const prevText = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = 'Linking...';
+      try {
+        const res = await fetch('/api/exchange/member/characters', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'link_main',
+            targetId,
+            characterName: member.name,
+            surname: member.surname || '',
+            slug: member.slug || '',
+            className: member.className || '',
+            race: member.raceName || '',
+            level: Number(member.level) || 0,
+            fromGuildRoster: true
+          })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || 'Failed to link character');
+        const fullLabel = member.displayName || (member.surname ? `${member.name} ${member.surname}` : member.name);
+        hostCtx.showToast(`Linked "${fullLabel}" as Main Character!`);
+        setResult(`Connected "${fullLabel}" as Main Character for ${data.wallet?.serverNickname || data.wallet?.username || targetId}.`);
+        await hostCtx.refreshBseState();
+        renderOfficerGuildRosterLinker();
+      } catch (err) {
+        hostCtx.showToast(`Error: ${err.message}`);
+        setResult(`Character link failed: ${err.message}`, false);
+        btn.disabled = false;
+        btn.textContent = prevText;
       }
     });
   }
@@ -2077,12 +2371,17 @@
       hideTooltip(true);
     },
 
-    onBseStateUpdated() {},
+    onBseStateUpdated() {
+      if (Array.isArray(officerRosterMembersCache)) {
+        renderOfficerGuildRosterLinker();
+      }
+    },
 
     renderMemberProfileModal,
     verifyCharacterInput,
     consumePendingVerifiedCharacter,
     syncOfficerArmoryForm,
+    refreshOfficerRosterLinker: renderOfficerGuildRosterLinker,
     formatWowCoinsHtml
   };
 })();

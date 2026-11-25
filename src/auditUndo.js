@@ -7,6 +7,7 @@
  */
 
 import { getWeeklyCapConfig, getWeeklyWindowStart } from './weeklyCap.js';
+import { pruneMissingCraftersFromCraftingState } from './armory.js';
 
 /**
  * Create a compact wallet snapshot safe to embed inside an audit entry's undoMeta.
@@ -282,6 +283,17 @@ export function canUndoAuditEntry(entry, state) {
       if (!tid) return { allowed: false, reason: 'Missing deleted member ID' };
       if (wallets[tid]) {
         return { allowed: false, reason: 'Member wallet already exists in ledger' };
+      }
+      return { allowed: true, reason: '' };
+    }
+
+    case 'OFFICER_CHARACTER_LINK': {
+      const tid = meta?.targetId || entry.targetId;
+      if (!tid || !wallets[tid]) {
+        return { allowed: false, reason: 'Target member wallet not found in ledger' };
+      }
+      if (!meta || meta.kind !== 'member_characters_override' || !Array.isArray(meta.prevCharacters)) {
+        return { allowed: false, reason: 'Character link entry lacks previous snapshot' };
       }
       return { allowed: true, reason: '' };
     }
@@ -699,6 +711,21 @@ export function revertAuditEntry(state, entryId, opts = {}) {
       undoSpendable = w.spendableBones || 0;
       undoScore = w.boneScore || 0;
       summary = `Restored purged member ${entry.targetName || tid} (${undoSpendable} Bones, ${undoScore} Pts)`;
+      break;
+    }
+
+    case 'OFFICER_CHARACTER_LINK': {
+      const tid = meta?.targetId || entry.targetId;
+      const w = state.wallets[tid];
+      w.characters = Array.isArray(meta.prevCharacters) ? meta.prevCharacters.map(c => ({ ...c })) : [];
+      w.primaryCharacter = meta.prevPrimaryCharacter !== undefined ? meta.prevPrimaryCharacter : (w.characters.find(c => c.isPrimary)?.name || w.characters[0]?.name || null);
+      w.updatedAt = nowIso;
+      pruneMissingCraftersFromCraftingState(state);
+
+      undoAmount = 0;
+      undoSpendable = w.spendableBones ?? null;
+      undoScore = w.boneScore ?? null;
+      summary = `Reverted officer character link for ${entry.targetName || tid} (Main: ${w.primaryCharacter || 'None'})`;
       break;
     }
 

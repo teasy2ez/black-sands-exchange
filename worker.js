@@ -554,17 +554,18 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
     wallet.updatedAt = new Date().toISOString();
     state.wallets[session.id] = wallet;
 
-    // Keep compact crafting index clean & immediately index any just-verified cached snapshots
+    // Keep compact crafting index clean & immediately index any just-verified cached snapshots or missing headshots
     pruneMissingCraftersFromCraftingState(state);
     const pendingBackfillSlugs = [];
     for (const ch of wallet.characters) {
       if (!ch.slug) continue;
-      if (hasFreshCrafterInStateIndex(state, ch.slug)) continue;
+      const needsHeadshot = !ch.avatarThumbUrl;
+      if (!needsHeadshot && hasFreshCrafterInStateIndex(state, ch.slug)) continue;
       const cachedSnap = await getCachedCharacterArmorySnapshot(ch.slug, { firestore }).catch(() => null);
       if (cachedSnap?.found) {
         applyCharacterSummaryToWallets(state, cachedSnap);
         mergeCharacterIntoCraftingState(state, cachedSnap);
-      } else if (ch.armoryVerified) {
+      } else if (ch.armoryVerified || ch.surname) {
         pendingBackfillSlugs.push(ch.slug);
       }
     }
@@ -1709,6 +1710,218 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
     });
 
     return jsonResponse({ success: true, officerHidden: wallet.officerHidden, wallet });
+  }
+
+  // POST Officer Connect / Manage Member Characters (Link Main, Set Primary, Remove Character)
+  if (path === 'member/characters' && request.method === 'POST') {
+    const action = String(body.action || 'link_main').trim();
+    const targetId = String(body.targetId || '').trim();
+    if (!targetId) {
+      return jsonResponse({ error: 'Missing targetId' }, 400);
+    }
+
+    const state = await firestore.getBseState();
+    state.wallets = state.wallets || {};
+    const wallet = state.wallets[targetId];
+    if (!wallet) {
+      return jsonResponse({ error: 'Member wallet not found in guild ledger' }, 404);
+    }
+
+    const prevCharacters = Array.isArray(wallet.characters)
+      ? wallet.characters.map(c => ({ ...c }))
+      : [];
+    const prevPrimaryCharacter = wallet.primaryCharacter || null;
+    const targetName = wallet.serverNickname || wallet.globalName || wallet.username || targetId;
+    let auditReason = '';
+
+    const inferRole = (specName, requestedRole) => {
+      if (requestedRole && ['Tank', 'Healer', 'DPS'].includes(requestedRole)) return requestedRole;
+      const s = String(specName || '').toLowerCase();
+      if (s.includes('protection')) return 'Tank';
+      if (s.includes('holy') || s.includes('restoration') || s.includes('discipline')) return 'Healer';
+      return 'DPS';
+    };
+
+    if (action === 'link_main') {
+      const rawName = String(body.characterName || body.name || '').trim();
+      const rawSurname = String(body.surname || '').trim();
+      const rawSlug = String(body.slug || '').trim();
+      const allowUnverified = Boolean(body.allowUnverified || body.fromGuildRoster);
+
+      const identity = parseCharacterIdentity(rawSlug || rawName, rawSurname);
+      if (!identity.name) {
+        return jsonResponse({ error: 'Character name is required' }, 400);
+      }
+
+      let armorySnap = null;
+      if (isBlizzardConfigured(env)) {
+        try {
+          armorySnap = await getCharacterArmory({
+            name: identity.name,
+            surname: identity.surname,
+            slug: identity.slug,
+            forceRefresh: false,
+            env,
+            firestore,
+            state
+          });
+        } catch (err) {
+          if (!allowUnverified) {
+            return jsonResponse({ error: err.message || 'Armory lookup failed', canForceUnverified: true }, 502);
+          }
+        }
+
+        if (armorySnap?.ambiguous) {
+          return jsonResponse({
+            error: armorySnap.message || 'Multiple guild characters match that name.',
+            code: 'AMBIGUOUS_CHARACTER',
+            matches: armorySnap.matches || []
+          }, 409);
+        }
+
+        if ((!armorySnap || !armorySnap.found) && !allowUnverified) {
+          return jsonResponse({
+            error: armorySnap?.message || `Character "${identity.slug}" was not found on WoW: Forever Armory.`,
+            code: 'CHARACTER_NOT_FOUND',
+            canForceUnverified: true
+          }, 404);
+        }
+      } else if (identity.slug) {
+        armorySnap = await getCachedCharacterArmorySnapshot(identity.slug, { firestore }).catch(() => null);
+      }
+
+      const verified = Boolean(armorySnap?.found);
+      const resolvedName = verified ? (armorySnap.name || identity.name) : identity.name;
+      const resolvedSurname = verified ? (armorySnap.surname || identity.surname || '') : (identity.surname || '');
+      const resolvedSlug = verified
+        ? (armorySnap.slug || buildCharacterSlug(resolvedName, resolvedSurname))
+        : (buildCharacterSlug(resolvedName, resolvedSurname) || identity.slug);
+
+      const existingList = Array.isArray(wallet.characters) ? wallet.characters.map(c => ({ ...c, isPrimary: false })) : [];
+      const matchIdx = existingList.findIndex(c => {
+        const cSlug = c.slug || buildCharacterSlug(c.name, c.surname || '');
+        if (resolvedSlug && cSlug && cSlug.toLowerCase() === resolvedSlug.toLowerCase()) return true;
+        return !c.surname && !resolvedSurname && String(c.name || '').toLowerCase() === resolvedName.toLowerCase();
+      });
+      const prevEntry = matchIdx >= 0 ? existingList[matchIdx] : null;
+
+      const entry = {
+        name: resolvedName,
+        surname: resolvedSurname,
+        slug: resolvedSlug,
+        class: String(
+          (verified ? armorySnap.className : null) ||
+          body.className ||
+          prevEntry?.class ||
+          'Warrior'
+        ).trim(),
+        role: inferRole(verified ? armorySnap.activeSpec : null, body.role || prevEntry?.role),
+        professions: String(
+          (verified ? armorySnap.professions?.allSummary : '') ||
+          prevEntry?.professions ||
+          ''
+        ).trim(),
+        isPrimary: true
+      };
+
+      const levelVal = Number((verified ? armorySnap.level : 0) || body.level || prevEntry?.level || 0);
+      const raceVal = (verified ? armorySnap.race : '') || body.race || prevEntry?.race || '';
+      const avgIlvlVal = Number((verified ? armorySnap.avgItemLevel : 0) || prevEntry?.avgItemLevel || 0);
+      const guildVal = (verified ? armorySnap.guild?.name : '') || body.guildName || prevEntry?.guildName || '';
+      const rulesetVal = (verified ? armorySnap.ruleset?.name : '') || prevEntry?.ruleset || '';
+      const avatarVal = (verified ? armorySnap.media?.avatar : '') || prevEntry?.avatarThumbUrl || '';
+
+      if (levelVal > 0) entry.level = levelVal;
+      if (raceVal) entry.race = String(raceVal).trim();
+      if (avgIlvlVal > 0) entry.avgItemLevel = avgIlvlVal;
+      if (guildVal) entry.guildName = String(guildVal).trim();
+      if (rulesetVal) entry.ruleset = String(rulesetVal).trim();
+      if (avatarVal) entry.avatarThumbUrl = String(avatarVal).trim();
+      if (verified || prevEntry?.armoryVerified) {
+        entry.armoryVerified = true;
+        entry.lastArmorySyncAt = (verified ? armorySnap.syncedAt : prevEntry?.lastArmorySyncAt) || new Date().toISOString();
+      }
+
+      if (matchIdx >= 0) {
+        existingList.splice(matchIdx, 1);
+      }
+      wallet.characters = [entry, ...existingList];
+      wallet.primaryCharacter = entry.name;
+      wallet.updatedAt = new Date().toISOString();
+
+      if (verified) {
+        applyCharacterSummaryToWallets(state, armorySnap);
+        mergeCharacterIntoCraftingState(state, armorySnap);
+      }
+      pruneMissingCraftersFromCraftingState(state);
+
+      const fullCharLabel = entry.surname ? `${entry.name} ${entry.surname}` : entry.name;
+      auditReason = `Officer linked main character "${fullCharLabel}" (${entry.level ? `Lv ${entry.level} ` : ''}${entry.class}${verified ? ', Armory Verified' : ''}) to ${targetName}`;
+    } else if (action === 'set_primary') {
+      const key = String(body.slugOrName || '').trim().toLowerCase();
+      const list = Array.isArray(wallet.characters) ? wallet.characters : [];
+      const idx = list.findIndex(c =>
+        String(c.slug || '').toLowerCase() === key ||
+        String(c.name || '').toLowerCase() === key
+      );
+      if (idx < 0) {
+        return jsonResponse({ error: 'Character not found on member wallet' }, 404);
+      }
+      wallet.characters = list.map((c, i) => ({ ...c, isPrimary: i === idx }));
+      const chosen = wallet.characters[idx];
+      wallet.primaryCharacter = chosen.name;
+      wallet.updatedAt = new Date().toISOString();
+      const fullCharLabel = chosen.surname ? `${chosen.name} ${chosen.surname}` : chosen.name;
+      auditReason = `Officer set "${fullCharLabel}" as Main Character for ${targetName}`;
+    } else if (action === 'remove_character') {
+      const key = String(body.slugOrName || '').trim().toLowerCase();
+      const list = Array.isArray(wallet.characters) ? wallet.characters : [];
+      const removed = list.find(c =>
+        String(c.slug || '').toLowerCase() === key ||
+        String(c.name || '').toLowerCase() === key
+      );
+      if (!removed) {
+        return jsonResponse({ error: 'Character not found on member wallet' }, 404);
+      }
+      const nextList = list.filter(c => c !== removed).map(c => ({ ...c }));
+      if (nextList.length > 0 && !nextList.some(c => c.isPrimary)) {
+        nextList[0].isPrimary = true;
+      }
+      const nextPrimary = nextList.find(c => c.isPrimary) || nextList[0] || null;
+      wallet.characters = nextList;
+      wallet.primaryCharacter = nextPrimary ? nextPrimary.name : null;
+      wallet.updatedAt = new Date().toISOString();
+      pruneMissingCraftersFromCraftingState(state);
+      const removedLabel = removed.surname ? `${removed.name} ${removed.surname}` : removed.name;
+      auditReason = `Officer unlinked character "${removedLabel}" from ${targetName}`;
+    } else {
+      return jsonResponse({ error: `Unsupported action "${action}"` }, 400);
+    }
+
+    await recordAuditLogAndSync(state, env, firestore, {
+      action: 'OFFICER_CHARACTER_LINK',
+      officerId,
+      officerName,
+      targetId,
+      targetName,
+      amount: 0,
+      spendableBones: wallet.spendableBones || 0,
+      boneScore: wallet.boneScore || 0,
+      reason: body.reason ? `${auditReason} — ${String(body.reason).trim()}` : auditReason,
+      undoMeta: {
+        kind: 'member_characters_override',
+        targetId,
+        prevPrimaryCharacter,
+        prevCharacters
+      }
+    });
+
+    return jsonResponse({
+      success: true,
+      wallet,
+      characters: wallet.characters,
+      primaryCharacter: wallet.primaryCharacter
+    });
   }
 
   // POST Batch Award Bones (Raid & Event Multi-Award)
