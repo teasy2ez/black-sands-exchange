@@ -22,11 +22,11 @@ import {
   fetchForeverGuildRoster,
   fetchForeverItemDetails,
   searchForeverItems,
-  fetchRulesetsAndHouses
+  fetchForeverRulesets
 } from '../src/blizzard.js';
 
 import {
-  hydrateItemsMediaAndPrices,
+  hydrateItemsMedia,
   applyCharacterSummaryToWallets,
   mergeCharacterIntoCraftingState,
   pruneMissingCraftersFromCraftingState,
@@ -40,12 +40,9 @@ import {
   getOrSyncGuildRoster,
   autoMatchGuildRosterToWallets,
   getItemDetail,
-  ingestCompactAuctionPrices,
-  getAuctionHouseWatchlist,
   runScheduledArmoryTick
 } from '../src/armory.js';
 
-import { aggregateAuctionHouseDump } from '../scripts/sync-forever-ah.mjs';
 import { handleApplicationCommand } from '../src/commands.js';
 import {
   buildArmoryCharacterEmbed,
@@ -60,7 +57,6 @@ import worker from '../worker.js';
 const TEST_ENV = {
   BLIZZARD_CLIENT_ID: 'test-bnet-client-id-1234',
   BLIZZARD_CLIENT_SECRET: 'super-secret-bnet-value-9999',
-  ARMORY_INGEST_SECRET: 'ingest-secret-xyz',
   SESSION_SECRET: 'test-session-secret-hmac',
   FIRESTORE_PROJECT_ID: 'bse-test-proj'
 };
@@ -612,24 +608,8 @@ describe('src/armory.js — Orchestration, Crafting Directory, Roster & AH Hydra
     assert.equal(matched.find(m => m.slug === 'bob-builder').matchType, 'unlinked');
   });
 
-  it('validates compact AH price tuples and hydrates item icons + AH pricing', async () => {
+  it('hydrates item icons from Firestore cache and live Blizzard media API', async () => {
     const firestore = createMemoryFirestore();
-    const ingestRes = await ingestCompactAuctionPrices({
-      houseId: 110,
-      rulesetId: 1,
-      auctionCount: 412,
-      prices: {
-        '13510': [450000, 500000, 18],
-        '13468': [900000, 0, 4],     // 0 median defaults to min
-        'badKey': [100, 100, 1],     // non-numeric key rejected
-        '19019': [0, 100, 1],        // min <= 0 rejected
-        '12640': [5000, 5000, 0],    // qty <= 0 rejected
-        '14555': [123]               // short tuple rejected
-      }
-    }, { firestore });
-
-    assert.equal(ingestRes.success, true);
-    assert.equal(ingestRes.distinctItemCount, 2);
 
     // Pre-cache item 13510 icon in Firestore; let item 13468 fetch live from Blizzard
     await firestore.saveCollectionDoc('armory_items', '13510', {
@@ -651,24 +631,16 @@ describe('src/armory.js — Orchestration, Crafting Directory, Roster & AH Hydra
       { id: 13468, name: 'Black Lotus', quality: 'UNCOMMON', level: 50 }
     ];
 
-    await hydrateItemsMediaAndPrices(items, {
+    await hydrateItemsMedia(items, {
       env: TEST_ENV,
       firestore,
       stateConfig: { staticNamespaceCache: FOREVER_DEFAULT_STATIC_NS },
-      houseId: 110,
       fetchImpl: mockFetch
     });
 
     assert.equal(items[0].iconUrl, 'https://render.worldofwarcraft.com/icons/56/inv_potion_62.jpg');
-    assert.deepEqual(items[0].ahPrice, {
-      min: 450000,
-      median: 500000,
-      qty: 18,
-      houseId: 110,
-      updatedAt: ingestRes.updatedAt
-    });
+    assert.equal(items[0].ahPrice, undefined);
     assert.equal(items[1].iconUrl, 'https://render.worldofwarcraft.com/icons/56/inv_misc_herb_blacklotus.jpg');
-    assert.equal(items[1].ahPrice.median, 900000);
 
     // Verify batchSave saved item 13468 icon to Firestore
     const savedLotus = await firestore.getCollectionDoc('armory_items', '13468');
@@ -708,72 +680,6 @@ describe('src/armory.js — Orchestration, Crafting Directory, Roster & AH Hydra
     assert.equal(res.matchedCount, 1);
     assert.equal(state.wallets.u1.characters[0].surname, 'Sunfire');
     assert.equal(state.wallets.u1.characters[0].slug, 'kael-sunfire');
-  });
-});
-
-// ============================================================================
-// 3. scripts/sync-forever-ah.mjs TESTS
-// ============================================================================
-describe('scripts/sync-forever-ah.mjs — AH Dump Aggregation & Size Bound', () => {
-  it('trims top 5% outliers when >= 10 lots, computes qty-weighted median, and skips bid-only auctions', () => {
-    // Construct 20 lots for item 13510:
-    // 15 lots of qty 1 @ 10,000c
-    // 4 lots of qty 1 @ 15,000c
-    // 1 extreme outlier lot of qty 500 @ 999,990,000c (Top 5% = 1 lot trimmed!)
-    const lots = [];
-    for (let i = 0; i < 15; i++) lots.push({ item: { id: 13510 }, buyout: 10000, quantity: 1 });
-    for (let i = 0; i < 4; i++) lots.push({ item: { id: 13510 }, buyout: 15000, quantity: 1 });
-    lots.push({ item: { id: 13510 }, unit_price: 999990000, quantity: 500 });
-
-    // Quantity-weighted median verification item 20001 (10 lots: 9 lots of qty 1 @ 100c, 1 lot of qty 100 @ 500c -> no outlier needed: add 1 @ 600c)
-    // Total 11 lots -> trims 1 lot (floor(11*0.05)=max(1,0)=1) -> drops 600c, leaving 9x qty1@100 + 1x qty100@500 -> weighted median = 500c (vs naive unweighted = 100c!)
-    for (let i = 0; i < 9; i++) lots.push({ item: { id: 20001 }, unit_price: 100, quantity: 1 });
-    lots.push({ item: { id: 20001 }, unit_price: 500, quantity: 100 });
-    lots.push({ item: { id: 20001 }, unit_price: 600, quantity: 1 });
-
-    // Bid-only item 20002 (no buyout / unit_price)
-    lots.push({ item: { id: 20002 }, bid: 5000, buyout: 0, quantity: 1 });
-
-    const { payload, stats } = aggregateAuctionHouseDump(
-      { auctions: lots },
-      { auctions: [{ item: { id: 13468 }, unit_price: 85000, quantity: 2 }] },
-      { houseId: 110, rulesetId: 1 }
-    );
-
-    assert.equal(stats.auctionCount, lots.length + 1);
-    assert.deepEqual(payload.prices['13510'], [10000, 10000, 519]);
-    // Unweighted median would be 100, qty-weighted median is 500
-    assert.deepEqual(payload.prices['20001'], [100, 500, 110]);
-    // Bid-only omitted from price map
-    assert.equal(payload.prices['20002'], undefined);
-    // Commodity included
-    assert.deepEqual(payload.prices['13468'], [85000, 85000, 2]);
-  });
-
-  it('truncates cleanly below maxPayloadBytes prioritizing priorityIds first then highest totalQty', () => {
-    const auctions = [];
-    // Add 30 non-priority items with varying quantities
-    for (let i = 0; i < 30; i++) {
-      auctions.push({ item: { id: 50000 + i }, unit_price: 1000 + i, quantity: 10 + i });
-    }
-    // High-volume non-priority item (qty 9999)
-    auctions.push({ item: { id: 60000 }, unit_price: 2000, quantity: 9999 });
-    // Watchlist priority item even with qty 1
-    auctions.push({ item: { id: 13510 }, unit_price: 450000, quantity: 1 });
-
-    const { payload, stats } = aggregateAuctionHouseDump(
-      { auctions },
-      null,
-      { maxPayloadBytes: 240 }
-    );
-
-    assert.equal(stats.trimmedToFit, true);
-    assert.ok(stats.payloadBytes <= 240);
-    // Priority watchlist item #13510 must survive binary-search truncation
-    assert.ok(payload.prices['13510']);
-    // Highest-volume non-priority #60000 should rank ahead of small-volume filler items
-    assert.ok(payload.prices['60000']);
-    assert.ok(stats.distinctIncluded < stats.distinctBeforeTrim);
   });
 });
 
@@ -844,14 +750,8 @@ describe('src/commands.js & src/discord.js — /armory, /item & Embeds', () => {
     assert.match(res3.data.content, /without a \*\*Surname\*\*/);
   });
 
-  it('handles /item numeric ID, live search + AH/Crafter embed, and crafting directory fallback on 0 Blizzard hits', async () => {
+  it('handles /item numeric ID, live search + Crafter embed, and crafting directory fallback on 0 Blizzard hits', async () => {
     const firestore = createMemoryFirestore();
-    await ingestCompactAuctionPrices({
-      houseId: 110,
-      rulesetId: 1,
-      auctionCount: 50,
-      prices: { '13510': [420509, 480000, 14] }
-    }, { firestore });
 
     // Seed Lionheart Helm into Guild Crafting Directory so fallback triggers cleanly
     const state = await firestore.getBseState();
@@ -885,7 +785,7 @@ describe('src/commands.js & src/discord.js — /armory, /item & Embeds', () => {
       return makeJsonResponse({}, 404);
     };
 
-    // 1. Numeric ID query -> full Item embed with AH coins + sell value
+    // 1. Numeric ID query -> full Item embed with sell value and no Auction House field
     const resNum = await handleApplicationCommand({
       data: { name: 'item', options: [{ name: 'query', value: '13510' }] },
       member: { user: { id: 'viewer1', username: 'viewer1' } }
@@ -893,9 +793,8 @@ describe('src/commands.js & src/discord.js — /armory, /item & Embeds', () => {
     const emb = resNum.data.embeds[0];
     assert.match(emb.title, /Flask of the Titans/);
     assert.equal(emb.color, QualityColors.COMMON);
-    const ahField = emb.fields.find(f => f.name.includes('Auction House'));
-    assert.ok(ahField);
-    assert.match(ahField.value, /42g 5s 9c/);
+    const ahField = (emb.fields || []).find(f => f.name.includes('Auction House'));
+    assert.equal(ahField, undefined);
 
     // 2. Text query returning 0 Blizzard hits -> falls back to Guild Crafting Directory!
     const resCraftFallback = await handleApplicationCommand({
@@ -995,78 +894,38 @@ describe('worker.js — Armory API Routes, Auth & Zero Secret Exposure', () => {
     return docs;
   }
 
-  it('POST /api/exchange/armory/ah-ingest requires ingest secret or Officer cookie and validates payload', async () => {
-    const docs = installFirestoreFetchMock();
-    const payload = {
-      houseId: 110,
-      rulesetId: 1,
-      auctionCount: 95,
-      prices: { '13510': [400000, 450000, 12] }
-    };
-
-    // 1. Unauthenticated -> 401
-    const unauth = await worker.fetch(
-      new Request('https://bse.teasy2ez.win/api/exchange/armory/ah-ingest', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      }),
-      TEST_ENV,
-      { waitUntil: () => {} }
-    );
-    assert.equal(unauth.status, 401);
-
-    // 2. Invalid secret -> 401
-    const badSecret = await worker.fetch(
-      new Request('https://bse.teasy2ez.win/api/exchange/armory/ah-ingest', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Armory-Ingest-Secret': 'wrong' },
-        body: JSON.stringify(payload)
-      }),
-      TEST_ENV,
-      { waitUntil: () => {} }
-    );
-    assert.equal(badSecret.status, 401);
-
-    // 3. Valid X-Armory-Ingest-Secret -> 200 & persisted to Firestore
-    const okSecret = await worker.fetch(
-      new Request('https://bse.teasy2ez.win/api/exchange/armory/ah-ingest', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Armory-Ingest-Secret': TEST_ENV.ARMORY_INGEST_SECRET },
-        body: JSON.stringify(payload)
-      }),
-      TEST_ENV,
-      { waitUntil: () => {} }
-    );
-    assert.equal(okSecret.status, 200);
-    const json1 = await okSecret.json();
-    assert.equal(json1.distinctItemCount, 1);
-    assert.deepEqual(docs.get('armory_ah_prices/house_110').prices['13510'], [400000, 450000, 12]);
-
-    // 4. Valid Authorization: Bearer <secret> -> 200
-    const okBearer = await worker.fetch(
-      new Request('https://bse.teasy2ez.win/api/exchange/armory/ah-ingest', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${TEST_ENV.ARMORY_INGEST_SECRET}` },
-        body: JSON.stringify(payload)
-      }),
-      TEST_ENV,
-      { waitUntil: () => {} }
-    );
-    assert.equal(okBearer.status, 200);
-
-    // 5. Valid Officer session cookie -> 200
+  it('rejects removed Auction House endpoints (ah-ingest, ah/watchlist, ah/prices)', async () => {
+    installFirestoreFetchMock();
     const officerCookie = signTestSession({ id: 'off1', username: 'officer', isOfficer: true, issuedAt: Date.now() });
-    const okOfficer = await worker.fetch(
+
+    const rIngest = await worker.fetch(
       new Request('https://bse.teasy2ez.win/api/exchange/armory/ah-ingest', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Cookie': officerCookie },
-        body: JSON.stringify(payload)
+        body: JSON.stringify({ houseId: 110 })
       }),
       TEST_ENV,
       { waitUntil: () => {} }
     );
-    assert.equal(okOfficer.status, 200);
+    assert.equal(rIngest.status, 404);
+
+    const rWatchlist = await worker.fetch(
+      new Request('https://bse.teasy2ez.win/api/exchange/armory/ah/watchlist', {
+        headers: { 'Cookie': officerCookie }
+      }),
+      TEST_ENV,
+      { waitUntil: () => {} }
+    );
+    assert.equal(rWatchlist.status, 404);
+
+    const rPrices = await worker.fetch(
+      new Request('https://bse.teasy2ez.win/api/exchange/armory/ah/prices?itemIds=13510', {
+        headers: { 'Cookie': officerCookie }
+      }),
+      TEST_ENV,
+      { waitUntil: () => {} }
+    );
+    assert.equal(rPrices.status, 404);
   });
 
   it('POST /api/exchange/armory/config enforces Officer session (403 non-officer, 200 officer)', async () => {
@@ -1077,7 +936,6 @@ describe('worker.js — Armory API Routes, Auth & Zero Secret Exposure', () => {
     const reqBody = JSON.stringify({
       guildSlug: 'https://worldofwarcraft.blizzard.com/en-us/forever/us/armory/guild/Desert%20Raiders',
       guildRulesetId: 15,
-      defaultAuctionHouseId: 119,
       autoSyncGuildRoster: false
     });
 
@@ -1105,7 +963,7 @@ describe('worker.js — Armory API Routes, Auth & Zero Secret Exposure', () => {
     );
     assert.equal(rMember.status, 403);
 
-    // Officer -> 200 and normalized guildSlug saved in bse_state
+    // Officer -> 200 and normalized guildSlug saved in bse_state without defaultAuctionHouseId
     const rOfficer = await worker.fetch(
       new Request('https://bse.teasy2ez.win/api/exchange/armory/config', {
         method: 'POST',
@@ -1119,7 +977,7 @@ describe('worker.js — Armory API Routes, Auth & Zero Secret Exposure', () => {
     const out = await rOfficer.json();
     assert.equal(out.armory.guildSlug, 'desert-raiders');
     assert.equal(out.armory.guildRulesetId, 15);
-    assert.equal(out.armory.defaultAuctionHouseId, 119);
+    assert.equal(out.armory.defaultAuctionHouseId, undefined);
     assert.equal(out.armory.autoSyncGuildRoster, false);
     assert.equal(docs.get('exchange/bse_state').config.armory.guildSlug, 'desert-raiders');
   });
@@ -1137,12 +995,11 @@ describe('worker.js — Armory API Routes, Auth & Zero Secret Exposure', () => {
     const parsed = JSON.parse(rawText);
 
     assert.equal(parsed.configured, true);
-    assert.equal(parsed.ingestConfigured, true);
+    assert.equal(parsed.ingestConfigured, undefined);
     assert.equal(typeof parsed.armory.guildSlug, 'string');
 
     assert.equal(rawText.includes(TEST_ENV.BLIZZARD_CLIENT_ID), false);
     assert.equal(rawText.includes(TEST_ENV.BLIZZARD_CLIENT_SECRET), false);
-    assert.equal(rawText.includes(TEST_ENV.ARMORY_INGEST_SECRET), false);
     assert.equal(rawText.includes(TEST_ENV.SESSION_SECRET), false);
   });
 

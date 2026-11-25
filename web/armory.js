@@ -539,13 +539,6 @@
          </div>`
       : '';
 
-    const ahHtml = item.ahPrice && item.ahPrice.min > 0
-      ? `<div class="wt-ah-block">
-           <div><span>AH Min:</span> ${formatWowCoinsHtml(item.ahPrice.min)}</div>
-           <div><span>Median:</span> ${formatWowCoinsHtml(item.ahPrice.median)} <span class="wt-dim">(${item.ahPrice.qty} listed)</span></div>
-         </div>`
-      : '';
-
     const actionsHtml = includeActions
       ? `<div class="wt-actions-bar">
            ${wowheadHref ? `<a href="${escAttr(wowheadHref)}" target="_blank" rel="noopener noreferrer" class="wt-link-btn">Wowhead Forever &nearr;</a>` : ''}
@@ -570,7 +563,6 @@
       ${setHtml}
       ${item.description ? `<div class="wt-gold wt-flavor">"${escHtml(item.description)}"</div>` : ''}
       ${item.sellPrice > 0 ? `<div class="wt-sell-row">Sell Price: ${formatWowCoinsHtml(item.sellPrice)}</div>` : ''}
-      ${ahHtml}
       ${item.notFoundInStatic && !statsHtml && !spellsHtml ? `<div class="wt-dim">Legacy item stub &mdash; view full stats on Wowhead Forever.</div>` : ''}
       ${actionsHtml}
     `;
@@ -1516,7 +1508,6 @@
     const avatarUrl = hostCtx.getDiscordAvatarUrl(w.discordId, w.avatarHash, 128);
     const rankTitle = hostCtx.resolveRankTitle(w.rankTier || 0);
     const isSelf = Boolean(appState.user?.id && appState.user.id === discordId);
-    const isOfficer = Boolean(appState.user?.isOfficer);
 
     const chars = Array.isArray(w.characters) && w.characters.length
       ? w.characters
@@ -1574,34 +1565,6 @@
       ? `<div class="guild-note-card">"${escHtml(w.guildNote)}"</div>`
       : `<div style="color:var(--text-dim); font-size:0.85rem; font-style:italic; margin:0.4rem 0;">No public guild note provided yet.</div>`;
 
-    const wkStatus = hostCtx.resolveClientMemberWeeklyStatus?.(w, appState.bseState) || {
-      enabled: true,
-      weeklyEarned: w.weeklyBonesEarned || 0,
-      effectiveCap: appState.bseState?.config?.weeklyCap?.cap || 50,
-      label: `${(w.weeklyBonesEarned || 0).toLocaleString()} / ${(appState.bseState?.config?.weeklyCap?.cap || 50).toLocaleString()}`
-    };
-
-    const officerHtml = isOfficer
-      ? `<div class="wow-inner-box" style="margin-top: 1.15rem; padding: 0.85rem;">
-           <div style="font-size: 0.75rem; color: var(--gold-300); font-weight: 700; text-transform: uppercase; margin-bottom: 0.5rem; display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
-             <span>Officer Controls</span>
-             <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
-               <span style="font-size: 0.7rem; color: var(--text-muted); text-transform: none; font-weight: 500;">Weekly Cap: <strong style="color: ${wkStatus.enabled && wkStatus.weeklyEarned >= wkStatus.effectiveCap ? '#f87171' : 'var(--gold-200)'};">${escHtml(wkStatus.label)}</strong></span>
-               ${w.officerHidden ? `<span class="badge-officer-hidden">Hidden from Leaderboard</span>` : ''}
-             </div>
-           </div>
-           <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
-             <button type="button" class="btn-officer-award" style="padding: 0.4rem 0.8rem; font-size: 0.8rem;" data-officer-op="award">+ Award Bones</button>
-             <button type="button" class="btn-officer-deduct" style="padding: 0.4rem 0.8rem; font-size: 0.8rem;" data-officer-op="deduct">- Deduct Bones</button>
-             <button type="button" class="btn-officer-adjust" style="padding: 0.4rem 0.8rem; font-size: 0.8rem;" data-officer-op="spendable">Override Spendable Bones</button>
-             <button type="button" class="btn-officer-adjust" style="padding: 0.4rem 0.8rem; font-size: 0.8rem;" data-officer-op="lifetime">Adjust Lifetime Bones</button>
-             <button type="button" class="btn-officer-adjust" style="padding: 0.4rem 0.8rem; font-size: 0.8rem;" data-officer-op="bountystats">Override Bounty Stats</button>
-             <button type="button" class="btn-officer-hide" style="padding: 0.4rem 0.8rem; font-size: 0.8rem;" data-officer-op="hide">${w.officerHidden ? 'Unhide Member' : 'Hide from Leaderboard'}</button>
-             <button type="button" class="btn-officer-purge" style="padding: 0.4rem 0.8rem; font-size: 0.8rem;" data-officer-op="purge">Purge from Roster</button>
-           </div>
-         </div>`
-      : '';
-
     modalBody.innerHTML = `
       <div class="member-profile-header">
         <img src="${escAttr(avatarUrl)}" class="member-profile-avatar" alt="${escAttr(name)}" onerror="this.onerror=null;this.src='assets/favicon.svg';">
@@ -1633,8 +1596,6 @@
         <h5 class="armory-section-label">Public Guild Note</h5>
         ${noteHtml}
       </div>
-
-      ${officerHtml}
     `;
 
     // Bind Character Switcher
@@ -1650,20 +1611,6 @@
     modalBody.querySelector('#btnProfileEditChars')?.addEventListener('click', () => {
       modalOverlay.classList.remove('active');
       hostCtx.openCharacterModal();
-    });
-
-    // Bind Officer Actions cleanly without inline JS string escaping risks
-    modalBody.querySelectorAll('[data-officer-op]').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const op = btn.getAttribute('data-officer-op');
-        if (op === 'award') window.openBonesAdjustModal?.(discordId, name, 'award');
-        else if (op === 'deduct') window.openBonesAdjustModal?.(discordId, name, 'deduct');
-        else if (op === 'spendable') window.quickAdjustSpendable?.(discordId, name, w.spendableBones || 0);
-        else if (op === 'lifetime') window.quickAdjustLifetime?.(discordId, name, w.boneScore || 0);
-        else if (op === 'bountystats') window.quickAdjustBountyStats?.(discordId, name, w.bountiesCompleted || 0, w.postedBountiesCompleted || 0);
-        else if (op === 'hide') window.quickToggleHideMember?.(discordId, name, Boolean(w.officerHidden));
-        else if (op === 'purge') window.quickDeleteMember?.(discordId, name, w.spendableBones || 0, w.boneScore || 0);
-      });
     });
 
     appState.inspectedMemberId = discordId;
@@ -1988,9 +1935,6 @@
     const rulesetSel = document.getElementById('officerArmoryRuleset');
     if (rulesetSel && activeEl !== rulesetSel) rulesetSel.value = String(cfg.guildRulesetId || 1);
 
-    const houseIn = document.getElementById('officerArmoryHouseId');
-    if (houseIn && activeEl !== houseIn) houseIn.value = String(cfg.defaultAuctionHouseId || 110);
-
     const enabledChk = document.getElementById('officerArmoryEnabled');
     if (enabledChk && activeEl !== enabledChk) enabledChk.checked = cfg.enabled !== false;
 
@@ -2002,9 +1946,6 @@
       diag.innerHTML = `
         <span class="armory-diag-pill ${status.configured ? 'is-ok' : 'is-warn'}">
           Battle.net OAuth: ${status.configured ? 'Configured' : 'Secrets Not Set'}
-        </span>
-        <span class="armory-diag-pill ${status.ingestConfigured ? 'is-ok' : 'is-warn'}">
-          AH Ingest Secret: ${status.ingestConfigured ? 'Ready' : 'Optional / Unset'}
         </span>
         <span class="armory-diag-pill">
           Static NS: <code>${escHtml(cfg.staticNamespaceCache || 'auto')}</code>
@@ -2032,7 +1973,6 @@
           body: JSON.stringify({
             guildSlug: document.getElementById('officerArmoryGuildSlug')?.value.trim(),
             guildRulesetId: Number(document.getElementById('officerArmoryRuleset')?.value) || 1,
-            defaultAuctionHouseId: Number(document.getElementById('officerArmoryHouseId')?.value) || 110,
             enabled: Boolean(document.getElementById('officerArmoryEnabled')?.checked),
             autoSyncGuildRoster: Boolean(document.getElementById('officerArmoryAutoSync')?.checked)
           })
@@ -2040,7 +1980,7 @@
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Failed to save config');
         hostCtx.showToast('WoW: Forever Armory config saved.');
-        setResult(`Saved config for guild "${data.armory?.guildSlug}" (Ruleset ${data.armory?.guildRulesetId}, AH #${data.armory?.defaultAuctionHouseId}).`);
+        setResult(`Saved config for guild "${data.armory?.guildSlug}" (Ruleset ${data.armory?.guildRulesetId}).`);
         await hostCtx.refreshBseState();
       } catch (err) {
         hostCtx.showToast(`Error: ${err.message}`);
@@ -2052,15 +1992,13 @@
     });
 
     document.getElementById('btnTestBlizzardArmory')?.addEventListener('click', async () => {
-      setResult('Querying Battle.net Forever Rulesets & Houses...');
+      setResult('Querying Battle.net Forever Rulesets...');
       try {
-        const rulesetId = Number(document.getElementById('officerArmoryRuleset')?.value) || 1;
-        const res = await fetch(`/api/exchange/armory/rulesets?rulesetId=${rulesetId}`);
+        const res = await fetch('/api/exchange/armory/rulesets');
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Ruleset probe failed');
         const rulesetList = (data.rulesets || []).map(r => `${r.name} (${r.id})`).join(', ');
-        const houseList = (data.houses || []).slice(0, 12).join(', ');
-        setResult(`${data.configured ? 'Live API Connected!' : 'Battle.net secrets not set yet (showing defaults).'} Rulesets: ${rulesetList}. AH Houses: ${houseList}.`);
+        setResult(`${data.configured ? 'Live API Connected!' : 'Battle.net secrets not set yet (showing defaults).'} Rulesets: ${rulesetList}.`);
         hostCtx.showToast(data.configured ? 'Battle.net Forever API verified!' : 'API not configured yet.');
       } catch (err) {
         setResult(`API test failed: ${err.message}`, false);

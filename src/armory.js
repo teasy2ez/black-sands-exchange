@@ -3,8 +3,8 @@
  *
  * Bridges Battle.net WoW: Forever US endpoints (`src/blizzard.js`) with
  * partitioned Firestore collections (`armory_characters`, `armory_items`,
- * `armory_guild`, `armory_crafting`, `armory_ah_prices`) and Cloudflare
- * Edge Cache (`caches.default`) while keeping `exchange/bse_state` lean.
+ * `armory_guild`, `armory_crafting`) and Cloudflare Edge Cache
+ * (`caches.default`) while keeping `exchange/bse_state` lean.
  */
 
 import {
@@ -18,7 +18,7 @@ import {
   fetchForeverItemDetails,
   fetchItemMediaIcon,
   searchForeverItems,
-  fetchRulesetsAndHouses,
+  fetchForeverRulesets,
   buildWowheadForeverItemUrl
 } from './blizzard.js';
 
@@ -28,34 +28,9 @@ export const DEFAULT_ARMORY_CONFIG = {
   edition: 'forever',
   guildSlug: 'black-sands',
   guildRulesetId: 1,
-  defaultAuctionHouseId: 110,
   autoSyncGuildRoster: true,
   staticNamespaceCache: 'static-1.60.1_70399-forever-us'
 };
-
-// Popular Classic / WoW: Forever consumables & trade goods surfaced automatically on AH Watch
-export const FOREVER_AH_WATCHLIST_IDS = [
-  13510, // Flask of the Titans
-  13512, // Flask of Supreme Power
-  13511, // Flask of Distilled Wisdom
-  13452, // Elixir of the Mongoose
-  13454, // Greater Arcane Elixir
-  13457, // Greater Fire Protection Potion
-  13458, // Greater Nature Protection Potion
-  13459, // Greater Shadow Protection Potion
-  13444, // Major Mana Potion
-  13446, // Major Healing Potion
-  13468, // Black Lotus
-  13466, // Plaguebloom
-  13467, // Icecap
-  13465, // Mountain Silversage
-  13463, // Dreamfoil
-  12363, // Arcane Crystal
-  12360, // Arcanite Bar
-  12811, // Righteous Orb
-  14344, // Large Brilliant Shard
-  16203  // Greater Eternal Essence
-];
 
 // Curated raid/crafting item presets when opening Database with no query
 export const FEATURED_FOREVER_ITEMS = [
@@ -88,7 +63,6 @@ export function resolveArmoryConfig(stateOrConfig) {
     edition: 'forever',
     guildSlug: normalizeGuildSlug(raw.guildSlug || DEFAULT_ARMORY_CONFIG.guildSlug) || DEFAULT_ARMORY_CONFIG.guildSlug,
     guildRulesetId: Number(raw.guildRulesetId) || DEFAULT_ARMORY_CONFIG.guildRulesetId,
-    defaultAuctionHouseId: Number(raw.defaultAuctionHouseId) || DEFAULT_ARMORY_CONFIG.defaultAuctionHouseId,
     autoSyncGuildRoster: raw.autoSyncGuildRoster !== false,
     staticNamespaceCache: String(raw.staticNamespaceCache || DEFAULT_ARMORY_CONFIG.staticNamespaceCache)
   };
@@ -139,17 +113,16 @@ async function deleteEdgeCache(cacheKey) {
  * Hydrate missing item icons for character equipment or search items using
  * 1 batch Firestore read + bounded Blizzard /media/item fetches + 1 batch Firestore commit.
  */
-export async function hydrateItemsMediaAndPrices(items = [], { env, firestore, stateConfig = null, houseId = 110, maxLiveFetches = 12, fetchImpl = fetch } = {}) {
+export async function hydrateItemsMedia(items = [], { env, firestore, stateConfig = null, maxLiveFetches = 12, fetchImpl = fetch } = {}) {
   if (!Array.isArray(items) || !items.length) return items;
 
   const ids = [...new Set(items.map(it => Number(it.id)).filter(id => id > 0))];
   if (!ids.length) return items;
 
   const docIds = ids.map(id => String(id));
-  const [cachedDocs, ahDoc] = await Promise.all([
-    firestore ? firestore.batchGetCollectionDocs('armory_items', docIds) : Promise.resolve({}),
-    getCachedAhPricesDoc(houseId, { firestore }).catch(() => null)
-  ]);
+  const cachedDocs = firestore
+    ? await firestore.batchGetCollectionDocs('armory_items', docIds)
+    : {};
 
   const missingMediaIds = [];
   for (const item of items) {
@@ -159,17 +132,6 @@ export async function hydrateItemsMediaAndPrices(items = [], { env, firestore, s
       item.iconUrl = cached.iconUrl;
     } else if (!item.iconUrl && !(cached?.notFoundInStatic && cached?.mediaChecked)) {
       missingMediaIds.push(Number(item.id));
-    }
-
-    const priceTuple = ahDoc?.prices?.[idStr];
-    if (Array.isArray(priceTuple) && priceTuple.length >= 3) {
-      item.ahPrice = {
-        min: Number(priceTuple[0]) || 0,
-        median: Number(priceTuple[1]) || 0,
-        qty: Number(priceTuple[2]) || 0,
-        houseId: ahDoc.houseId || houseId,
-        updatedAt: ahDoc.updatedAt || null
-      };
     }
   }
 
@@ -938,11 +900,10 @@ export async function getCharacterArmory({ name, surname = '', slug = '', forceR
 
     // Protect Battle.net quota against spam refreshes
     if (forceRefresh && syncedAtMs && ageMs < CHAR_REFRESH_COOLDOWN_MS) {
-      await hydrateItemsMediaAndPrices(fsDoc.equipment || [], {
+      await hydrateItemsMedia(fsDoc.equipment || [], {
         env,
         firestore,
         stateConfig: armoryCfg,
-        houseId: armoryCfg.defaultAuctionHouseId,
         maxLiveFetches: 6,
         fetchImpl
       });
@@ -957,11 +918,10 @@ export async function getCharacterArmory({ name, surname = '', slug = '', forceR
         return { ...fsDoc, source: 'firestore-negative-cache' };
       }
       if (fsDoc.found === true && ageMs < CHAR_CACHE_TTL_MS) {
-        await hydrateItemsMediaAndPrices(fsDoc.equipment || [], {
+        await hydrateItemsMedia(fsDoc.equipment || [], {
           env,
           firestore,
           stateConfig: armoryCfg,
-          houseId: armoryCfg.defaultAuctionHouseId,
           maxLiveFetches: 8,
           fetchImpl
         });
@@ -1012,12 +972,11 @@ export async function getCharacterArmory({ name, surname = '', slug = '', forceR
 
   snapshot.configured = true;
 
-  // Hydrate item icons & AH pricing cleanly
-  await hydrateItemsMediaAndPrices(snapshot.equipment || [], {
+  // Hydrate item icons cleanly
+  await hydrateItemsMedia(snapshot.equipment || [], {
     env,
     firestore,
     stateConfig: armoryCfg,
-    houseId: armoryCfg.defaultAuctionHouseId,
     maxLiveFetches: 12,
     fetchImpl
   });
@@ -1228,7 +1187,7 @@ export async function autoMatchGuildRosterToWallets({ guildSlug = '', env, fires
 }
 
 /**
- * Retrieve cached Item Detail from Edge Cache / Firestore / Blizzard Static API + AH Price + Guild Crafters
+ * Retrieve cached Item Detail from Edge Cache / Firestore / Blizzard Static API + Guild Crafters
  */
 export async function getItemDetail({ itemId, env, firestore, state = null, fetchImpl = fetch } = {}) {
   const numId = Number(itemId);
@@ -1274,24 +1233,11 @@ export async function getItemDetail({ itemId, env, firestore, state = null, fetc
     };
   }
 
-  // Attach AH price snapshot if present
-  const ahDoc = await getCachedAhPricesDoc(cfg.defaultAuctionHouseId, { firestore }).catch(() => null);
-  const priceTuple = ahDoc?.prices?.[String(numId)];
-  if (Array.isArray(priceTuple) && priceTuple.length >= 3) {
-    itemDoc.ahPrice = {
-      min: Number(priceTuple[0]) || 0,
-      median: Number(priceTuple[1]) || 0,
-      qty: Number(priceTuple[2]) || 0,
-      houseId: ahDoc.houseId || cfg.defaultAuctionHouseId,
-      updatedAt: ahDoc.updatedAt || null
-    };
-  }
-
   return itemDoc;
 }
 
 /**
- * Search WoW: Forever US Items and enrich icons + AH prices + curated empty-query spotlight
+ * Search WoW: Forever US Items and enrich icons + curated empty-query spotlight
  */
 export async function searchAndHydrateDatabaseItems({ query = '', page = 1, pageSize = 24, env, firestore, state = null, fetchImpl = fetch } = {}) {
   const cfg = resolveArmoryConfig(state);
@@ -1305,11 +1251,10 @@ export async function searchAndHydrateDatabaseItems({ query = '', page = 1, page
       found: true,
       wowheadUrl: buildWowheadForeverItemUrl(it.id)
     }));
-    await hydrateItemsMediaAndPrices(featured, {
+    await hydrateItemsMedia(featured, {
       env,
       firestore,
       stateConfig: cfg,
-      houseId: cfg.defaultAuctionHouseId,
       maxLiveFetches: 12,
       fetchImpl
     });
@@ -1339,11 +1284,10 @@ export async function searchAndHydrateDatabaseItems({ query = '', page = 1, page
     fetchImpl
   });
 
-  await hydrateItemsMediaAndPrices(searchRes.results || [], {
+  await hydrateItemsMedia(searchRes.results || [], {
     env,
     firestore,
     stateConfig: cfg,
-    houseId: cfg.defaultAuctionHouseId,
     maxLiveFetches: 10,
     fetchImpl
   });
@@ -1353,144 +1297,6 @@ export async function searchAndHydrateDatabaseItems({ query = '', page = 1, page
     featured: false,
     query: cleanQ,
     ...searchRes
-  };
-}
-
-/**
- * Auction House compact snapshot read/write helpers
- */
-export async function getCachedAhPricesDoc(houseId = 110, { firestore } = {}) {
-  const docKey = `house_${Number(houseId) || 110}`;
-  const edge = await readEdgeCache(`ah_${docKey}`);
-  if (edge) return edge;
-  if (!firestore) return null;
-  const doc = await firestore.getCollectionDoc('armory_ah_prices', docKey);
-  if (doc) {
-    await writeEdgeCache(`ah_${docKey}`, doc, 600);
-  }
-  return doc;
-}
-
-export async function ingestCompactAuctionPrices(payload = {}, { firestore } = {}) {
-  const houseId = Number(payload.houseId) || 110;
-  const rulesetId = Number(payload.rulesetId) || 1;
-  const rawPrices = payload.prices && typeof payload.prices === 'object' ? payload.prices : {};
-
-  // Validate & sanitize tuple entries: itemId -> [minCopper, medianCopper, totalQty]
-  const sanitized = {};
-  let itemCount = 0;
-  for (const [idKey, tuple] of Object.entries(rawPrices)) {
-    if (!/^\d+$/.test(idKey)) continue;
-    if (!Array.isArray(tuple) || tuple.length < 3) continue;
-    const min = Math.max(0, Math.round(Number(tuple[0]) || 0));
-    const med = Math.max(0, Math.round(Number(tuple[1]) || 0));
-    const qty = Math.max(0, Math.round(Number(tuple[2]) || 0));
-    if (min > 0 && qty > 0) {
-      sanitized[idKey] = [min, med || min, qty];
-      itemCount++;
-    }
-  }
-
-  const doc = {
-    houseId,
-    rulesetId,
-    auctionCount: Number(payload.auctionCount || 0),
-    distinctItemCount: itemCount,
-    updatedAt: payload.updatedAt || new Date().toISOString(),
-    prices: sanitized
-  };
-
-  const docKey = `house_${houseId}`;
-  await firestore.saveCollectionDoc('armory_ah_prices', docKey, doc);
-  await deleteEdgeCache(`ah_${docKey}`);
-
-  return {
-    success: true,
-    houseId,
-    rulesetId,
-    distinctItemCount: itemCount,
-    auctionCount: doc.auctionCount,
-    updatedAt: doc.updatedAt
-  };
-}
-
-export async function getAuctionHouseWatchlist({ houseId = 110, extraItemIds = [], env, firestore, state = null, fetchImpl = fetch } = {}) {
-  const cfg = resolveArmoryConfig(state);
-  const resolvedHouse = Number(houseId) || cfg.defaultAuctionHouseId;
-  const ahDoc = await getCachedAhPricesDoc(resolvedHouse, { firestore });
-
-  const requestedIds = [...new Set([
-    ...FOREVER_AH_WATCHLIST_IDS,
-    ...extraItemIds.map(n => Number(n)).filter(n => n > 0)
-  ])];
-
-  // Hydrate item metadata from armory_items cleanly in 1 batchGet
-  const cachedItems = firestore
-    ? await firestore.batchGetCollectionDocs('armory_items', requestedIds.map(id => String(id)))
-    : {};
-
-  // Populate base names for core watchlist entries even if not yet cached in armory_items
-  const BASE_WATCHLIST_NAMES = {
-    13510: ['Flask of the Titans', 'COMMON'],
-    13512: ['Flask of Supreme Power', 'COMMON'],
-    13511: ['Flask of Distilled Wisdom', 'COMMON'],
-    13452: ['Elixir of the Mongoose', 'COMMON'],
-    13454: ['Greater Arcane Elixir', 'COMMON'],
-    13457: ['Greater Fire Protection Potion', 'COMMON'],
-    13458: ['Greater Nature Protection Potion', 'COMMON'],
-    13459: ['Greater Shadow Protection Potion', 'COMMON'],
-    13444: ['Major Mana Potion', 'COMMON'],
-    13446: ['Major Healing Potion', 'COMMON'],
-    13468: ['Black Lotus', 'UNCOMMON'],
-    13466: ['Plaguebloom', 'COMMON'],
-    13467: ['Icecap', 'COMMON'],
-    13465: ['Mountain Silversage', 'COMMON'],
-    13463: ['Dreamfoil', 'COMMON'],
-    12363: ['Arcane Crystal', 'UNCOMMON'],
-    12360: ['Arcanite Bar', 'UNCOMMON'],
-    12811: ['Righteous Orb', 'UNCOMMON'],
-    14344: ['Large Brilliant Shard', 'RARE'],
-    16203: ['Greater Eternal Essence', 'UNCOMMON']
-  };
-
-  const rows = requestedIds.map(id => {
-    const idStr = String(id);
-    const meta = cachedItems?.[idStr];
-    const fallback = BASE_WATCHLIST_NAMES[id] || [`Item #${id}`, 'COMMON'];
-    const tuple = ahDoc?.prices?.[idStr] || null;
-    return {
-      id,
-      name: meta?.name || fallback[0],
-      quality: meta?.quality || fallback[1],
-      iconUrl: meta?.iconUrl || null,
-      wowheadUrl: buildWowheadForeverItemUrl(id),
-      minBuyout: tuple ? Number(tuple[0]) : null,
-      medianPrice: tuple ? Number(tuple[1]) : null,
-      qty: tuple ? Number(tuple[2]) : 0
-    };
-  });
-
-  // Top up missing icons gently if Blizzard is configured (max 6 per load)
-  const missingMeta = rows.filter(r => !r.iconUrl);
-  if (missingMeta.length > 0 && isBlizzardConfigured(env)) {
-    await hydrateItemsMediaAndPrices(missingMeta, {
-      env,
-      firestore,
-      stateConfig: cfg,
-      houseId: resolvedHouse,
-      maxLiveFetches: 6,
-      fetchImpl
-    });
-  }
-
-  return {
-    houseId: resolvedHouse,
-    rulesetId: ahDoc?.rulesetId || cfg.guildRulesetId,
-    hasSnapshot: Boolean(ahDoc?.prices),
-    updatedAt: ahDoc?.updatedAt || null,
-    auctionCount: ahDoc?.auctionCount || 0,
-    distinctItemCount: ahDoc?.distinctItemCount || 0,
-    items: rows
   };
 }
 
@@ -1580,5 +1386,6 @@ export {
   buildCharacterSlug,
   parseCharacterIdentity,
   normalizeGuildSlug,
-  fetchRulesetsAndHouses
+  fetchForeverRulesets
 };
+

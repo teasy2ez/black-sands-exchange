@@ -29,4 +29,4 @@ SESSION_SECRET=super_secret_session_key_change_me
 # Battle.net / WoW: Forever US Armory & Database API
 BLIZZARD_CLIENT_ID=your_blizzard_client_id_here
 BLIZZARD_CLIENT_SECRET=your_blizzard_client_secret_here
-ARMORY_INGEST_SECRET=your_random_ah_ingest_secret_here
+

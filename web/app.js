@@ -7,6 +7,8 @@ const state = {
   user: null,
   bseState: null,
   activeTab: 'leaderboard',
+  lastMemberTab: 'leaderboard',
+  officerMode: false,
   activeOfficerSubtab: 'claims',
   selectedBountyForClaim: null,
   selectedItemForBuy: null,
@@ -18,6 +20,8 @@ const state = {
   draftRanks: [],
   draftFaq: [],
   officerLeaderboardFilter: 'active',
+  officerRosterSearch: '',
+  pendingRestoreFileData: null,
   tithingDraftDirty: false,
   // Member UI filters & pagination
   ledgerRoleFilter: 'all',
@@ -60,6 +64,8 @@ const headerAvatar = document.getElementById('headerAvatar');
 const headerDisplayName = document.getElementById('headerDisplayName');
 const headerRoleBadge = document.getElementById('headerRoleBadge');
 const logoutBtn = document.getElementById('logoutBtn');
+const officerModeToggle = document.getElementById('officerModeToggle');
+const officerToggleBadge = document.getElementById('officerToggleBadge');
 
 const announcementBanner = document.getElementById('announcementBanner');
 const announcementIcon = document.getElementById('announcementIcon');
@@ -100,15 +106,13 @@ const tabNavBounties = document.getElementById('tabNavBounties');
 const tabNavShop = document.getElementById('tabNavShop');
 const tabNavFaq = document.getElementById('tabNavFaq');
 const tabHistory = document.getElementById('tabHistory');
-const tabOfficer = document.getElementById('tabOfficer');
-const officerActionBadge = document.getElementById('officerActionBadge');
 const subtabClaimCount = document.getElementById('subtabClaimCount');
 const subtabDeliveryCount = document.getElementById('subtabDeliveryCount');
+const subtabBountyReqCount = document.getElementById('subtabBountyReqCount');
 
 const leaderboardTbody = document.getElementById('leaderboardTbody');
 const mobileLeaderboardList = document.getElementById('mobileLeaderboardList');
 const searchLeaderboard = document.getElementById('searchLeaderboard');
-const thLeaderboardActions = document.getElementById('thLeaderboardActions');
 
 const memberHistoryTbody = document.getElementById('memberHistoryTbody');
 const mobileHistoryList = document.getElementById('mobileHistoryList');
@@ -120,8 +124,6 @@ const faqAccordionContainer = document.getElementById('faqAccordionContainer');
 // Mobile Bottom Nav elements
 const mobileBottomNav = document.getElementById('mobileBottomNav');
 const mobileTabHistory = document.getElementById('mobileTabHistory');
-const mobileTabOfficer = document.getElementById('mobileTabOfficer');
-const mobileOfficerActionBadge = document.getElementById('mobileOfficerActionBadge');
 
 // Officer views
 const pendingClaimsList = document.getElementById('pendingClaimsList');
@@ -135,8 +137,7 @@ const dataEditorAnnounceEnabled = document.getElementById('dataEditorAnnounceEna
 const dataEditorAnnounceText = document.getElementById('dataEditorAnnounceText');
 const dataEditorAnnounceType = document.getElementById('dataEditorAnnounceType');
 
-// Leaderboard Officer Filter Elements
-const officerLeaderboardFilters = document.getElementById('officerLeaderboardFilters');
+// Officer Roster Filter Elements (inside Officer Hall #subview-roster)
 const btnFilterActive = document.getElementById('btnFilterActive');
 const btnFilterZero = document.getElementById('btnFilterZero');
 const btnFilterHidden = document.getElementById('btnFilterHidden');
@@ -167,6 +168,47 @@ const btnExecuteBatchAward = document.getElementById('btnExecuteBatchAward');
 // Inspector officer hide checkbox
 const inspectorOfficerHidden = document.getElementById('inspectorOfficerHidden');
 
+function syncOfficerModeUi() {
+  const isOfficer = Boolean(state.user?.isOfficer);
+  const active = Boolean(isOfficer && state.officerMode);
+  if (officerModeToggle) {
+    officerModeToggle.style.display = isOfficer ? 'inline-flex' : 'none';
+    officerModeToggle.classList.toggle('is-active', active);
+    officerModeToggle.setAttribute('aria-checked', active ? 'true' : 'false');
+  }
+  if (headerRoleBadge && state.user?.authenticated) {
+    headerRoleBadge.textContent = active ? 'Officer Mode' : 'Guild Member';
+    headerRoleBadge.style.color = active ? 'var(--gold-300)' : '';
+  }
+}
+
+function toggleOfficerMode(forceState) {
+  if (!state.user?.isOfficer) return;
+  const next = typeof forceState === 'boolean' ? forceState : !state.officerMode;
+  state.officerMode = next;
+  syncOfficerModeUi();
+
+  if (next) {
+    if (state.activeTab && state.activeTab !== 'officer') {
+      state.lastMemberTab = state.activeTab;
+    }
+    switchTab('officer');
+
+    const pendingClaims = Object.values(state.bseState?.claims || {}).filter(c => c.status === 'pending').length;
+    const pendingBounties = (state.bseState?.bounties || []).filter(b => b.status === 'pending_review').length;
+    if (pendingClaims > 0) {
+      switchOfficerSubtab('claims');
+    } else if (pendingBounties > 0) {
+      switchOfficerSubtab('manage-bounties');
+    }
+  } else {
+    const returnTab = (state.lastMemberTab && state.lastMemberTab !== 'officer')
+      ? state.lastMemberTab
+      : 'leaderboard';
+    switchTab(returnTab);
+  }
+}
+
 // Initialize
 document.addEventListener('DOMContentLoaded', async () => {
   setupNavigation();
@@ -184,6 +226,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupTithingSettingsControls();
   setupCreateBountyFormControls();
   setupDiscordChannelsManager();
+  setupBackupsManager();
+
+  officerModeToggle?.addEventListener('click', () => {
+    toggleOfficerMode();
+  });
 
   window.BSEArmory?.init?.({
     getState: () => state,
@@ -201,6 +248,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Ensure leaderboard renders immediately
   renderLeaderboard();
+  renderFaqRankCostGrid();
   updateFaqSpendActions();
 
   // Poll state every 4 seconds for real-time reactivity
@@ -249,7 +297,6 @@ function renderAuthenticatedUser(user) {
   headerAvatar.src = avatarUrl;
   headerAvatar.onerror = () => { headerAvatar.src = 'assets/favicon.svg'; };
   headerDisplayName.textContent = user.serverNickname || user.globalName || user.username;
-  headerRoleBadge.textContent = user.isOfficer ? 'Guild Officer' : 'Guild Member';
 
   walletAvatar.src = avatarUrl;
   walletAvatar.onerror = () => { walletAvatar.src = 'assets/favicon.svg'; };
@@ -271,23 +318,22 @@ function renderAuthenticatedUser(user) {
   }
 
   updatePrestigeBanner(user.boneScore || 0, user.spendableBones || 0);
+  renderFaqRankCostGrid();
   updateFaqSpendActions();
 
   // Show Member Transaction History Tab (Desktop + Mobile)
   if (tabHistory) tabHistory.style.display = 'flex';
   if (mobileTabHistory) mobileTabHistory.style.display = 'flex';
 
-  // STRICT OFFICER PERMISSION CHECK: Show or Hide Officer Hall
-  if (user.isOfficer) {
-    if (tabOfficer) tabOfficer.style.display = 'flex';
-    if (mobileTabOfficer) mobileTabOfficer.style.display = 'flex';
-  } else {
-    if (tabOfficer) tabOfficer.style.display = 'none';
-    if (mobileTabOfficer) mobileTabOfficer.style.display = 'none';
+  // STRICT OFFICER PERMISSION CHECK: Show or Hide Header Officer Mode Toggle
+  if (!user.isOfficer) {
+    state.officerMode = false;
     if (state.activeTab === 'officer') {
       switchTab('leaderboard');
     }
   }
+  syncOfficerModeUi();
+  updateOfficerBadge();
 }
 
 function renderUnauthenticatedUser() {
@@ -299,6 +345,9 @@ function renderUnauthenticatedUser() {
     guestOnboardingHero.style.display = state.onboardingDismissed ? 'none' : 'block';
   }
 
+  state.officerMode = false;
+  syncOfficerModeUi();
+
   walletName.textContent = 'Welcome, Traveler';
   walletHandle.textContent = 'Sign in with Discord to access your ledger';
   walletSpendable.textContent = '0';
@@ -308,11 +357,10 @@ function renderUnauthenticatedUser() {
   if (reqBtn) reqBtn.style.display = 'none';
   if (tabHistory) tabHistory.style.display = 'none';
   if (mobileTabHistory) mobileTabHistory.style.display = 'none';
-  if (tabOfficer) tabOfficer.style.display = 'none';
-  if (mobileTabOfficer) mobileTabOfficer.style.display = 'none';
   if (state.activeTab === 'officer' || state.activeTab === 'history') {
     switchTab('leaderboard');
   }
+  renderFaqRankCostGrid();
   updateFaqSpendActions();
 }
 
@@ -455,11 +503,13 @@ function renderBseDependentViews() {
   renderBounties();
   renderShop();
   renderFaq();
+  renderFaqRankCostGrid();
   updateFaqSpendActions();
   window.BSEArmory?.onBseStateUpdated?.();
 
   if (state.user?.isOfficer) {
     renderOfficerQueues();
+    renderOfficerRosterManager();
     renderOfficerBountiesList();
     renderOfficerShopList();
     renderAuditTrail();
@@ -1018,36 +1068,12 @@ function renderLeaderboard() {
   const clearBtn = document.getElementById('btnClearLeaderboardSearch');
   if (clearBtn) clearBtn.style.display = query ? 'block' : 'none';
 
-  const isOfficer = Boolean(state.user?.isOfficer);
   const roleFilter = (state.ledgerRoleFilter || 'all').toLowerCase();
   const classFilter = (state.ledgerClassFilter || 'all').toLowerCase();
 
   // Helper check: Zero-Bones member (separate from officer-hidden)
   const isZeroBones = (w) => (w.boneScore || 0) === 0 && (w.spendableBones || 0) === 0;
-
-  // Counts for officer filter pills
   const activeCount = allWallets.filter(w => !w.officerHidden && !isZeroBones(w)).length;
-  const zeroCount = allWallets.filter(w => !w.officerHidden && isZeroBones(w)).length;
-  const hiddenCount = allWallets.filter(w => Boolean(w.officerHidden)).length;
-  const totalCount = allWallets.length;
-
-  if (cntActive) cntActive.textContent = activeCount;
-  if (cntZero) cntZero.textContent = zeroCount;
-  if (cntHidden) cntHidden.textContent = hiddenCount;
-  if (cntAll) cntAll.textContent = totalCount;
-
-  const lbDefaults = state.bseState?.config?.leaderboardDefaults || {};
-  const defaultAward = lbDefaults.defaultAwardBones || 25;
-  const defaultDeduct = lbDefaults.defaultDeductBones || 10;
-
-  const lblDefaultValues = document.getElementById('lblLeaderboardDefaultValues');
-  if (lblDefaultValues) {
-    lblDefaultValues.textContent = `+${defaultAward} / -${defaultDeduct}`;
-  }
-
-  if (officerLeaderboardFilters) {
-    officerLeaderboardFilters.style.display = isOfficer ? 'flex' : 'none';
-  }
 
   const compareByName = (a, b) => {
     const nameA = (a.serverNickname || a.globalName || a.username || '').toLowerCase();
@@ -1065,38 +1091,9 @@ function renderLeaderboard() {
     return compareByName(a, b);
   };
 
-  // Determine visible pool based on permissions and filter selection
-  let visiblePool = [];
-  if (!isOfficer) {
-    visiblePool = allWallets.filter(w => !w.officerHidden && !isZeroBones(w));
-    visiblePool.sort(compareByRank);
-  } else {
-    const currentFilter = state.officerLeaderboardFilter || 'active';
-    let pool = [];
-
-    if (currentFilter === 'active') {
-      pool = allWallets.filter(w => !w.officerHidden && !isZeroBones(w));
-      pool.sort(compareByRank);
-    } else if (currentFilter === 'zero') {
-      pool = allWallets.filter(w => !w.officerHidden && isZeroBones(w));
-      pool.sort(compareByName);
-    } else if (currentFilter === 'hidden') {
-      pool = allWallets.filter(w => Boolean(w.officerHidden));
-      pool.sort(compareByRank);
-    } else {
-      const activePart = allWallets.filter(w => !w.officerHidden && !isZeroBones(w));
-      activePart.sort(compareByRank);
-
-      const zeroPart = allWallets.filter(w => !w.officerHidden && isZeroBones(w));
-      zeroPart.sort(compareByName);
-
-      const hiddenPart = allWallets.filter(w => Boolean(w.officerHidden));
-      hiddenPart.sort(compareByRank);
-
-      pool = [...activePart, ...zeroPart, ...hiddenPart];
-    }
-    visiblePool = pool;
-  }
+  // Guild Ledger is always clean Member View (Officer overrides live in Officer Hall)
+  const visiblePool = allWallets.filter(w => !w.officerHidden && !isZeroBones(w));
+  visiblePool.sort(compareByRank);
 
   // Compute tied competition ranks (1, 1, 3...) across visiblePool BEFORE filters
   let activePosition = 0;
@@ -1157,7 +1154,7 @@ function renderLeaderboard() {
   }
 
   // When actively searching by recipe (>= 2 chars), include non-hidden 0-Bones guildmates who learned matching recipes
-  if (query.length >= 2 && ledgerRecipesBySlug.size > 0 && (!isOfficer || state.officerLeaderboardFilter !== 'hidden')) {
+  if (query.length >= 2 && ledgerRecipesBySlug.size > 0) {
     const extraCrafters = [];
     for (const w of allWallets) {
       if (!w || includedDiscordIds.has(w.discordId)) continue;
@@ -1209,7 +1206,7 @@ function renderLeaderboard() {
       myChipEl.style.display = 'inline-flex';
       const myPoolIdx = rankedPool.findIndex(item => item.w.discordId === state.user.id);
       const myPoolEntry = myPoolIdx >= 0 ? rankedPool[myPoolIdx] : null;
-      const rankLabel = myPoolEntry?.rankNumber ? `#${myPoolEntry.rankNumber}` : (myPoolEntry ? '0 Bones' : 'Unranked');
+      const rankLabel = myPoolEntry?.rankNumber ? `#${myPoolEntry.rankNumber}` : '0 Bones';
       myStandingEl.textContent = rankLabel;
 
       if (btnLocateMe) {
@@ -1248,22 +1245,13 @@ function renderLeaderboard() {
     }
   }
 
-  if (thLeaderboardActions) {
-    thLeaderboardActions.style.display = isOfficer ? 'table-cell' : 'none';
-    thLeaderboardActions.textContent = `Actions (+${defaultAward} / -${defaultDeduct})`;
-  }
-
-  const colSpanCount = isOfficer ? 9 : 8;
+  const colSpanCount = 8;
 
   if (!filtered.length) {
     let emptyMsg = 'No members match the current search or filters.';
     const hasFilter = Boolean(query) || roleFilter !== 'all' || classFilter !== 'all';
-    if (!hasFilter) {
-      if (!isOfficer && !activeCount) {
-        emptyMsg = 'Season standings are awaiting first awards! Complete bounties or attend guild raids to claim #1 on the Ledger.';
-      } else if (isOfficer && state.officerLeaderboardFilter === 'active' && !activeCount) {
-        emptyMsg = 'All members currently have 0 Bones. Use "0-Bones" or "All Guild" filter tab above to view the roster and award Bones.';
-      }
+    if (!hasFilter && !activeCount) {
+      emptyMsg = 'Season standings are awaiting first awards! Complete bounties or attend guild raids to claim #1 on the Ledger.';
     }
     const resetBtnHtml = hasFilter
       ? `<div style="margin-top:0.75rem;"><button type="button" class="btn-secondary btn-sm" id="btnResetLedgerFilters">Clear Search &amp; Filters</button></div>`
@@ -1351,15 +1339,6 @@ function renderLeaderboard() {
       ? `<span class="role-pill ${roleCss}">${escapeHtml(charRole)}</span>`
       : `<span style="color:var(--text-dim); font-size:0.8rem;">—</span>`;
 
-    const officerActionsCell = isOfficer ? `
-      <td style="text-align: center;" onclick="event.stopPropagation()">
-        <div class="officer-inline-actions">
-          <button type="button" class="btn-officer-award" title="Award ${defaultAward} Bones" onclick="event.stopPropagation(); openBonesAdjustModal('${w.discordId}', '${escapeAttr(name)}', 'award')">+${defaultAward}</button>
-          <button type="button" class="btn-officer-deduct" title="Deduct ${defaultDeduct} Bones" onclick="event.stopPropagation(); openBonesAdjustModal('${w.discordId}', '${escapeAttr(name)}', 'deduct')">-${defaultDeduct}</button>
-        </div>
-      </td>
-    ` : '';
-
     const rowActionCall = isRecipeOnlyMatch
       ? `inspectMemberRecipeMatch('${w.discordId}', '${escapeAttr(topRec.key || targetCharKey)}', '${escapeAttr(rawQuery)}')`
       : `inspectMemberProfile('${w.discordId}', '${escapeAttr(targetCharKey)}')`;
@@ -1368,15 +1347,12 @@ function renderLeaderboard() {
       ? `<button type="button" class="btn-ledger-armory" onclick="event.stopPropagation(); ${rowActionCall}" title="Open ${escapeAttr(name)}'s Character Armory">Armory &rsaquo;</button>`
       : `<button type="button" class="btn-ledger-armory is-muted" onclick="event.stopPropagation(); inspectMemberProfile('${w.discordId}')" title="Open ${escapeAttr(name)}'s Member Profile">Profile &rsaquo;</button>`;
 
-    const statusBadge = isHidden
-      ? `<span class="badge-officer-hidden">Hidden</span>`
-      : (isZeroRecipeMatch
-        ? `<span class="badge-crafter-match">Crafter</span>`
-        : (isZero ? `<span class="badge-zero-bones">0 Bones</span>` : ''));
+    const statusBadge = isZeroRecipeMatch
+      ? `<span class="badge-crafter-match">Crafter</span>`
+      : (isZero ? `<span class="badge-zero-bones">0 Bones</span>` : '');
 
     const isSelf = Boolean(state.user?.id && w.discordId === state.user.id);
-    const rowClasses = [isHidden ? 'officer-hidden-row' : '', isSelf ? 'is-self-row' : ''].filter(Boolean).join(' ');
-    const rowClassAttr = rowClasses ? `class="${rowClasses}"` : '';
+    const rowClassAttr = isSelf ? 'class="is-self-row"' : '';
 
     return `
       <tr ${rowClassAttr} onclick="${rowActionCall}" title="Click to open ${escapeAttr(name)}'s Character Armory (Level, Gear &amp; Professions)">
@@ -1397,7 +1373,6 @@ function renderLeaderboard() {
         <td><span class="card-badge economy">${escapeHtml(rankTitle)}</span></td>
         <td style="font-weight: 700; color: var(--gold-300);">${(w.spendableBones || 0).toLocaleString()}</td>
         <td style="font-weight: 700; color: var(--amber);">${(w.boneScore || 0).toLocaleString()}</td>
-        ${officerActionsCell}
         <td class="col-inspect-chevron">${armoryActionBtn}</td>
       </tr>
     `;
@@ -1405,7 +1380,7 @@ function renderLeaderboard() {
 
   // 2. Render Mobile Roster Stream (< 768px)
   if (mobileLeaderboardList) {
-    mobileLeaderboardList.innerHTML = displayedRows.map(({ w, isHidden, isZero, isZeroRecipeMatch, rankNumber, prim, charMatch }) => {
+    mobileLeaderboardList.innerHTML = displayedRows.map(({ w, isZero, isZeroRecipeMatch, rankNumber, prim, charMatch }) => {
       const rankNum = rankNumber !== null ? `#${rankNumber}` : '—';
       const rankHighlightClass = rankNumber !== null && rankNumber <= 3 ? ` rank-${rankNumber}` : '';
 
@@ -1442,25 +1417,12 @@ function renderLeaderboard() {
         mobileProfsLine = `<div class="mobile-roster-profs">${escapeHtml(profSummary)}</div>`;
       }
 
-      const mobileOfficerStrip = isOfficer ? `
-        <div class="mobile-card-officer-strip" onclick="event.stopPropagation()">
-          <button type="button" class="btn-officer-award" onclick="event.stopPropagation(); openBonesAdjustModal('${w.discordId}', '${escapeAttr(name)}', 'award')">+${defaultAward}</button>
-          <button type="button" class="btn-officer-deduct" onclick="event.stopPropagation(); openBonesAdjustModal('${w.discordId}', '${escapeAttr(name)}', 'deduct')">-${defaultDeduct}</button>
-        </div>
-      ` : '';
-
-      const statusBadge = isHidden
-        ? `<span class="badge-officer-hidden">Hidden</span>`
-        : (isZeroRecipeMatch
-          ? `<span class="badge-crafter-match">Crafter</span>`
-          : (isZero ? `<span class="badge-zero-bones">0 Bones</span>` : ''));
+      const statusBadge = isZeroRecipeMatch
+        ? `<span class="badge-crafter-match">Crafter</span>`
+        : (isZero ? `<span class="badge-zero-bones">0 Bones</span>` : '');
 
       const isSelf = Boolean(state.user?.id && w.discordId === state.user.id);
-      const cardClass = [
-        'mobile-roster-card',
-        isHidden ? 'officer-hidden-card' : '',
-        isSelf ? 'is-self-row' : ''
-      ].filter(Boolean).join(' ');
+      const cardClass = ['mobile-roster-card', isSelf ? 'is-self-row' : ''].filter(Boolean).join(' ');
 
       const mobCardAction = isRecipeOnlyMatch
         ? `inspectMemberRecipeMatch('${w.discordId}', '${escapeAttr(topRec.key || targetCharKey)}', '${escapeAttr(rawQuery)}')`
@@ -1489,7 +1451,6 @@ function renderLeaderboard() {
               <span class="mobile-armory-pill ${charName ? '' : 'is-muted'}">${charName ? 'Armory &rsaquo;' : 'View &rsaquo;'}</span>
             </div>
           </div>
-          ${mobileOfficerStrip}
         </div>
       `;
     }).join('');
@@ -1560,7 +1521,6 @@ window.inspectMemberProfile = function(discordId, preferredCharKey = null, armor
     ? `<div class="guild-note-card">"${w.guildNote}"</div>`
     : `<div style="color:var(--text-dim); font-size:0.85rem; font-style:italic; margin:0.5rem 0;">No public guild note provided yet.</div>`;
 
-  const wkStatus = resolveClientMemberWeeklyStatus(w, state.bseState);
   const modalBody = document.getElementById('memberProfileModalBody');
   modalBody.innerHTML = `
     <div class="member-profile-header">
@@ -1586,27 +1546,6 @@ window.inspectMemberProfile = function(discordId, preferredCharKey = null, armor
       <h5 style="color: var(--gold-100); font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem;">Linked Characters (WoW: Forever)</h5>
       ${charactersHtml}
     </div>
-
-    ${state.user?.isOfficer ? `
-      <div class="wow-inner-box" style="margin-top: 1.25rem; padding: 0.85rem;">
-        <div style="font-size: 0.75rem; color: var(--gold-300); font-weight: 700; text-transform: uppercase; margin-bottom: 0.5rem; display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
-          <span>Officer Controls</span>
-          <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
-            <span style="font-size: 0.7rem; color: var(--text-muted); text-transform: none; font-weight: 500;">Weekly Cap: <strong style="color: ${wkStatus.enabled && wkStatus.weeklyEarned >= wkStatus.effectiveCap ? '#f87171' : 'var(--gold-200)'};">${wkStatus.label}</strong></span>
-            ${w.officerHidden ? `<span class="badge-officer-hidden">Hidden from Leaderboard</span>` : ''}
-          </div>
-        </div>
-        <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
-          <button class="btn-officer-award" style="padding: 0.4rem 0.8rem; font-size: 0.8rem;" onclick="openBonesAdjustModal('${discordId}', '${escapeAttr(name)}', 'award')">+ Award Bones</button>
-          <button class="btn-officer-deduct" style="padding: 0.4rem 0.8rem; font-size: 0.8rem;" onclick="openBonesAdjustModal('${discordId}', '${escapeAttr(name)}', 'deduct')">- Deduct Bones</button>
-          <button class="btn-officer-adjust" style="padding: 0.4rem 0.8rem; font-size: 0.8rem;" onclick="quickAdjustSpendable('${discordId}', '${escapeAttr(name)}', ${w.spendableBones || 0})">🪙 Override Spendable Bones</button>
-          <button class="btn-officer-adjust" style="padding: 0.4rem 0.8rem; font-size: 0.8rem;" onclick="quickAdjustLifetime('${discordId}', '${escapeAttr(name)}', ${w.boneScore || 0})">⚙️ Adjust Lifetime Bones</button>
-          <button class="btn-officer-adjust" style="padding: 0.4rem 0.8rem; font-size: 0.8rem;" onclick="quickAdjustBountyStats('${discordId}', '${escapeAttr(name)}', ${w.bountiesCompleted || 0}, ${w.postedBountiesCompleted || 0})">🎯 Override Bounty Stats</button>
-          <button class="btn-officer-hide" style="padding: 0.4rem 0.8rem; font-size: 0.8rem;" onclick="quickToggleHideMember('${discordId}', '${escapeAttr(name)}', ${Boolean(w.officerHidden)})">${w.officerHidden ? '👁️ Unhide Member' : '👁️ Hide from Leaderboard'}</button>
-          <button class="btn-officer-purge" style="padding: 0.4rem 0.8rem; font-size: 0.8rem;" onclick="quickDeleteMember('${discordId}', '${escapeAttr(name)}', ${w.spendableBones || 0}, ${w.boneScore || 0})">Purge from Roster</button>
-        </div>
-      </div>
-    ` : ''}
   `;
 
   state.inspectedMemberId = discordId;
@@ -1711,23 +1650,137 @@ function setupOnboardingAndGuide() {
   });
 }
 
+const BASE_CONTRACT_COST = 10;
+const RANK_CONTRACT_DISCOUNT = 2;
+
+function getSortedClientRanks() {
+  const rawRanks = Array.isArray(state.bseState?.ranks) && state.bseState.ranks.length > 0
+    ? state.bseState.ranks
+    : [
+        { tier: 0, title: 'Rank 1', costBones: 0 },
+        { tier: 1, title: 'Rank 2', costBones: 25 },
+        { tier: 2, title: 'Rank 3', costBones: 75 },
+        { tier: 3, title: 'Rank 4', costBones: 150 },
+        { tier: 4, title: 'Rank 5', costBones: 300 },
+        { tier: 5, title: 'Rank 6', costBones: 500 }
+      ];
+  return [...rawRanks].sort((a, b) => Number(a.tier ?? 0) - Number(b.tier ?? 0));
+}
+
+function getClientRankIndex(rankTier = 0) {
+  const sorted = getSortedClientRanks();
+  const parsed = Number(rankTier);
+  const safeTier = Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : 0;
+  const idx = sorted.findIndex(r => Number(r.tier) === safeTier);
+  return idx >= 0 ? idx : safeTier;
+}
+
+function calculateClientBountyCreationCost(rankTier = 0) {
+  const step = getClientRankIndex(rankTier);
+  return Math.max(0, BASE_CONTRACT_COST - RANK_CONTRACT_DISCOUNT * step);
+}
+
+function getClientBountyEscrowBones(bounty) {
+  if (!bounty || typeof bounty !== 'object') return 0;
+  if (bounty.escrowBones !== undefined && bounty.escrowBones !== null) {
+    return Math.max(0, Number(bounty.escrowBones) || 0);
+  }
+  if (bounty.baseRewardBones !== undefined && bounty.baseRewardBones !== null) {
+    return Math.max(0, Number(bounty.baseRewardBones) || 0);
+  }
+  return Math.max(0, Number(bounty.rewardBones) || 0);
+}
+
+function renderFaqRankCostGrid() {
+  const grid = document.getElementById('faqRankCostGrid');
+  if (!grid) return;
+
+  const currName = state.bseState?.branding?.currencyName || 'Bones';
+  const sorted = getSortedClientRanks();
+  const displayCount = Math.max(sorted.length, 6);
+  const userIdx = state.user?.authenticated ? getClientRankIndex(state.user.rankTier || 0) : -1;
+
+  const tiles = [];
+  for (let i = 0; i < displayCount; i++) {
+    const rankObj = sorted[i];
+    const label = rankObj?.title ? rankObj.title : `Rank ${i + 1}`;
+    const cost = Math.max(0, BASE_CONTRACT_COST - RANK_CONTRACT_DISCOUNT * i);
+    const isFree = cost === 0;
+    const isCurrent = userIdx === i;
+    const cls = ['rank-cost-tile', isFree ? 'is-free' : '', isCurrent ? 'is-current-rank' : ''].filter(Boolean).join(' ');
+    tiles.push(`
+      <div class="${cls}">
+        <span class="rank-label">${escapeHtml(label)}</span>
+        <span class="rank-fee">${isFree ? 'Free' : `${cost} ${escapeHtml(currName)}`}</span>
+        ${isCurrent ? `<span class="rank-your-pill">Your Rank</span>` : ''}
+      </div>
+    `);
+  }
+  grid.innerHTML = tiles.join('');
+}
+
+function syncRequestBountyModalSummary() {
+  const currName = state.bseState?.branding?.currencyName || 'Bones';
+  const userTier = state.user?.rankTier || 0;
+  const rankName = resolveRankTitle(userTier);
+  const creationCost = calculateClientBountyCreationCost(userTier);
+  const spendable = state.user?.spendableBones || 0;
+  const contractType = document.getElementById('reqContractType')?.value === 'kill' ? 'kill' : 'help';
+
+  const rankEl = document.getElementById('reqBountyRankName');
+  if (rankEl) rankEl.textContent = rankName;
+
+  const costEl = document.getElementById('reqBountyCreationCost');
+  if (costEl) {
+    costEl.textContent = creationCost === 0 ? `Free (0 ${currName})` : `${creationCost} ${currName}`;
+    costEl.classList.toggle('free', creationCost === 0);
+    costEl.classList.toggle('gold', creationCost > 0);
+  }
+
+  const payoutEl = document.getElementById('reqBountyPayoutSummary');
+  if (payoutEl) {
+    payoutEl.textContent = contractType === 'kill'
+      ? `1 ${currName === 'Bones' ? 'Bone' : currName} / kill (up to 10 ${currName})`
+      : `+5 ${currName} on completion`;
+  }
+
+  const balEl = document.getElementById('reqBountyUserBalance');
+  if (balEl) balEl.textContent = `${spendable.toLocaleString()} ${currName}`;
+
+  const insufficient = spendable < creationCost;
+  const msgEl = document.getElementById('reqBountyInsufficientMsg');
+  if (msgEl) {
+    if (insufficient) {
+      const shortBy = creationCost - spendable;
+      msgEl.style.display = 'block';
+      msgEl.textContent = `Need ${shortBy} more ${currName} to post a contract at ${rankName} (${creationCost} ${currName} fee).`;
+    } else {
+      msgEl.style.display = 'none';
+      msgEl.textContent = '';
+    }
+  }
+
+  const submitBtn = document.getElementById('btnSubmitRequestBountyExecute');
+  if (submitBtn) {
+    submitBtn.disabled = insufficient;
+    submitBtn.textContent = creationCost > 0
+      ? `Submit & Escrow ${creationCost} ${currName}`
+      : 'Submit Free Contract';
+  }
+}
+
 function openRequestBountyModal() {
   if (!state.user || !state.user.authenticated) {
     showToast('Please sign in with Discord to post a contract.');
     return;
   }
-  const balEl = document.getElementById('reqBountyUserBalance');
-  if (balEl) balEl.textContent = (state.user.spendableBones || 0).toLocaleString();
   const titleEl = document.getElementById('reqBountyTitle');
   if (titleEl) titleEl.value = '';
-  const rewardEl = document.getElementById('reqBountyReward');
-  if (rewardEl) rewardEl.value = '10';
+  const typeEl = document.getElementById('reqContractType');
+  if (typeEl) typeEl.value = 'help';
   const descEl = document.getElementById('reqBountyDesc');
   if (descEl) descEl.value = '';
-  const bonusDescEl = document.getElementById('reqBountyBonusDesc');
-  if (bonusDescEl) bonusDescEl.value = '';
-  const bonusAmtEl = document.getElementById('reqBountyBonusAmount');
-  if (bonusAmtEl) bonusAmtEl.value = '';
+  syncRequestBountyModalSummary();
   document.getElementById('modalRequestBounty')?.classList.add('active');
 }
 
@@ -2124,6 +2177,8 @@ function formatAuditBadge(action) {
   if (action === 'MEMBER_HIDE') return { cls: 'deduct', text: 'Hidden' };
   if (action === 'MEMBER_UNHIDE') return { cls: 'award', text: 'Unhidden' };
   if (action === 'ROSTER_DISCORD_SYNC' || action === 'ROSTER_AUTO_SYNC') return { cls: 'adjust', text: 'Roster Sync' };
+  if (action === 'DATA_BACKUP_RESTORED') return { cls: 'adjust', text: 'Backup Restored' };
+  if (action === 'DATA_BACKUP_CREATED') return { cls: 'award', text: 'Snapshot Saved' };
   if (action === 'MEMBER_DELETE') return { cls: 'purge', text: 'Purged' };
   return { cls: 'adjust', text: action || 'Event' };
 }
@@ -2791,6 +2846,10 @@ function renderOfficerQueues() {
   const memberRequests = (state.bseState.bounties || []).filter(b => b.status === 'pending_review');
   const cntRequestsEl = document.getElementById('cntMemberBountyRequests');
   if (cntRequestsEl) cntRequestsEl.textContent = memberRequests.length;
+  if (subtabBountyReqCount) {
+    subtabBountyReqCount.textContent = memberRequests.length;
+    subtabBountyReqCount.style.display = memberRequests.length > 0 ? 'inline-block' : 'none';
+  }
   const requestsPanelEl = document.getElementById('memberRequestsPanel');
   if (requestsPanelEl) {
     requestsPanelEl.classList.toggle('has-pending', memberRequests.length > 0);
@@ -2802,6 +2861,8 @@ function renderOfficerQueues() {
     } else {
       requestsListEl.innerHTML = memberRequests.map(b => {
         const sponsorName = b.creatorNickname || b.creatorUsername || 'Guild Member';
+        const escrowPaid = getClientBountyEscrowBones(b);
+        const contractBadgeLabel = b.contractType === 'kill' ? 'Kill Contract (1/kill, max 10)' : 'Help Contract';
         const bonusesText = (b.bonuses && b.bonuses.length)
           ? b.bonuses.map(bn => `⭐ ${escapeHtml(bn.description)} (+${bn.bonusBones} Bones)`).join(', ')
           : '';
@@ -2812,11 +2873,12 @@ function renderOfficerQueues() {
               <div>
                 <strong style="color: var(--gold-100); font-size: 1.05rem;">${escapeHtml(b.title)}</strong>
                 <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.2rem;">
-                  Requested by: <strong>${escapeHtml(sponsorName)}</strong> &bull; Category: <span class="card-badge ${(b.category || 'Guild').toLowerCase()}">${b.category || 'Guild'}</span>
+                  Requested by: <strong>${escapeHtml(sponsorName)}</strong> &bull; <span class="card-badge ${(b.category || 'Guild').toLowerCase()}">${escapeHtml(b.category || 'Guild')}</span> &bull; <span style="color: var(--gold-200);">${escapeHtml(contractBadgeLabel)}</span>
                 </div>
               </div>
               <div style="text-align: right;">
-                <span style="color: var(--gold-300); font-weight: 800; font-size: 1.1rem;">+${b.rewardBones} ${currName} (Escrowed)</span>
+                <span style="color: var(--gold-300); font-weight: 800; font-size: 1.05rem;">Payout: +${b.rewardBones} ${currName}</span>
+                <div style="font-size: 0.75rem; color: var(--amber); font-weight: 600;">Rank Fee Escrowed: ${escrowPaid === 0 ? 'Free (0)' : `${escrowPaid} ${currName}`}</div>
                 <div style="font-size: 0.7rem; color: var(--text-dim);">Bounty ID: <code>${b.id}</code></div>
               </div>
             </div>
@@ -2844,17 +2906,28 @@ function updateOfficerBadge() {
   const pendingBounties = (state.bseState?.bounties || []).filter(b => b.status === 'pending_review').length;
   const total = pendingClaims + pendingBounties;
 
-  if (total > 0) {
-    officerActionBadge.textContent = total;
-    officerActionBadge.style.display = 'inline-block';
-    if (mobileOfficerActionBadge) {
-      mobileOfficerActionBadge.textContent = total;
-      mobileOfficerActionBadge.style.display = 'inline-block';
-    }
-  } else {
-    officerActionBadge.style.display = 'none';
-    if (mobileOfficerActionBadge) {
-      mobileOfficerActionBadge.style.display = 'none';
+  const breakdownParts = [];
+  if (pendingClaims > 0) {
+    breakdownParts.push(`${pendingClaims} bounty claim${pendingClaims === 1 ? '' : 's'} to confirm`);
+  }
+  if (pendingBounties > 0) {
+    breakdownParts.push(`${pendingBounties} contract request${pendingBounties === 1 ? '' : 's'} to approve`);
+  }
+  const summaryTitle = total > 0
+    ? breakdownParts.join(' · ')
+    : 'Switch between Member View and Officer Hall';
+
+  if (officerModeToggle) {
+    officerModeToggle.classList.toggle('has-pending', total > 0);
+    officerModeToggle.title = summaryTitle;
+  }
+  if (officerToggleBadge) {
+    if (total > 0) {
+      officerToggleBadge.textContent = String(total);
+      officerToggleBadge.style.display = 'inline-flex';
+      officerToggleBadge.title = summaryTitle;
+    } else {
+      officerToggleBadge.style.display = 'none';
     }
   }
 }
@@ -4369,42 +4442,30 @@ function setupModals() {
     }
   });
 
-  // Member Request Bounty Modal Handlers (Player Escrow)
+  // Member Request Bounty Modal Handlers (Rank-Based Escrow)
   document.getElementById('btnOpenRequestBountyModal')?.addEventListener('click', openRequestBountyModal);
+  document.getElementById('reqContractType')?.addEventListener('change', syncRequestBountyModalSummary);
 
   document.getElementById('btnSubmitRequestBountyExecute')?.addEventListener('click', async () => {
-    const title = document.getElementById('reqBountyTitle').value.trim();
-    const rewardBones = parseInt(document.getElementById('reqBountyReward').value, 10);
-    const category = document.getElementById('reqBountyCategory').value;
-    const description = document.getElementById('reqBountyDesc').value.trim();
-    const bonusDesc = document.getElementById('reqBountyBonusDesc')?.value.trim() || '';
-    const bonusAmount = parseInt(document.getElementById('reqBountyBonusAmount')?.value, 10) || 0;
+    const title = document.getElementById('reqBountyTitle')?.value.trim() || '';
+    const contractType = document.getElementById('reqContractType')?.value === 'kill' ? 'kill' : 'help';
+    const category = document.getElementById('reqBountyCategory')?.value || 'Guild';
+    const description = document.getElementById('reqBountyDesc')?.value.trim() || '';
+    const currName = state.bseState?.branding?.currencyName || 'Bones';
+    const creationCost = calculateClientBountyCreationCost(state.user?.rankTier || 0);
 
     if (!title) {
-      showToast('Please enter a bounty title.');
-      return;
-    }
-    if (isNaN(rewardBones) || rewardBones < 0) {
-      showToast('Please enter a valid Bones amount (0 or higher).');
+      showToast('Please enter a contract title.');
       return;
     }
     const userSpendable = state.user?.spendableBones || 0;
-    if (rewardBones > userSpendable) {
-      showToast(`Insufficient Bones. You have ${userSpendable} Spendable Bones.`);
+    if (creationCost > userSpendable) {
+      showToast(`Insufficient ${currName}. Posting costs ${creationCost} ${currName} at your rank (you have ${userSpendable}).`);
       return;
     }
     if (!description) {
-      showToast('Please provide bounty instructions and deliverables.');
+      showToast('Please provide contract objective and requirements.');
       return;
-    }
-
-    const bonuses = [];
-    if (bonusDesc && bonusAmount > 0) {
-      bonuses.push({
-        id: `bonus_${Date.now()}`,
-        description: bonusDesc,
-        bonusBones: bonusAmount
-      });
     }
 
     try {
@@ -4413,17 +4474,17 @@ function setupModals() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           title,
-          rewardBones,
+          contractType,
           category,
-          description,
-          bonuses
+          description
         })
       });
       const data = await res.json();
       if (res.ok) {
-        showToast(rewardBones > 0
-          ? `Bounty request submitted! ${rewardBones} Bones placed in escrow awaiting officer review.`
-          : 'Bounty request submitted (0 Bones escrowed) awaiting officer review.');
+        const escrowed = Number(data.escrowBones ?? creationCost);
+        showToast(escrowed > 0
+          ? `Contract submitted! ${escrowed} ${currName} placed in escrow awaiting officer approval.`
+          : 'Free rank contract submitted awaiting officer approval!');
         document.getElementById('modalRequestBounty')?.classList.remove('active');
         await refreshBseState();
       } else {
@@ -4950,12 +5011,14 @@ function setupOfficerTools() {
   });
 
   // Save Member Ledger Correction
-  document.getElementById('btnSaveMemberAdjust').addEventListener('click', async () => {
+  document.getElementById('btnSaveMemberAdjust')?.addEventListener('click', async () => {
     if (!state.inspectedMemberId) return;
-    const rawSpendable = document.getElementById('inspectorSpendable').value.trim();
-    const rawScore = document.getElementById('inspectorScore').value.trim();
+    const rawSpendable = document.getElementById('inspectorSpendable')?.value.trim() ?? '';
+    const rawScore = document.getElementById('inspectorScore')?.value.trim() ?? '';
+    const rawCompleted = document.getElementById('inspectorBountiesCompleted')?.value.trim() ?? '';
+    const rawPosted = document.getElementById('inspectorPostedBounties')?.value.trim() ?? '';
     const reasonEl = document.getElementById('inspectorReason');
-    const reason = reasonEl.value.trim();
+    const reason = reasonEl?.value.trim() || '';
     const officerHidden = inspectorOfficerHidden ? inspectorOfficerHidden.checked : false;
 
     const payload = {
@@ -4980,6 +5043,22 @@ function setupOfficerTools() {
       }
       payload.boneScore = score;
     }
+    if (rawCompleted !== '') {
+      const completed = parseInt(rawCompleted, 10);
+      if (isNaN(completed) || completed < 0) {
+        showToast('Invalid Bounties Completed override (must be 0 or higher).');
+        return;
+      }
+      payload.bountiesCompleted = completed;
+    }
+    if (rawPosted !== '') {
+      const posted = parseInt(rawPosted, 10);
+      if (isNaN(posted) || posted < 0) {
+        showToast('Invalid Posted Bounties override (must be 0 or higher).');
+        return;
+      }
+      payload.postedBountiesCompleted = posted;
+    }
 
     const res = await fetch('/api/exchange/member/adjust', {
       method: 'POST',
@@ -4992,12 +5071,20 @@ function setupOfficerTools() {
         ? `Overrode Spendable Bones to ${(data.wallet?.spendableBones ?? 0).toLocaleString()} (separate from weekly cap).`
         : 'Member ledger corrected successfully.';
       showToast(toastMsg);
-      reasonEl.value = '';
+      if (reasonEl) reasonEl.value = '';
       await refreshBseState();
       loadMemberIntoInspector(state.inspectedMemberId);
     } else {
       showToast(data.error || 'Failed to update ledger.');
     }
+  });
+
+  document.getElementById('btnPurgeInspectedMember')?.addEventListener('click', () => {
+    if (!state.inspectedMemberId) return;
+    const w = state.bseState?.wallets?.[state.inspectedMemberId];
+    if (!w) return;
+    const name = w.serverNickname || w.globalName || w.username || 'Guild Member';
+    window.quickDeleteMember?.(state.inspectedMemberId, name, w.spendableBones || 0, w.boneScore || 0);
   });
 
   // Open Create Guild Bounty Modal
@@ -5313,7 +5400,7 @@ function loadMemberIntoInspector(userId) {
   const currName = state.bseState?.branding?.currencyName || 'Bones';
 
   if (!wallet) {
-    card.innerHTML = `<p style="color:var(--text-muted);">Member ID <code>${userId}</code> has no ledger records yet. (Awarding currency will create profile).</p>`;
+    card.innerHTML = `<p style="color:var(--text-muted);">Member ID <code>${escapeHtml(String(userId || ''))}</code> has no ledger records yet. (Awarding currency will create profile).</p>`;
     form.style.display = 'none';
     return;
   }
@@ -5334,16 +5421,119 @@ function loadMemberIntoInspector(userId) {
     </div>
   `;
 
-  document.getElementById('inspectorSpendable').value = wallet.spendableBones || 0;
-  document.getElementById('inspectorScore').value = wallet.boneScore || 0;
+  const spendIn = document.getElementById('inspectorSpendable');
+  if (spendIn) spendIn.value = wallet.spendableBones || 0;
+  const scoreIn = document.getElementById('inspectorScore');
+  if (scoreIn) scoreIn.value = wallet.boneScore || 0;
+  const compIn = document.getElementById('inspectorBountiesCompleted');
+  if (compIn) compIn.value = wallet.bountiesCompleted || 0;
+  const postedIn = document.getElementById('inspectorPostedBounties');
+  if (postedIn) postedIn.value = wallet.postedBountiesCompleted || 0;
   if (inspectorOfficerHidden) {
     inspectorOfficerHidden.checked = Boolean(wallet.officerHidden);
   }
   form.style.display = 'block';
 }
 
+window.selectOfficerRosterMember = function(userId) {
+  loadMemberIntoInspector(userId);
+  document.getElementById('memberInspectorCard')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+};
+
+function renderOfficerRosterManager() {
+  const tbody = document.getElementById('officerRosterManagerTbody');
+  if (!tbody || !state.bseState) return;
+
+  const allWallets = Object.values(state.bseState.wallets || {});
+  const isZeroBones = (w) => (w.boneScore || 0) === 0 && (w.spendableBones || 0) === 0;
+
+  const activeCount = allWallets.filter(w => !w.officerHidden && !isZeroBones(w)).length;
+  const zeroCount = allWallets.filter(w => !w.officerHidden && isZeroBones(w)).length;
+  const hiddenCount = allWallets.filter(w => Boolean(w.officerHidden)).length;
+
+  if (cntActive) cntActive.textContent = activeCount;
+  if (cntZero) cntZero.textContent = zeroCount;
+  if (cntHidden) cntHidden.textContent = hiddenCount;
+  if (cntAll) cntAll.textContent = allWallets.length;
+
+  const lbDefaults = state.bseState?.config?.leaderboardDefaults || {};
+  const defaultAward = lbDefaults.defaultAwardBones || 25;
+  const defaultDeduct = lbDefaults.defaultDeductBones || 10;
+  const lblDefaultValues = document.getElementById('lblLeaderboardDefaultValues');
+  if (lblDefaultValues) {
+    lblDefaultValues.textContent = `+${defaultAward} / -${defaultDeduct}`;
+  }
+
+  const compareByName = (a, b) => {
+    const nameA = (a.serverNickname || a.globalName || a.username || '').toLowerCase();
+    const nameB = (b.serverNickname || b.globalName || b.username || '').toLowerCase();
+    return nameA.localeCompare(nameB);
+  };
+  const compareByRank = (a, b) => {
+    const scoreDiff = (b.boneScore || b.spendableBones || 0) - (a.boneScore || a.spendableBones || 0);
+    if (scoreDiff !== 0) return scoreDiff;
+    return compareByName(a, b);
+  };
+
+  const currentFilter = state.officerLeaderboardFilter || 'active';
+  let pool = [];
+  if (currentFilter === 'active') {
+    pool = allWallets.filter(w => !w.officerHidden && !isZeroBones(w)).sort(compareByRank);
+  } else if (currentFilter === 'zero') {
+    pool = allWallets.filter(w => !w.officerHidden && isZeroBones(w)).sort(compareByName);
+  } else if (currentFilter === 'hidden') {
+    pool = allWallets.filter(w => Boolean(w.officerHidden)).sort(compareByRank);
+  } else {
+    pool = [...allWallets].sort(compareByRank);
+  }
+
+  const q = (state.officerRosterSearch || '').trim().toLowerCase();
+  if (q) {
+    pool = pool.filter(w => {
+      const name = (w.serverNickname || w.globalName || w.username || '').toLowerCase();
+      const handle = (w.username || '').toLowerCase();
+      const char = (w.primaryCharacter || '').toLowerCase();
+      return name.includes(q) || handle.includes(q) || char.includes(q);
+    });
+  }
+
+  if (!pool.length) {
+    tbody.innerHTML = `<tr><td colspan="6" style="text-align: center; color: var(--text-dim); padding: 1.5rem;">No guild members match this filter.</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = pool.slice(0, 120).map(w => {
+    const name = w.serverNickname || w.globalName || w.username || 'Guild Member';
+    const handle = w.username ? `@${w.username}` : '';
+    const prim = resolveMemberPrimaryChar(w);
+    const wkStatus = resolveClientMemberWeeklyStatus(w, state.bseState);
+    const hiddenBadge = w.officerHidden ? ` <span class="badge-officer-hidden">Hidden</span>` : '';
+    const zeroBadge = (!w.officerHidden && isZeroBones(w)) ? ` <span class="badge-zero-bones">0 Bones</span>` : '';
+
+    return `
+      <tr>
+        <td>
+          <div style="font-weight: 700; color: var(--gold-100);">${escapeHtml(name)}${hiddenBadge}${zeroBadge}</div>
+          <div style="font-size: 0.72rem; color: var(--text-muted);">${escapeHtml(handle)}</div>
+        </td>
+        <td>${prim.name ? `<span class="class-badge class-${(prim.charClass || 'warrior').toLowerCase().replace(/\s+/g, '-')}">${escapeHtml(prim.name)}</span>` : '<span style="color:var(--text-dim);">—</span>'}</td>
+        <td style="font-weight: 700; color: var(--gold-300);">${(w.spendableBones || 0).toLocaleString()}</td>
+        <td style="font-weight: 700; color: var(--amber);">${(w.boneScore || 0).toLocaleString()}</td>
+        <td style="font-size: 0.78rem; color: ${wkStatus.enabled && wkStatus.weeklyEarned >= wkStatus.effectiveCap ? '#f87171' : 'var(--text-muted)'};">${escapeHtml(wkStatus.label)}</td>
+        <td style="text-align: right;">
+          <div style="display: inline-flex; gap: 0.35rem; flex-wrap: wrap; justify-content: flex-end;">
+            <button type="button" class="btn-officer-award" onclick="openBonesAdjustModal('${escapeAttr(w.discordId)}', '${escapeAttr(name)}', 'award')">+${defaultAward}</button>
+            <button type="button" class="btn-officer-deduct" onclick="openBonesAdjustModal('${escapeAttr(w.discordId)}', '${escapeAttr(name)}', 'deduct')">-${defaultDeduct}</button>
+            <button type="button" class="btn-secondary btn-xs" onclick="selectOfficerRosterMember('${escapeAttr(w.discordId)}')">Override</button>
+          </div>
+        </td>
+      </tr>
+    `;
+  }).join('');
+}
+
 /**
- * Setup Officer Leaderboard Filter Pills
+ * Setup Officer Roster Filter Pills & Search inside Officer Hall (#subview-roster)
  */
 function setupOfficerLeaderboardFilters() {
   const filterButtons = [
@@ -5357,11 +5547,16 @@ function setupOfficerLeaderboardFilters() {
     if (!btn) return;
     btn.addEventListener('click', () => {
       state.officerLeaderboardFilter = filter;
-      state.ledgerPage = 1;
-      document.querySelectorAll('.filter-pill').forEach(p => p.classList.remove('active'));
+      document.querySelectorAll('#officerRosterFilterPills .filter-pill').forEach(p => p.classList.remove('active'));
       btn.classList.add('active');
-      renderLeaderboard();
+      renderOfficerRosterManager();
     });
+  });
+
+  const rosterSearch = document.getElementById('searchOfficerRoster');
+  rosterSearch?.addEventListener('input', () => {
+    state.officerRosterSearch = rosterSearch.value;
+    renderOfficerRosterManager();
   });
 }
 
@@ -5578,16 +5773,26 @@ window.approveMemberBountyRequest = async function(bountyId) {
   const bounty = (state.bseState?.bounties || []).find(b => b.id === bountyId);
   const currName = state.bseState?.branding?.currencyName || 'Bones';
   const sponsorName = bounty?.creatorNickname || bounty?.creatorUsername || 'Guild Member';
-  const escrowed = bounty ? (bounty.baseRewardBones !== undefined ? bounty.baseRewardBones : (bounty.rewardBones || 0)) : 0;
+  const escrowPaid = getClientBountyEscrowBones(bounty);
+  const defaultPayout = bounty ? (bounty.baseRewardBones !== undefined ? bounty.baseRewardBones : (bounty.rewardBones ?? 5)) : 5;
 
   const decision = await openOfficerDecisionModal({
     title: 'Approve Member Contract',
     lead: bounty
-      ? `Post "${bounty.title}" by ${sponsorName} (${escrowed} escrowed ${currName}) to the active Bounty Board.`
+      ? `Post "${bounty.title}" by ${sponsorName} (Rank Fee Paid: ${escrowPaid} ${currName}) to the active Bounty Board.`
       : 'Approve and post this player-sponsored contract to the active Bounty Board.',
     submitLabel: 'Approve & Post',
     submitVariant: 'success',
     fields: [
+      {
+        name: 'approvedRewardBones',
+        label: `Base Claimant Payout (${currName})`,
+        type: 'number',
+        value: String(defaultPayout),
+        min: 0,
+        placeholder: '5',
+        hint: 'Help Contracts default to 5; Kill Contracts default to 1 per kill (up to 10).'
+      },
       {
         name: 'officerBonusBones',
         label: `Guild Treasury Bonus ${currName} (Optional)`,
@@ -5595,22 +5800,23 @@ window.approveMemberBountyRequest = async function(bountyId) {
         value: '0',
         min: 0,
         placeholder: '0',
-        hint: 'Funded by the Guild Treasury on top of escrowed Bones.'
+        hint: 'Extra bonus funded by the Guild Treasury on top of the base payout.'
       }
     ]
   });
   if (!decision) return;
+  const approvedRewardBones = Math.max(0, parseInt(decision.approvedRewardBones, 10) || 0);
   const officerBonusBones = Math.max(0, parseInt(decision.officerBonusBones, 10) || 0);
 
   try {
     const res = await fetch('/api/exchange/bounty/approve-request', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ bountyId, officerBonusBones })
+      body: JSON.stringify({ bountyId, approvedRewardBones, officerBonusBones })
     });
     const data = await res.json();
     if (res.ok) {
-      showToast('Member bounty request approved and posted to the Bounty Board!');
+      showToast('Member contract approved and posted to the Bounty Board!');
       await refreshBseState();
     } else {
       showToast(`Failed: ${data.error || 'Server error'}`);
@@ -5623,12 +5829,14 @@ window.approveMemberBountyRequest = async function(bountyId) {
 window.rejectMemberBountyRequest = async function(bountyId) {
   const bounty = (state.bseState?.bounties || []).find(b => b.id === bountyId);
   const currName = state.bseState?.branding?.currencyName || 'Bones';
-  const escrowed = bounty ? (bounty.baseRewardBones !== undefined ? bounty.baseRewardBones : (bounty.rewardBones || 0)) : 0;
+  const escrowed = getClientBountyEscrowBones(bounty);
 
   const decision = await openOfficerDecisionModal({
     title: 'Reject & Refund Contract',
     lead: bounty
-      ? `Deny "${bounty.title}"? 100% of escrowed ${escrowed} ${currName} will be refunded to the sponsor.`
+      ? (escrowed > 0
+          ? `Deny "${bounty.title}"? 100% of escrowed ${escrowed} ${currName} will be refunded to the sponsor.`
+          : `Deny "${bounty.title}"? (Free rank contract — 0 ${currName} escrowed).`)
       : 'Deny this player contract and refund 100% of escrowed Bones to the sponsor.',
     submitLabel: 'Reject & Refund',
     submitVariant: 'danger',
@@ -5652,7 +5860,9 @@ window.rejectMemberBountyRequest = async function(bountyId) {
     });
     const data = await res.json();
     if (res.ok) {
-      showToast('Bounty request rejected. Escrowed Bones refunded in full to member.');
+      showToast(escrowed > 0
+        ? `Contract rejected. ${escrowed} escrowed ${currName} refunded in full.`
+        : 'Contract request rejected.');
       await refreshBseState();
     } else {
       showToast(`Failed: ${data.error || 'Server error'}`);
@@ -5780,7 +5990,7 @@ window.toggleBountyStatus = async function(bountyId, newStatus) {
 window.deleteBounty = async function(bountyId) {
   const bounty = (state.bseState?.bounties || []).find(b => b.id === bountyId);
   const hasApprovedClaim = Object.values(state.bseState?.claims || {}).some(c => c.bountyId === bountyId && c.status === 'approved');
-  const escrowAmt = bounty ? (bounty.baseRewardBones !== undefined ? bounty.baseRewardBones : (bounty.rewardBones || 0)) : 0;
+  const escrowAmt = getClientBountyEscrowBones(bounty);
   const isRefundable = Boolean(
     bounty?.creatorId
     && ['pending_review', 'active', 'paused'].includes(bounty.status || 'active')
@@ -6000,6 +6210,14 @@ function switchTab(targetView) {
   document.querySelectorAll('.mobile-nav-btn').forEach(b => b.classList.remove('active'));
   document.querySelectorAll('.tab-view').forEach(v => v.classList.remove('active'));
 
+  if (targetView === 'officer') {
+    state.officerMode = true;
+  } else {
+    state.officerMode = false;
+    state.lastMemberTab = targetView;
+  }
+  syncOfficerModeUi();
+
   const tab = document.querySelector(`.nav-tab[data-tab="${targetView}"]`);
   if (tab) tab.classList.add('active');
 
@@ -6032,6 +6250,12 @@ function switchOfficerSubtab(target) {
   subview.classList.add('active');
   state.activeOfficerSubtab = target;
 
+  if (target === 'roster') {
+    renderOfficerRosterManager();
+  }
+  if (target === 'backups') {
+    loadCloudBackupsList();
+  }
   if (target === 'discord-channels') {
     renderDiscordChannelControls();
   }
@@ -6211,6 +6435,278 @@ function setupDiscordChannelsManager() {
       }
     });
   }
+}
+
+/**
+ * Officer Database Backups & 1-Click Restore Manager (#subview-backups)
+ */
+async function triggerBackupJsonDownload(backupId = null) {
+  try {
+    const qs = backupId ? `?id=${encodeURIComponent(backupId)}` : '';
+    const res = await fetch(`/api/exchange/backups/download${qs}`);
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `Download failed (${res.status})`);
+    }
+    const blob = await res.blob();
+    const dateStamp = new Date().toISOString().slice(0, 10);
+    const filename = backupId
+      ? `bse_backup_${backupId.replace(/[^a-zA-Z0-9_-]/g, '_')}.json`
+      : `bse_backup_${dateStamp}.json`;
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    showToast(`Downloaded backup file ${filename}.`);
+  } catch (err) {
+    showToast(`Backup download failed: ${err.message}`);
+  }
+}
+
+async function loadCloudBackupsList() {
+  const listEl = document.getElementById('cloudBackupsList');
+  if (!listEl || !state.user?.isOfficer) return;
+  listEl.innerHTML = `<p style="color: var(--text-dim); font-size: 0.84rem;">Loading cloud snapshots...</p>`;
+
+  try {
+    const res = await fetch('/api/exchange/backups');
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data.error || 'Failed to load cloud backups');
+    }
+    const backups = Array.isArray(data.backups) ? data.backups : [];
+    const autoStatusEl = document.getElementById('cloudBackupsAutoStatus');
+    if (autoStatusEl) {
+      const latestAuto = backups.find(b => b.kind === 'auto');
+      autoStatusEl.textContent = latestAuto
+        ? `Last Auto: ${String(latestAuto.createdAt || '').slice(0, 10)}`
+        : 'Daily Cron Active';
+    }
+
+    if (!backups.length) {
+      listEl.innerHTML = `<p style="color: var(--text-dim); font-size: 0.84rem;">No cloud snapshots stored yet. Click "Save Cloud Snapshot Now" or wait for the automated daily snapshot.</p>`;
+      return;
+    }
+
+    listEl.innerHTML = backups.map(b => {
+      const kind = ['auto', 'manual', 'pre_restore'].includes(b.kind) ? b.kind : 'manual';
+      const kindLabel = kind === 'auto' ? 'Auto Daily' : (kind === 'pre_restore' ? 'Pre-Restore Safety' : 'Manual');
+      const createdStr = b.createdAt ? new Date(b.createdAt).toLocaleString() : b.id;
+      const stats = b.stats || {};
+      const statsLine = `${Number(stats.walletCount || 0)} wallets · ${Number(stats.totalBounties || 0)} bounties · ${Number(stats.totalSpendableBones || 0).toLocaleString()} spendable`;
+
+      return `
+        <div class="backup-snapshot-card">
+          <div style="flex: 1; min-width: 200px;">
+            <div style="display: flex; align-items: center; gap: 0.45rem; flex-wrap: wrap;">
+              <strong style="color: var(--gold-100); font-size: 0.88rem;">${escapeHtml(b.label || b.id)}</strong>
+              <span class="backup-kind-pill ${kind}">${kindLabel}</span>
+            </div>
+            <div style="font-size: 0.74rem; color: var(--text-muted); margin-top: 0.2rem;">
+              ${escapeHtml(createdStr)} &bull; by ${escapeHtml(b.createdBy || 'System')}
+            </div>
+            <div style="font-size: 0.74rem; color: var(--gold-200); margin-top: 0.15rem;">
+              ${escapeHtml(statsLine)}
+            </div>
+          </div>
+          <div style="display: flex; gap: 0.4rem; flex-wrap: wrap;">
+            <button type="button" class="btn-secondary btn-xs" data-backup-dl="${escapeAttr(b.id)}">Download</button>
+            <button type="button" class="btn-primary btn-xs" data-backup-restore="${escapeAttr(b.id)}" data-backup-label="${escapeAttr(b.label || b.id)}">Restore</button>
+            <button type="button" class="btn-danger btn-xs" data-backup-del="${escapeAttr(b.id)}" title="Delete snapshot">✕</button>
+          </div>
+        </div>
+      `;
+    }).join('');
+  } catch (err) {
+    listEl.innerHTML = `<p style="color: #fca5a5; font-size: 0.84rem;">Could not load cloud snapshots: ${escapeHtml(err.message)}</p>`;
+  }
+}
+
+function setupBackupsManager() {
+  document.getElementById('btnQuickDownloadBackup')?.addEventListener('click', () => {
+    triggerBackupJsonDownload();
+  });
+  document.getElementById('btnDownloadLiveBackupJson')?.addEventListener('click', () => {
+    triggerBackupJsonDownload();
+  });
+  document.getElementById('btnRefreshCloudBackups')?.addEventListener('click', () => {
+    loadCloudBackupsList();
+  });
+
+  document.getElementById('btnCreateCloudBackup')?.addEventListener('click', async () => {
+    const btn = document.getElementById('btnCreateCloudBackup');
+    const labelIn = document.getElementById('cloudBackupLabelInput');
+    const label = labelIn?.value.trim() || '';
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = 'Saving Snapshot...';
+    }
+    try {
+      const res = await fetch('/api/exchange/backups/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ label })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Failed to save cloud snapshot');
+      if (labelIn) labelIn.value = '';
+      showToast(`Saved cloud snapshot "${data.backup?.label || data.backup?.id}".`);
+      await loadCloudBackupsList();
+    } catch (err) {
+      showToast(`Snapshot failed: ${err.message}`);
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = 'Save Cloud Snapshot Now';
+      }
+    }
+  });
+
+  document.getElementById('cloudBackupsList')?.addEventListener('click', async (e) => {
+    const dlBtn = e.target.closest('[data-backup-dl]');
+    if (dlBtn) {
+      triggerBackupJsonDownload(dlBtn.getAttribute('data-backup-dl'));
+      return;
+    }
+
+    const restoreBtn = e.target.closest('[data-backup-restore]');
+    if (restoreBtn) {
+      const backupId = restoreBtn.getAttribute('data-backup-restore');
+      const label = restoreBtn.getAttribute('data-backup-label') || backupId;
+      const confirmed = await openConfirmModal({
+        title: 'Restore Cloud Snapshot',
+        message: `Restore the Exchange database to "${label}"?\n\nA pre_restore safety snapshot of current live data will be saved automatically before restoring.`,
+        confirmLabel: 'Restore Snapshot',
+        variant: 'danger'
+      });
+      if (!confirmed) return;
+
+      restoreBtn.disabled = true;
+      try {
+        const res = await fetch('/api/exchange/backups/restore', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ backupId })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || 'Restore failed');
+        showToast(`Database restored! (${data.stats?.walletCount ?? 0} wallets, safety backup saved).`);
+        await refreshBseState();
+        await loadCloudBackupsList();
+      } catch (err) {
+        showToast(`Restore failed: ${err.message}`);
+      } finally {
+        restoreBtn.disabled = false;
+      }
+      return;
+    }
+
+    const delBtn = e.target.closest('[data-backup-del]');
+    if (delBtn) {
+      const backupId = delBtn.getAttribute('data-backup-del');
+      const confirmed = await openConfirmModal({
+        title: 'Delete Cloud Snapshot',
+        message: `Delete snapshot "${backupId}" from cloud storage?`,
+        confirmLabel: 'Delete Snapshot',
+        variant: 'danger'
+      });
+      if (!confirmed) return;
+      try {
+        const res = await fetch('/api/exchange/backups/delete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ backupId })
+        });
+        if (!res.ok) throw new Error('Delete failed');
+        showToast('Snapshot deleted.');
+        await loadCloudBackupsList();
+      } catch (err) {
+        showToast(`Error: ${err.message}`);
+      }
+    }
+  });
+
+  const fileInput = document.getElementById('restoreBackupFileInput');
+  const previewBox = document.getElementById('restoreFilePreviewBox');
+  const btnConfirmFile = document.getElementById('btnConfirmFileRestore');
+
+  fileInput?.addEventListener('change', async () => {
+    state.pendingRestoreFileData = null;
+    if (previewBox) previewBox.style.display = 'none';
+    if (btnConfirmFile) btnConfirmFile.style.display = 'none';
+
+    const file = fileInput.files?.[0];
+    if (!file) return;
+
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text);
+      const stateCandidate = parsed?.state && typeof parsed.state === 'object'
+        ? parsed.state
+        : (parsed?.rawState && typeof parsed.rawState === 'object' ? parsed.rawState : parsed);
+      if (!stateCandidate || typeof stateCandidate !== 'object' || !('wallets' in stateCandidate || 'bounties' in stateCandidate || 'config' in stateCandidate)) {
+        throw new Error('File does not contain valid Exchange backup fields (wallets/bounties/config).');
+      }
+      const walletCount = Object.keys(stateCandidate.wallets || {}).length;
+      const bountyCount = Array.isArray(stateCandidate.bounties) ? stateCandidate.bounties.length : 0;
+      const createdNote = parsed?.createdAt ? ` · Created ${new Date(parsed.createdAt).toLocaleString()}` : '';
+
+      state.pendingRestoreFileData = parsed;
+      if (previewBox) {
+        previewBox.style.display = 'block';
+        previewBox.style.color = 'var(--gold-100)';
+        previewBox.innerHTML = `<strong>Ready to Restore:</strong> <code>${escapeHtml(file.name)}</code>${escapeHtml(createdNote)}<br><span style="color: var(--text-muted);">${walletCount} member wallets · ${bountyCount} bounties</span>`;
+      }
+      if (btnConfirmFile) btnConfirmFile.style.display = 'block';
+    } catch (err) {
+      if (previewBox) {
+        previewBox.style.display = 'block';
+        previewBox.style.color = '#fca5a5';
+        previewBox.textContent = `Invalid backup file: ${err.message}`;
+      }
+    }
+  });
+
+  btnConfirmFile?.addEventListener('click', async () => {
+    if (!state.pendingRestoreFileData) return;
+    const confirmed = await openConfirmModal({
+      title: 'Restore from Uploaded Backup File',
+      message: 'Overwrite the live Exchange database with this JSON backup?\n\nA pre_restore safety snapshot of current live data will be saved automatically first.',
+      confirmLabel: 'Restore Database Now',
+      variant: 'danger'
+    });
+    if (!confirmed) return;
+
+    btnConfirmFile.disabled = true;
+    btnConfirmFile.textContent = 'Restoring...';
+    try {
+      const res = await fetch('/api/exchange/backups/restore', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ backupData: state.pendingRestoreFileData })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'File restore failed');
+
+      state.pendingRestoreFileData = null;
+      if (fileInput) fileInput.value = '';
+      if (previewBox) previewBox.style.display = 'none';
+      btnConfirmFile.style.display = 'none';
+
+      showToast(`Restored backup! (${data.stats?.walletCount ?? 0} wallets, safety snapshot saved).`);
+      await refreshBseState();
+      await loadCloudBackupsList();
+    } catch (err) {
+      showToast(`Restore failed: ${err.message}`);
+    } finally {
+      btnConfirmFile.disabled = false;
+      btnConfirmFile.textContent = 'Restore Uploaded Backup';
+    }
+  });
 }
 
 /**

@@ -37,6 +37,27 @@
           <span>Discord Sync Active</span>
         </div>
 
+        <!-- Officer Mode Toggle (Strictly shown only to authenticated Officers) -->
+        <button
+          type="button"
+          class="officer-mode-toggle"
+          id="officerModeToggle"
+          role="switch"
+          aria-checked="false"
+          aria-label="Toggle Officer Mode"
+          title="Switch between Member View and Officer Hall"
+          style="display: none;"
+        >
+          <svg class="officer-toggle-shield" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+          </svg>
+          <span class="officer-toggle-label" id="officerToggleLabel">Officer Mode</span>
+          <span class="officer-toggle-switch" aria-hidden="true">
+            <span class="officer-toggle-thumb"></span>
+          </span>
+          <span class="officer-toggle-badge" id="officerToggleBadge" style="display: none;" title="Pending officer reviews">0</span>
+        </button>
+
         <!-- Auth Button / Profile -->
         <div id="authContainer">
           <a href="/api/auth/discord" class="btn-discord" id="discordLoginBtn">
@@ -190,15 +211,6 @@
           </svg>
           <span class="nav-tab-label">History</span>
         </button>
-
-        <!-- Strictly hidden for non-officers -->
-        <button type="button" class="nav-tab officer-tab" data-tab="officer" id="tabOfficer" style="display: none;">
-          <svg class="nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-          </svg>
-          <span class="nav-tab-label">Officer Hall</span>
-          <span class="officer-badge" id="officerActionBadge" style="display: none;">0</span>
-        </button>
       </nav>
 
       <div class="sidebar-quick-footer">
@@ -278,19 +290,6 @@
         </div>
 
         <div class="table-container">
-          <!-- Officer Filter Strip (Shown only to signed-in Officers) -->
-          <div id="officerLeaderboardFilters" class="officer-filter-strip" style="display: none;">
-            <div class="officer-filter-group">
-              <button type="button" class="filter-pill active" data-filter="active" id="btnFilterActive">Active Standings (<span id="cntActive">0</span>)</button>
-              <button type="button" class="filter-pill" data-filter="zero" id="btnFilterZero">0-Bones (<span id="cntZero">0</span>)</button>
-              <button type="button" class="filter-pill" data-filter="hidden" id="btnFilterHidden">Hidden (<span id="cntHidden">0</span>)</button>
-              <button type="button" class="filter-pill" data-filter="all" id="btnFilterAll">All Guild (<span id="cntAll">0</span>)</button>
-            </div>
-            <button type="button" class="filter-pill filter-pill-settings" id="btnOpenLeaderboardBonesSettings" title="Configure default + and - bones amounts for the ledger">
-              ⚙️ Default Bones (<span id="lblLeaderboardDefaultValues">+25 / -10</span>)
-            </button>
-          </div>
-
           <!-- Unified Search + Role + Class Filters -->
           <div class="table-toolbar">
             <div class="search-input-wrap">
@@ -339,7 +338,6 @@
                   <th>Prestige Tier</th>
                   <th id="thSpendable">Spendable Bones</th>
                   <th id="thScore">Career Score</th>
-                  <th id="thLeaderboardActions" style="display: none; text-align: center;">Actions</th>
                   <th class="col-inspect-chevron" aria-label="Armory"></th>
                 </tr>
               </thead>
@@ -509,8 +507,8 @@
               </div>
 
               <div class="rank-cost-section">
-                <div class="rank-cost-heading">Contract Cost by Rank (Applies to Both Kinds)</div>
-                <div class="rank-cost-grid">
+                <div class="rank-cost-heading">Contract Cost by Rank (10 Bones Base, &minus;2 per Higher Rank)</div>
+                <div class="rank-cost-grid" id="faqRankCostGrid">
                   <div class="rank-cost-tile">
                     <span class="rank-label">Rank 1</span>
                     <span class="rank-fee">10 Bones</span>
@@ -600,7 +598,7 @@
         <div class="section-header">
           <div>
             <h3 style="color: var(--amber);">Officer Hall</h3>
-            <p class="section-subtitle">Restricted to Black Sands Officers &amp; Moderators. Claims, Bounties, Ledger overrides, and Discord settings.</p>
+            <p class="section-subtitle">Restricted to Black Sands Officers &amp; Moderators. Claims, Bounties, Ledger overrides, Backups, and Discord settings.</p>
           </div>
           <div class="officer-global-actions">
             <button type="button" class="btn-primary" id="btnOpenRaidAwardModal" title="Batch award Bones to raid/event participants">
@@ -614,6 +612,9 @@
             </button>
             <button type="button" class="btn-secondary" id="btnExportLedgerCsv" title="Download guild ledger as CSV spreadsheet">
               Export CSV
+            </button>
+            <button type="button" class="btn-secondary" id="btnQuickDownloadBackup" title="Download a full restorable JSON backup of the Exchange database">
+              Backup JSON
             </button>
           </div>
         </div>
@@ -630,7 +631,7 @@
             Ledger Overrides
           </button>
           <button type="button" class="officer-subtab" data-subtab="manage-bounties">
-            Bounties &amp; Tithing
+            Bounties &amp; Tithing <span class="counter-bubble" id="subtabBountyReqCount" style="display: none;">0</span>
           </button>
           <button type="button" class="officer-subtab" data-subtab="manage-shop" style="display: none;">
             Shop
@@ -640,6 +641,9 @@
           </button>
           <button type="button" class="officer-subtab" data-subtab="audit">
             Audit Trail
+          </button>
+          <button type="button" class="officer-subtab" data-subtab="backups">
+            Backups &amp; Restore
           </button>
           <button type="button" class="officer-subtab" data-subtab="discord-channels">
             Discord Channels
@@ -699,30 +703,86 @@
             <div class="officer-box">
               <h4>Member Profile &amp; Ledger Override</h4>
               <div id="memberInspectorCard">
-                <p style="color: var(--text-dim); font-size: 0.85rem;">Select a member on the left (or click any row in the Guild Ledger) to perform direct ledger overrides.</p>
+                <p style="color: var(--text-dim); font-size: 0.85rem;">Select a member via search or the Roster Browser below to perform direct ledger overrides.</p>
               </div>
               <div id="memberInspectorForm" style="display: none; margin-top: 1rem;">
                 <p style="font-size: 0.78rem; color: var(--text-muted); margin-bottom: 0.75rem; background: rgba(255, 209, 0, 0.05); border: 1px solid rgba(255, 209, 0, 0.16); padding: 0.5rem 0.65rem; border-radius: var(--radius-sm);">
-                  Direct overrides update Spendable Bones or Career Score independently and are <strong>separate from the Weekly Earn Cap</strong> (they never add to or get blocked by weekly caps).
+                  Direct overrides update Spendable Bones, Career Score, or Bounty counters independently and are <strong>separate from the Weekly Earn Cap</strong>.
                 </p>
-                <div class="form-group">
-                  <label>Direct Spendable Balance Override</label>
-                  <input type="number" class="form-control" id="inspectorSpendable" min="0">
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.65rem;">
+                  <div class="form-group">
+                    <label>Spendable Balance</label>
+                    <input type="number" class="form-control" id="inspectorSpendable" min="0">
+                  </div>
+                  <div class="form-group">
+                    <label>Career Score</label>
+                    <input type="number" class="form-control" id="inspectorScore" min="0">
+                  </div>
                 </div>
-                <div class="form-group">
-                  <label>Direct Career Score Override</label>
-                  <input type="number" class="form-control" id="inspectorScore" min="0">
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.65rem;">
+                  <div class="form-group">
+                    <label>Bounties Completed</label>
+                    <input type="number" class="form-control" id="inspectorBountiesCompleted" min="0">
+                  </div>
+                  <div class="form-group">
+                    <label>Posted Bounties</label>
+                    <input type="number" class="form-control" id="inspectorPostedBounties" min="0">
+                  </div>
                 </div>
                 <div class="form-group">
                   <label>Adjustment Justification</label>
                   <input type="text" class="form-control" id="inspectorReason" placeholder="Reason for direct adjustment...">
                 </div>
-                <div class="form-group" style="margin-top: 0.5rem; margin-bottom: 1rem;">
+                <div class="form-group" style="margin-top: 0.4rem; margin-bottom: 0.9rem;">
                   <label style="display: flex; align-items: center; gap: 0.5rem; text-transform: none; font-size: 0.85rem; cursor: pointer; color: var(--gold-200);">
                     <input type="checkbox" id="inspectorOfficerHidden"> Hide member from public leaderboard (Officer Override)
                   </label>
                 </div>
-                <button type="button" class="btn-primary" id="btnSaveMemberAdjust" style="width: 100%;">Save Ledger Correction</button>
+                <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+                  <button type="button" class="btn-primary" id="btnSaveMemberAdjust" style="flex: 2; min-width: 180px;">Save Ledger Correction</button>
+                  <button type="button" class="btn-danger" id="btnPurgeInspectedMember" style="flex: 1; min-width: 130px;">Purge Member</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Full Officer Roster Browser (Active, 0-Bones, Hidden, All Guild + Quick +/-) -->
+            <div class="officer-box" style="grid-column: 1 / -1;">
+              <div class="officer-roster-browser-head">
+                <div>
+                  <h4 style="margin-bottom: 0.15rem;">Guild Roster &amp; Quick Ledger Controls</h4>
+                  <span class="subview-hint">Filter active, 0-Bones, or hidden wallets and issue quick + / &minus; Bone adjustments or select a member for override.</span>
+                </div>
+                <button type="button" class="filter-pill filter-pill-settings" id="btnOpenLeaderboardBonesSettings" title="Configure default + and - bones amounts">
+                  Default Quick +/- (<span id="lblLeaderboardDefaultValues">+25 / -10</span>)
+                </button>
+              </div>
+
+              <div class="officer-roster-toolbar">
+                <div class="officer-filter-group" id="officerRosterFilterPills">
+                  <button type="button" class="filter-pill active" data-filter="active" id="btnFilterActive">Active (<span id="cntActive">0</span>)</button>
+                  <button type="button" class="filter-pill" data-filter="zero" id="btnFilterZero">0-Bones (<span id="cntZero">0</span>)</button>
+                  <button type="button" class="filter-pill" data-filter="hidden" id="btnFilterHidden">Hidden (<span id="cntHidden">0</span>)</button>
+                  <button type="button" class="filter-pill" data-filter="all" id="btnFilterAll">All Guild (<span id="cntAll">0</span>)</button>
+                </div>
+                <input type="text" class="form-control officer-roster-search" id="searchOfficerRoster" placeholder="Filter roster by member or character...">
+              </div>
+
+              <div class="officer-roster-table-wrap">
+                <table class="leaderboard-table officer-roster-table">
+                  <thead>
+                    <tr>
+                      <th>Member</th>
+                      <th>Main Character</th>
+                      <th>Spendable</th>
+                      <th>Career Score</th>
+                      <th>Weekly Cap</th>
+                      <th style="text-align: right;">Officer Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody id="officerRosterManagerTbody">
+                    <tr><td colspan="6" class="table-loading-cell">Loading guild roster...</td></tr>
+                  </tbody>
+                </table>
               </div>
             </div>
           </div>
@@ -1137,20 +1197,14 @@
                 <input type="text" class="form-control" id="officerArmoryGuildSlug" placeholder="e.g. black-sands">
                 <small style="color: var(--text-muted); font-size: 0.72rem;">Lowercase hyphenated guild name on WoW: Forever US (e.g. <code>black-sands</code>).</small>
               </div>
-              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem;">
-                <div class="form-group">
-                  <label>Default Ruleset</label>
-                  <select class="form-control" id="officerArmoryRuleset">
-                    <option value="1">PvP (1)</option>
-                    <option value="2">Normal (2)</option>
-                    <option value="3">Roleplay (3)</option>
-                    <option value="15">Roleplay PvP (15)</option>
-                  </select>
-                </div>
-                <div class="form-group">
-                  <label>Auction House ID</label>
-                  <input type="number" class="form-control" id="officerArmoryHouseId" min="1" value="110" placeholder="110">
-                </div>
+              <div class="form-group">
+                <label>Default Ruleset</label>
+                <select class="form-control" id="officerArmoryRuleset">
+                  <option value="1">PvP (1)</option>
+                  <option value="2">Normal (2)</option>
+                  <option value="3">Roleplay (3)</option>
+                  <option value="15">Roleplay PvP (15)</option>
+                </select>
               </div>
               <div style="display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 1rem;">
                 <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; font-size: 0.84rem; color: var(--gold-100);">
@@ -1170,6 +1224,58 @@
               </p>
               <div id="officerArmoryActionResult" class="wow-inner-box" style="padding: 0.85rem; font-size: 0.82rem; color: var(--text-muted);">
                 Ready. Configure your guild slug and click Test Blizzard API or Sync Guild Roster.
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Officer Subtab 10: Data Backups & 1-Click Restore -->
+        <div class="officer-subview" id="subview-backups">
+          <div class="subview-toolbar">
+            <div>
+              <h4>Database Backups &amp; 1-Click Restore</h4>
+              <span class="subview-hint">Automated daily cloud snapshots (14-day retention) plus portable JSON archives. Restoring automatically saves a <code>pre_restore</code> safety snapshot first.</span>
+            </div>
+            <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+              <button type="button" class="btn-secondary btn-sm" id="btnRefreshCloudBackups">Refresh List</button>
+              <button type="button" class="btn-primary btn-sm" id="btnDownloadLiveBackupJson">Download Live JSON Backup</button>
+            </div>
+          </div>
+
+          <div class="officer-dashboard-grid">
+            <!-- Manual Cloud Snapshot & File Restore -->
+            <div class="officer-box">
+              <h4>Create Cloud Snapshot</h4>
+              <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.75rem;">
+                Save an immediate snapshot of all wallets, bounties, claims, ranks, and settings to Firestore cloud storage.
+              </p>
+              <div class="form-group">
+                <label>Snapshot Label (Optional)</label>
+                <input type="text" class="form-control" id="cloudBackupLabelInput" maxlength="120" placeholder="e.g. Before Season 2 Reset">
+              </div>
+              <button type="button" class="btn-primary" id="btnCreateCloudBackup" style="width: 100%;">Save Cloud Snapshot Now</button>
+
+              <hr class="officer-divider" style="margin: 1.25rem 0; border: 0; border-top: 1px solid var(--border-subtle);">
+
+              <h4>Restore from JSON Backup File</h4>
+              <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.75rem;">
+                Upload any <code>bse_backup_*.json</code> file exported from the portal or CLI. Your current live database is automatically backed up before applying.
+              </p>
+              <div class="backup-upload-zone">
+                <input type="file" id="restoreBackupFileInput" accept=".json,application/json" class="form-control">
+              </div>
+              <div id="restoreFilePreviewBox" class="wow-inner-box" style="display: none; margin-top: 0.75rem; padding: 0.8rem; font-size: 0.82rem;"></div>
+              <button type="button" class="btn-danger" id="btnConfirmFileRestore" style="display: none; width: 100%; margin-top: 0.75rem;">Restore Uploaded Backup</button>
+            </div>
+
+            <!-- Cloud Snapshots List -->
+            <div class="officer-box">
+              <div style="display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; margin-bottom: 0.75rem; flex-wrap: wrap;">
+                <h4 style="margin: 0;">Stored Cloud Snapshots</h4>
+                <span class="subview-hint" id="cloudBackupsAutoStatus">Daily Cron Active</span>
+              </div>
+              <div id="cloudBackupsList" class="backup-snapshots-list">
+                <p style="color: var(--text-dim); font-size: 0.85rem;">Open this tab to load cloud snapshots...</p>
               </div>
             </div>
           </div>
@@ -1225,13 +1331,6 @@
         <polyline points="12 6 12 12 16 14"/>
       </svg>
       <span>History</span>
-    </button>
-    <button type="button" class="mobile-nav-btn mobile-officer-btn" data-tab="officer" id="mobileTabOfficer" style="display: none;">
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-      </svg>
-      <span>Officer</span>
-      <span class="officer-badge" id="mobileOfficerActionBadge" style="display: none;">0</span>
     </button>
   </nav>
 
@@ -1412,7 +1511,7 @@
     </div>
   </div>
 
-  <!-- Modal: Member Request Bounty (Player Contract with Escrow) -->
+  <!-- Modal: Member Request Bounty (Player Contract with Rank-Based Escrow) -->
   <div class="modal-overlay" id="modalRequestBounty">
     <div class="modal-content" style="max-width: 560px;">
       <div class="modal-header">
@@ -1420,7 +1519,7 @@
         <button type="button" class="modal-close" data-close-modal="modalRequestBounty">✕</button>
       </div>
       <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 1rem;">
-        Commission guildmates using your Spendable Bones. Bones are held in escrow until an Officer approves — if denied or cancelled, 100% are refunded.
+        Commission guildmates using your Prestige Rank's posting fee (<strong>10 Bones</strong> at Rank 1, <strong>&minus;2 Bones</strong> per higher rank). Escrowed Bones are 100% refunded if denied or cancelled.
       </p>
 
       <div class="form-group">
@@ -1430,11 +1529,11 @@
 
       <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem;">
         <div class="form-group">
-          <label>Escrow / Cost (Bones from Wallet) *</label>
-          <input type="number" class="form-control" id="reqBountyReward" min="0" placeholder="e.g. 10 (or 0 if Rank 6 Free)">
-          <div style="font-size: 0.72rem; color: var(--gold-200); margin-top: 0.25rem;">
-            Your Spendable: <strong id="reqBountyUserBalance">0</strong> Bones
-          </div>
+          <label>Contract Type *</label>
+          <select class="form-control" id="reqContractType">
+            <option value="help">Help Contract (+5 Bones Payout)</option>
+            <option value="kill">Kill Contract (1 Bone / Kill, Max 10)</option>
+          </select>
         </div>
         <div class="form-group">
           <label>Category</label>
@@ -1449,23 +1548,35 @@
         </div>
       </div>
 
+      <!-- Locked Rank Fee & Contract Payout Summary Card -->
+      <div class="wow-inner-box contract-fee-summary-card" style="padding: 0.85rem 1rem; margin-bottom: 1rem;">
+        <div class="contract-fee-row">
+          <span class="contract-fee-label">Your Prestige Rank</span>
+          <strong class="contract-fee-val" id="reqBountyRankName">Rank 1</strong>
+        </div>
+        <div class="contract-fee-row">
+          <span class="contract-fee-label">Posting Cost (Escrow)</span>
+          <strong class="contract-fee-val gold" id="reqBountyCreationCost">10 Bones</strong>
+        </div>
+        <div class="contract-fee-row">
+          <span class="contract-fee-label">Claimant Payout</span>
+          <strong class="contract-fee-val" id="reqBountyPayoutSummary">+5 Bones on completion</strong>
+        </div>
+        <div class="contract-fee-row" style="border-bottom: none; padding-bottom: 0;">
+          <span class="contract-fee-label">Your Spendable Balance</span>
+          <strong class="contract-fee-val" id="reqBountyUserBalance">0 Bones</strong>
+        </div>
+        <div id="reqBountyInsufficientMsg" class="contract-insufficient-msg" style="display: none;"></div>
+      </div>
+
       <div class="form-group">
         <label>Objective &amp; Requirements *</label>
         <textarea class="form-control" id="reqBountyDesc" rows="3" placeholder="Explain target, dungeon requirements, help details, or proof needed..."></textarea>
       </div>
 
-      <!-- Optional Bonus Objective -->
-      <div class="wow-inner-box" style="padding: 0.75rem; margin-bottom: 1rem;">
-        <label style="font-size: 0.8rem; color: var(--gold-300); font-weight: 700; margin-bottom: 0.35rem; display: block;">Optional Bonus Objective (Extra Bones)</label>
-        <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 0.5rem;">
-          <input type="text" class="form-control" id="reqBountyBonusDesc" placeholder="e.g. Complete in under 30 minutes">
-          <input type="number" class="form-control" id="reqBountyBonusAmount" min="0" placeholder="+ Extra Bones">
-        </div>
-      </div>
-
       <div style="display: flex; gap: 0.5rem;">
         <button type="button" class="btn-secondary" data-close-modal="modalRequestBounty" style="flex: 1;">Cancel</button>
-        <button type="button" class="btn-primary" id="btnSubmitRequestBountyExecute" style="flex: 1.5;">Submit &amp; Escrow Bones</button>
+        <button type="button" class="btn-primary" id="btnSubmitRequestBountyExecute" style="flex: 1.5;">Submit &amp; Escrow 10 Bones</button>
       </div>
     </div>
   </div>

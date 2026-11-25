@@ -43,16 +43,19 @@ export function compactWalletSnapshot(wallet) {
  */
 export function compactBountySnapshot(bounty) {
   if (!bounty || typeof bounty !== 'object') return null;
-  return {
+  const snap = {
     id: bounty.id,
     title: bounty.title || 'Bounty',
     description: bounty.description || '',
     category: bounty.category || 'General',
     bountyType: bounty.bountyType || 'fixed',
+    contractType: bounty.contractType || null,
     creatorId: bounty.creatorId || null,
     creatorUsername: bounty.creatorUsername || null,
     creatorNickname: bounty.creatorNickname || null,
+    escrowBones: bounty.escrowBones !== undefined ? bounty.escrowBones : undefined,
     baseRewardBones: bounty.baseRewardBones !== undefined ? bounty.baseRewardBones : (bounty.rewardBones || 0),
+    maxRewardBones: bounty.maxRewardBones !== undefined ? bounty.maxRewardBones : undefined,
     officerBonusBones: bounty.officerBonusBones || 0,
     rewardBones: bounty.rewardBones || 0,
     status: bounty.status || 'active',
@@ -61,6 +64,10 @@ export function compactBountySnapshot(bounty) {
     approvedAt: bounty.approvedAt || null,
     createdAt: bounty.createdAt || new Date().toISOString()
   };
+  if (snap.escrowBones === undefined) delete snap.escrowBones;
+  if (snap.maxRewardBones === undefined) delete snap.maxRewardBones;
+  if (!snap.contractType) delete snap.contractType;
+  return snap;
 }
 
 function extractClaimId(entry) {
@@ -529,6 +536,9 @@ export function revertAuditEntry(state, entryId, opts = {}) {
         : state.bounties.find(b => b.creatorId === entry.targetId && quotedTitle && b.title === quotedTitle && b.status === 'active');
 
       bounty.status = meta?.prevStatus || 'pending_review';
+      if (meta?.prevBaseRewardBones !== undefined) {
+        bounty.baseRewardBones = meta.prevBaseRewardBones;
+      }
       bounty.officerBonusBones = meta?.prevOfficerBonusBones ?? 0;
       bounty.rewardBones = meta?.prevRewardBones ?? (bounty.baseRewardBones !== undefined ? bounty.baseRewardBones : bounty.rewardBones || 0);
       delete bounty.approvedBy;

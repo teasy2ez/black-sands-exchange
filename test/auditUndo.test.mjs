@@ -233,25 +233,27 @@ describe('worker.js & src/auditUndo.js — Audit Trail Undo', () => {
     const sponsorCookie = signTestSession({ id: 'creator1', username: 'sponsor', isOfficer: false, issuedAt: Date.now() });
     const officerCookie = signTestSession({ id: 'off1', username: 'officer', isOfficer: true, issuedAt: Date.now() });
 
-    // Sponsor posts bounty request (50 Bones into escrow)
+    // Sponsor at lowest rank (tier 0) posts bounty request -> 10 Bones placed into escrow
     const reqRes = await worker.fetch(
       new Request('https://bse.teasy2ez.win/api/exchange/bounty/request', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Cookie': sponsorCookie },
-        body: JSON.stringify({ title: 'Help UBRS', rewardBones: 50, category: 'PvE' })
+        body: JSON.stringify({ title: 'Help UBRS', contractType: 'help', category: 'PvE' })
       }),
       TEST_ENV,
       { waitUntil: () => {} }
     );
     assert.equal(reqRes.status, 200);
-    const { bounty } = await reqRes.json();
+    const { bounty, escrowBones } = await reqRes.json();
+    assert.equal(escrowBones, 10);
+    assert.equal(docs.get('exchange/bse_state').wallets.creator1.spendableBones, 190);
 
-    // Officer approves bounty request (+10 guild bonus)
+    // Officer approves bounty request (custom 50 base + 10 guild bonus = 60 payout, while escrowBones stays 10)
     await worker.fetch(
       new Request('https://bse.teasy2ez.win/api/exchange/bounty/approve-request', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Cookie': officerCookie },
-        body: JSON.stringify({ bountyId: bounty.id, officerBonusBones: 10 })
+        body: JSON.stringify({ bountyId: bounty.id, approvedRewardBones: 50, officerBonusBones: 10 })
       }),
       TEST_ENV,
       { waitUntil: () => {} }
@@ -303,7 +305,7 @@ describe('worker.js & src/auditUndo.js — Audit Trail Undo', () => {
     assert.equal(afterClaimUndo.claims.claim_test_1.status, 'pending');
     assert.equal(afterClaimUndo.claims.claim_test_1.rewardBones, 60);
 
-    // Now remove the approved claim marker & test bounty/delete + Undo BOUNTY_ESCROW_REFUND
+    // Now remove the approved claim marker & test bounty/delete + Undo BOUNTY_ESCROW_REFUND (refunds exact 10 escrowed Bones)
     delete afterClaimUndo.claims.claim_test_1;
     const delRes = await worker.fetch(
       new Request('https://bse.teasy2ez.win/api/exchange/bounty/delete', {
@@ -329,7 +331,7 @@ describe('worker.js & src/auditUndo.js — Audit Trail Undo', () => {
     );
     assert.equal(undoDeleteRes.status, 200);
     const afterRestoreBounty = docs.get('exchange/bse_state');
-    assert.equal(afterRestoreBounty.wallets.creator1.spendableBones, 150);
+    assert.equal(afterRestoreBounty.wallets.creator1.spendableBones, 190);
     assert.ok(afterRestoreBounty.bounties.some(b => b.id === bounty.id && b.title === 'Help UBRS'));
   });
 

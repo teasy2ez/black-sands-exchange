@@ -7,6 +7,9 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
+    "test": "node --test test/*.test.mjs",
+    "backup": "node scripts/backup-restore.mjs backup",
+    "restore": "node scripts/backup-restore.mjs restore",
     "register:commands": "node scripts/register-commands.js",
     "migrate:season0": "node scripts/migrate-season0.js"
   },

@@ -188,7 +188,7 @@ const commands = [
   },
   {
     name: 'item',
-    description: 'Look up a WoW: Forever item, AH market prices, and guild crafters',
+    description: 'Look up a WoW: Forever item and guild crafters',
     options: [
       {
         name: 'query',

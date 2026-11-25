@@ -19,6 +19,7 @@ import {
 } from './discord.js';
 import { applyWeeklyBoneAward } from './weeklyCap.js';
 import { compactBountySnapshot } from './auditUndo.js';
+import { getBountyEscrowBones } from './bountyCost.js';
 import { getTithingConfig, calculateTithingBones, formatTithingRate, getMinimumGoldForOneBone, formatTithingNumber } from './tithing.js';
 import {
   getCharacterArmory,
@@ -569,15 +570,17 @@ async function handleBountySubcommands(interaction, subOptions, env, firestore) 
     const officerName = interaction.member?.nick || officer.global_name || officer.username;
     const hasApprovedClaim = Object.values(state.claims || {}).some(c => c.bountyId === bounty.id && c.status === 'approved');
     const isRefundableStatus = ['pending_review', 'active', 'paused'].includes(bounty.status || 'active');
-    const refundAmount = bounty.baseRewardBones !== undefined ? bounty.baseRewardBones : (bounty.rewardBones || 0);
+    const refundAmount = getBountyEscrowBones(bounty);
     let refundedMsg = '';
 
     state.bounties = (state.bounties || []).filter(b => b.id !== bounty.id);
 
-    if (bounty.creatorId && isRefundableStatus && !hasApprovedClaim && refundAmount > 0 && state.wallets?.[bounty.creatorId]) {
+    if (bounty.creatorId && isRefundableStatus && !hasApprovedClaim && state.wallets?.[bounty.creatorId]) {
       const creatorWallet = state.wallets[bounty.creatorId];
-      creatorWallet.spendableBones = (creatorWallet.spendableBones || 0) + refundAmount;
-      creatorWallet.updatedAt = new Date().toISOString();
+      if (refundAmount > 0) {
+        creatorWallet.spendableBones = (creatorWallet.spendableBones || 0) + refundAmount;
+        creatorWallet.updatedAt = new Date().toISOString();
+      }
       const bountySnap = compactBountySnapshot(bounty);
       await recordAuditLogAndSync(state, env, firestore, {
         action: 'BOUNTY_ESCROW_REFUND',
@@ -597,7 +600,9 @@ async function handleBountySubcommands(interaction, subOptions, env, firestore) 
           bountySnapshot: bountySnap
         }
       });
-      refundedMsg = ` (Refunded **${refundAmount} Bones** in escrow to <@${bounty.creatorId}>)`;
+      refundedMsg = refundAmount > 0
+        ? ` (Refunded **${refundAmount} Bones** in escrow to <@${bounty.creatorId}>)`
+        : '';
     } else {
       await firestore.saveBseState(state);
     }

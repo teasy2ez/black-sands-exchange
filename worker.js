@@ -58,12 +58,23 @@ import {
   getGuildCraftingDirectory,
   getItemDetail,
   searchAndHydrateDatabaseItems,
-  ingestCompactAuctionPrices,
-  getAuctionHouseWatchlist,
-  getCachedAhPricesDoc,
-  fetchRulesetsAndHouses,
+  fetchForeverRulesets,
   runScheduledArmoryTick
 } from './src/armory.js';
+import {
+  calculateBountyCreationCost,
+  resolveContractPayoutDefaults,
+  getBountyEscrowBones
+} from './src/bountyCost.js';
+import {
+  buildBackupEnvelope,
+  createCloudBackup,
+  listCloudBackups,
+  getCloudBackupEnvelope,
+  deleteCloudBackup,
+  runScheduledDailyBackup,
+  restoreBseStateFromBackup
+} from './src/backups.js';
 
 const AUTO_ROSTER_SYNC_INTERVAL_MS = 60 * 1000;
 let lastAutoRosterSyncCheckMs = 0;
@@ -119,6 +130,11 @@ export default {
 
   async scheduled(event, env, ctx) {
     const firestore = new FirestoreClient(env);
+    ctx.waitUntil(
+      runScheduledDailyBackup(firestore).catch(err => {
+        console.error('Scheduled daily backup check failed:', err);
+      })
+    );
     ctx.waitUntil(
       syncDiscordRoster(env, firestore, { manual: false }).catch(err => {
         console.error('Scheduled Discord roster sync failed:', err);
@@ -417,8 +433,7 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
         armory: armoryConfig
       },
       armoryStatus: {
-        configured: isBlizzardConfigured(env),
-        ingestConfigured: Boolean(env.ARMORY_INGEST_SECRET)
+        configured: isBlizzardConfigured(env)
       }
     });
   }
@@ -681,17 +696,12 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
     });
   }
 
-  // POST Member Request to Post a Bounty (Held in Escrow until approved or refunded)
+  // POST Member Request to Post a Bounty (Rank-Scaled Fee Held in Escrow until approved or refunded)
   if (path === 'bounty/request' && request.method === 'POST') {
     if (!session) {
       return jsonResponse({ error: 'Unauthorized: Discord login required' }, 401);
     }
-    const { title, rewardBones, description, category, bonuses } = body;
-    const parsedReward = parseInt(rewardBones, 10);
-    if (!Number.isFinite(parsedReward) || parsedReward < 0) {
-      return jsonResponse({ error: 'Valid reward amount (0 or more Bones) is required' }, 400);
-    }
-    const bonesOffered = parsedReward;
+    const { title, contractType, description, category } = body;
 
     if (!title || title.trim().length === 0) {
       return jsonResponse({ error: 'Bounty title is required' }, 400);
@@ -704,40 +714,47 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
       username: session.username,
       serverNickname: session.serverNickname,
       spendableBones: 0,
-      boneScore: 0
+      boneScore: 0,
+      rankTier: 0
     };
 
-    if ((wallet.spendableBones || 0) < bonesOffered) {
-      return jsonResponse({ error: `Insufficient Bones. You have ${wallet.spendableBones || 0} Bones, but offered ${bonesOffered}.` }, 400);
+    const memberRank = resolveRank(wallet.boneScore || 0, state.ranks, wallet.rankTier || 0);
+    const escrowBones = calculateBountyCreationCost(wallet.rankTier || 0, state.ranks);
+    const contractDefaults = resolveContractPayoutDefaults(contractType);
+
+    if ((wallet.spendableBones || 0) < escrowBones) {
+      return jsonResponse({
+        error: `Insufficient Bones. Posting a contract at your current rank (${memberRank.title}) costs ${escrowBones} Bones, and you have ${wallet.spendableBones || 0}.`
+      }, 400);
     }
 
-    // Deduct bones into escrow
-    if (bonesOffered > 0) {
-      wallet.spendableBones -= bonesOffered;
+    // Deduct rank-based posting fee into escrow
+    if (escrowBones > 0) {
+      wallet.spendableBones -= escrowBones;
     }
     wallet.updatedAt = new Date().toISOString();
     state.wallets[session.id] = wallet;
 
     const bountyId = `bounty_req_${Date.now()}_${session.id.slice(-4)}`;
-    const parsedBonuses = Array.isArray(bonuses) ? bonuses.map((b, idx) => ({
-      id: b.id || `bonus_${Date.now()}_${idx}`,
-      description: String(b.description || '').trim(),
-      bonusBones: Math.max(0, parseInt(b.bonusBones, 10) || 0)
-    })).filter(b => b.description.length > 0 && b.bonusBones > 0) : [];
+    const resolvedCategory = category || contractDefaults.defaultCategory;
 
     const newBounty = {
       id: bountyId,
       title: title.trim(),
       description: (description || '').trim(),
-      category: category || 'General',
+      category: resolvedCategory,
+      contractType: contractDefaults.contractType,
       creatorId: session.id,
       creatorUsername: session.username,
       creatorNickname: session.serverNickname || session.username,
-      baseRewardBones: bonesOffered,
+      creatorRankTitle: memberRank.title,
+      escrowBones,
+      baseRewardBones: contractDefaults.baseRewardBones,
+      ...(contractDefaults.contractType === 'kill' ? { maxRewardBones: contractDefaults.maxRewardBones } : {}),
       officerBonusBones: 0,
-      rewardBones: bonesOffered,
+      rewardBones: contractDefaults.baseRewardBones,
       status: 'pending_review',
-      bonuses: parsedBonuses,
+      bonuses: [],
       createdAt: new Date().toISOString()
     };
 
@@ -750,15 +767,15 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
       officerName: 'System',
       targetId: session.id,
       targetName: session.serverNickname || session.username,
-      amount: -bonesOffered,
+      amount: -escrowBones,
       spendableBones: wallet.spendableBones,
       boneScore: wallet.boneScore,
-      reason: `Member submitted bounty request "${newBounty.title}" with ${bonesOffered} Bones held in escrow`,
+      reason: `Member (${memberRank.title}) submitted ${contractDefaults.contractType === 'kill' ? 'Kill' : 'Help'} contract "${newBounty.title}" (${escrowBones} Bones held in escrow; payout: ${contractDefaults.payoutLabel})`,
       undoMeta: {
         kind: 'bounty_request_escrow',
         targetId: session.id,
         bountyId,
-        refundBones: bonesOffered
+        refundBones: escrowBones
       }
     });
 
@@ -767,8 +784,8 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
       try {
         await sendChannelMessage(env.DISCORD_OFFICER_CHANNEL_ID, {
           embeds: [{
-            title: '📜 Member Bounty Request Pending Review',
-            description: `**${session.serverNickname || session.username}** requested to post a player bounty:\n**${newBounty.title}**\n\n> ${newBounty.description || 'No description provided'}\n\nEscrow Offered: **${bonesOffered} Bones**\nCategory: **${newBounty.category}**`,
+            title: '📜 Member Contract Request Pending Review',
+            description: `**${session.serverNickname || session.username}** (*${memberRank.title}*) requested to post a **${contractDefaults.contractType === 'kill' ? 'Kill Contract' : 'Help Contract'}**:\n**${newBounty.title}**\n\n> ${newBounty.description || 'No description provided'}\n\nEscrow Paid: **${escrowBones} Bones**\nContract Payout: **${contractDefaults.payoutLabel}**\nCategory: **${newBounty.category}**`,
             color: Colors.BLUE,
             footer: { text: 'Review in Officer Hall' },
             timestamp: new Date().toISOString()
@@ -782,6 +799,7 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
     return jsonResponse({
       success: true,
       bounty: newBounty,
+      escrowBones,
       remainingBones: wallet.spendableBones
     });
   }
@@ -952,7 +970,7 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
   }
 
   // =========================================================================
-  // WOW: FOREVER US ARMORY, ITEM DB, CRAFTING & AUCTION HOUSE ENDPOINTS
+  // WOW: FOREVER US ARMORY, ITEM DB & CRAFTING ENDPOINTS
   // =========================================================================
   if (path.startsWith('armory/') && !['armory/config', 'armory/sync-roster', 'armory/auto-match', 'armory/rulesets'].includes(path)) {
     try {
@@ -961,7 +979,6 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
         const state = await firestore.getBseState();
         return jsonResponse({
           configured: isBlizzardConfigured(env),
-          ingestConfigured: Boolean(env.ARMORY_INGEST_SECRET),
           armory: resolveArmoryConfig(state)
         });
       }
@@ -1038,61 +1055,6 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
           state
         });
         return jsonResponse(item);
-      }
-
-      // GET Curated Consumables / Materials AH Price Watchlist
-      if (path === 'armory/ah/watchlist' && request.method === 'GET') {
-        const state = await firestore.getBseState();
-        const cfg = resolveArmoryConfig(state);
-        const houseId = Number(url.searchParams.get('houseId')) || cfg.defaultAuctionHouseId;
-        const extraIds = String(url.searchParams.get('extraIds') || '')
-          .split(',')
-          .map(s => Number(s.trim()))
-          .filter(n => n > 0);
-        const data = await getAuctionHouseWatchlist({
-          houseId,
-          extraItemIds: extraIds,
-          env,
-          firestore,
-          state
-        });
-        return jsonResponse(data);
-      }
-
-      // GET Batch AH Price lookup (?houseId=&itemIds=13510,13468)
-      if (path === 'armory/ah/prices' && request.method === 'GET') {
-        const state = await firestore.getBseState();
-        const cfg = resolveArmoryConfig(state);
-        const houseId = Number(url.searchParams.get('houseId')) || cfg.defaultAuctionHouseId;
-        const doc = await getCachedAhPricesDoc(houseId, { firestore });
-        const itemIdsParam = String(url.searchParams.get('itemIds') || '').trim();
-        const prices = {};
-        if (doc?.prices) {
-          const ids = itemIdsParam ? itemIdsParam.split(',').map(s => s.trim()).filter(Boolean) : [];
-          for (const idStr of ids.slice(0, 100)) {
-            const tuple = doc.prices[idStr];
-            if (Array.isArray(tuple) && tuple.length >= 3) {
-              prices[idStr] = { min: tuple[0], median: tuple[1], qty: tuple[2] };
-            }
-          }
-        }
-        return jsonResponse({
-          houseId,
-          rulesetId: doc?.rulesetId || cfg.guildRulesetId,
-          updatedAt: doc?.updatedAt || null,
-          hasSnapshot: Boolean(doc?.prices),
-          distinctItemCount: doc?.distinctItemCount || 0,
-          prices
-        });
-      }
-
-      // POST Auction House Compact Snapshot Ingest (GitHub Action or Officer)
-      if (path === 'armory/ah-ingest' && request.method === 'POST') {
-        if (!isValidArmoryIngestAuth(request, env, isAuthorizedOfficer)) {
-          return jsonResponse({ error: 'Unauthorized: Invalid ingest secret or Officer session required' }, 401);
-        }
-        const summary = await ingestCompactAuctionPrices(body, { firestore });
-        return jsonResponse(summary);
       }
     } catch (err) {
       const status = Number(err?.status) || 500;
@@ -1242,7 +1204,7 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
 
   // POST Approve Member Bounty Request (Officer Review)
   if (path === 'bounty/approve-request' && request.method === 'POST') {
-    const { bountyId, officerBonusBones } = body;
+    const { bountyId, officerBonusBones, approvedRewardBones } = body;
     const state = await firestore.getBseState();
     const bounty = (state.bounties || []).find(b => b.id === bountyId);
     if (!bounty) return jsonResponse({ error: 'Bounty not found' }, 404);
@@ -1253,13 +1215,22 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
 
     const prevStatus = bounty.status;
     const prevOfficerBonusBones = bounty.officerBonusBones || 0;
-    const prevRewardBones = bounty.rewardBones !== undefined ? bounty.rewardBones : (bounty.baseRewardBones || 0);
+    const prevBaseRewardBones = bounty.baseRewardBones !== undefined ? bounty.baseRewardBones : (bounty.rewardBones || 0);
+    const prevRewardBones = bounty.rewardBones !== undefined ? bounty.rewardBones : prevBaseRewardBones;
 
     const bonus = Math.max(0, parseInt(officerBonusBones, 10) || 0);
-    const escrowedBase = bounty.baseRewardBones !== undefined ? bounty.baseRewardBones : (bounty.rewardBones || 0);
+    const parsedOverride = approvedRewardBones !== undefined && approvedRewardBones !== null && approvedRewardBones !== ''
+      ? parseInt(approvedRewardBones, 10)
+      : NaN;
+    const basePayout = Number.isFinite(parsedOverride)
+      ? Math.max(0, parsedOverride)
+      : prevBaseRewardBones;
+    const escrowPaid = getBountyEscrowBones(bounty);
+
     bounty.status = 'active';
+    bounty.baseRewardBones = basePayout;
     bounty.officerBonusBones = bonus;
-    bounty.rewardBones = escrowedBase + bonus;
+    bounty.rewardBones = basePayout + bonus;
     bounty.approvedBy = officerName;
     bounty.approvedAt = new Date().toISOString();
 
@@ -1272,12 +1243,13 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
       targetId: bounty.creatorId,
       targetName: bounty.creatorNickname || bounty.creatorUsername,
       amount: 0,
-      reason: `Approved member bounty "${bounty.title}" (Base Escrow: ${escrowedBase} Bones, Officer Bonus: +${bonus} Bones, Total Payout: ${bounty.rewardBones} Bones)`,
+      reason: `Approved member bounty "${bounty.title}" (Rank Fee Paid: ${escrowPaid} Bones, Base Payout: ${basePayout} Bones, Officer Bonus: +${bonus} Bones, Total Payout: ${bounty.rewardBones} Bones)`,
       undoMeta: {
         kind: 'bounty_request_approved',
         bountyId: bounty.id,
         targetId: bounty.creatorId,
         prevStatus,
+        prevBaseRewardBones,
         prevOfficerBonusBones,
         prevRewardBones
       }
@@ -1309,8 +1281,8 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
     bounty.rejectedAt = new Date().toISOString();
     bounty.rejectReason = rejectReason || 'Does not align with guild guidelines';
 
-    // Refund escrowed bones to creator
-    const refundAmount = bounty.baseRewardBones !== undefined ? bounty.baseRewardBones : (bounty.rewardBones || 0);
+    // Refund exact rank-based escrowed bones to creator
+    const refundAmount = getBountyEscrowBones(bounty);
     state.wallets = state.wallets || {};
     const creatorWallet = state.wallets[bounty.creatorId];
     if (creatorWallet && refundAmount > 0) {
@@ -2197,15 +2169,17 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
 
     const hasApprovedClaim = Object.values(state.claims || {}).some(c => c.bountyId === bountyId && c.status === 'approved');
     const isRefundableStatus = bounty && ['pending_review', 'active', 'paused'].includes(bounty.status || 'active');
-    const refundAmount = bounty ? (bounty.baseRewardBones !== undefined ? bounty.baseRewardBones : (bounty.rewardBones || 0)) : 0;
+    const refundAmount = bounty ? getBountyEscrowBones(bounty) : 0;
     let refundedBones = 0;
 
     state.bounties = (state.bounties || []).filter(b => b.id !== bountyId);
 
-    if (bounty?.creatorId && isRefundableStatus && !hasApprovedClaim && refundAmount > 0 && state.wallets?.[bounty.creatorId]) {
+    if (bounty?.creatorId && isRefundableStatus && !hasApprovedClaim && state.wallets?.[bounty.creatorId]) {
       const creatorWallet = state.wallets[bounty.creatorId];
-      creatorWallet.spendableBones = (creatorWallet.spendableBones || 0) + refundAmount;
-      creatorWallet.updatedAt = new Date().toISOString();
+      if (refundAmount > 0) {
+        creatorWallet.spendableBones = (creatorWallet.spendableBones || 0) + refundAmount;
+        creatorWallet.updatedAt = new Date().toISOString();
+      }
       refundedBones = refundAmount;
       const bountySnap = compactBountySnapshot(bounty);
 
@@ -2616,11 +2590,113 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
     return jsonResponse({ success: true, announcement: state.branding.announcement });
   }
 
+  // =========================================================================
+  // OFFICER DATA BACKUPS & 1-CLICK RESTORE ENDPOINTS
+  // =========================================================================
+  if (path === 'backups' && request.method === 'GET') {
+    const backups = await listCloudBackups(firestore, { limit: 40 });
+    return jsonResponse({ backups });
+  }
+
+  if (path === 'backups/create' && request.method === 'POST') {
+    const state = await firestore.getBseState();
+    const label = String(body.label || '').trim();
+    const backup = await createCloudBackup(firestore, state, {
+      kind: 'manual',
+      label: label || `Manual Snapshot by ${officerName}`,
+      createdBy: officerName
+    });
+    await firestore.logAuditEvent({
+      action: 'DATA_BACKUP_CREATED',
+      officerId,
+      officerName,
+      reason: `Created manual cloud snapshot "${backup.label}" (${backup.id})`,
+      timestamp: new Date().toISOString()
+    }).catch(() => {});
+    return jsonResponse({ success: true, backup });
+  }
+
+  if (path === 'backups/download' && request.method === 'GET') {
+    const backupId = (url.searchParams.get('id') || '').trim();
+    let envelope = null;
+    if (backupId) {
+      envelope = await getCloudBackupEnvelope(firestore, backupId);
+      if (!envelope) {
+        return jsonResponse({ error: `Backup "${backupId}" not found` }, 404);
+      }
+    } else {
+      const state = await firestore.getBseState();
+      envelope = buildBackupEnvelope(state, {
+        createdBy: officerName,
+        label: 'Live State JSON Export'
+      });
+    }
+    const dateStamp = String(envelope.createdAt || new Date().toISOString()).slice(0, 10);
+    const safeFileTag = backupId ? backupId.replace(/[^a-zA-Z0-9_-]/g, '_') : dateStamp;
+    const headers = new Headers();
+    headers.set('Content-Disposition', `attachment; filename="bse_backup_${safeFileTag}.json"`);
+    return jsonResponse(envelope, 200, headers);
+  }
+
+  if (path === 'backups/restore' && request.method === 'POST') {
+    try {
+      const result = await restoreBseStateFromBackup({
+        firestore,
+        backupId: body.backupId || null,
+        backupData: body.backupData !== undefined ? body.backupData : null,
+        officerId,
+        officerName,
+        reason: String(body.reason || '').trim()
+      });
+
+      const syncTask = pushStandingsToDiscord(env, firestore, result.state).catch(err => {
+        console.error('Post-restore Discord standings sync warning:', err);
+      });
+      if (ctx?.waitUntil) {
+        ctx.waitUntil(syncTask);
+      } else {
+        await syncTask;
+      }
+
+      return jsonResponse({
+        success: true,
+        restoredFrom: result.restoredFrom,
+        safetyBackup: result.safetyBackup,
+        stats: result.stats
+      });
+    } catch (err) {
+      const status = Number(err?.status) || 500;
+      return jsonResponse({ error: err.message || 'Restore failed' }, status >= 400 && status < 600 ? status : 500);
+    }
+  }
+
+  if (path === 'backups/delete' && request.method === 'POST') {
+    const backupId = String(body.backupId || '').trim();
+    if (!backupId) {
+      return jsonResponse({ error: 'backupId is required' }, 400);
+    }
+    const deleted = await deleteCloudBackup(firestore, backupId);
+    return jsonResponse({ success: true, deleted, backupId });
+  }
+
   // POST Raw Central State Direct Override (Full Master Data Control)
   if (path === 'state/raw' && request.method === 'POST') {
     const { rawState } = body;
     if (!rawState || typeof rawState !== 'object') {
       return jsonResponse({ error: 'rawState must be a valid JSON object' }, 400);
+    }
+
+    // Automatically capture a pre-restore safety snapshot before overwriting live state
+    try {
+      const currentLiveState = await firestore.getBseState();
+      await createCloudBackup(firestore, currentLiveState, {
+        id: `pre_restore_${Date.now()}`,
+        kind: 'pre_restore',
+        label: `Pre-Raw-Override Safety Backup (${officerName})`,
+        createdBy: officerName
+      });
+    } catch (err) {
+      console.warn('Pre-raw-override backup warning:', err.message);
     }
 
     // Ensure core keys exist
@@ -2644,11 +2720,8 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
     return jsonResponse({ success: true, state: rawState });
   }
 
-  // GET Available Forever Rulesets & Auction Houses (Officer Diagnostic)
+  // GET Available Forever Rulesets (Officer Diagnostic)
   if (path === 'armory/rulesets' && request.method === 'GET') {
-    const state = await firestore.getBseState();
-    const cfg = resolveArmoryConfig(state);
-    const rulesetId = Number(url.searchParams.get('rulesetId')) || cfg.guildRulesetId;
     if (!isBlizzardConfigured(env)) {
       return jsonResponse({
         configured: false,
@@ -2657,19 +2730,18 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
           { id: 2, name: 'Normal' },
           { id: 3, name: 'Roleplay' },
           { id: 15, name: 'Roleplay PvP' }
-        ],
-        houses: [110, 111, 113, 114, 116, 117, 119, 120, 121, 123, 124, 125]
+        ]
       });
     }
     try {
-      const data = await fetchRulesetsAndHouses(rulesetId, env);
+      const data = await fetchForeverRulesets(env);
       return jsonResponse({ configured: true, ...data });
     } catch (err) {
       return jsonResponse({ error: err.message || 'Failed to query rulesets' }, err.status || 502);
     }
   }
 
-  // POST Save Forever Armory Settings (Guild Slug, Ruleset, AH House, Auto-sync)
+  // POST Save Forever Armory Settings (Guild Slug, Ruleset, Auto-sync)
   if (path === 'armory/config' && request.method === 'POST') {
     const state = await firestore.getBseState();
     state.config = state.config || {};
@@ -2683,13 +2755,11 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
       guildRulesetId: body.guildRulesetId !== undefined
         ? (Number(body.guildRulesetId) || 1)
         : prevCfg.guildRulesetId,
-      defaultAuctionHouseId: body.defaultAuctionHouseId !== undefined
-        ? (Number(body.defaultAuctionHouseId) || 110)
-        : prevCfg.defaultAuctionHouseId,
       autoSyncGuildRoster: body.autoSyncGuildRoster !== undefined
         ? Boolean(body.autoSyncGuildRoster)
         : prevCfg.autoSyncGuildRoster
     };
+    delete nextCfg.defaultAuctionHouseId;
 
     state.config.armory = nextCfg;
     state.updatedAt = new Date().toISOString();
@@ -2699,7 +2769,7 @@ async function handleExchangeApi(url, request, env, firestore, ctx) {
       action: 'OFFICER_SETTINGS_UPDATE',
       officerId,
       officerName,
-      reason: `Updated WoW: Forever Armory config (Guild: ${nextCfg.guildSlug}, Ruleset: ${nextCfg.guildRulesetId}, AH: ${nextCfg.defaultAuctionHouseId})`,
+      reason: `Updated WoW: Forever Armory config (Guild: ${nextCfg.guildSlug}, Ruleset: ${nextCfg.guildRulesetId})`,
       timestamp: new Date().toISOString()
     });
 
@@ -3028,39 +3098,6 @@ async function getSessionFromRequest(request, env) {
   return verifySessionToken(match[1], env.SESSION_SECRET || 'bse_secret_key');
 }
 
-function timingSafeStringEqual(a, b) {
-  if (typeof a !== 'string' || typeof b !== 'string' || !a || !b) return false;
-  const enc = new TextEncoder();
-  const bufA = enc.encode(a);
-  const bufB = enc.encode(b);
-  const maxLen = Math.max(bufA.length, bufB.length);
-  let mismatch = bufA.length ^ bufB.length;
-  for (let i = 0; i < maxLen; i++) {
-    mismatch |= (bufA[i] ?? 0) ^ (bufB[i] ?? 0);
-  }
-  return mismatch === 0;
-}
-
-function isValidArmoryIngestAuth(request, env, isAuthorizedOfficer) {
-  if (isAuthorizedOfficer) return true;
-  const configuredSecret = String(env?.ARMORY_INGEST_SECRET || '').trim();
-  if (!configuredSecret) return false;
-
-  const headerSecret = request.headers.get('X-Armory-Ingest-Secret') || '';
-  if (timingSafeStringEqual(headerSecret.trim(), configuredSecret)) {
-    return true;
-  }
-
-  const authHeader = request.headers.get('Authorization') || '';
-  if (authHeader.startsWith('Bearer ')) {
-    const bearer = authHeader.slice(7).trim();
-    if (timingSafeStringEqual(bearer, configuredSecret)) {
-      return true;
-    }
-  }
-  return false;
-}
-
 /**
  * JSON Response Helper with CORS
  */
@@ -3071,7 +3108,7 @@ function jsonResponse(data, status = 200, customHeaders = new Headers()) {
   }
   customHeaders.set('Access-Control-Allow-Origin', '*');
   customHeaders.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  customHeaders.set('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Armory-Ingest-Secret');
+  customHeaders.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   return new Response(JSON.stringify(data), { status, headers: customHeaders });
 }
 
@@ -3079,6 +3116,6 @@ function handleCors() {
   const headers = new Headers();
   headers.set('Access-Control-Allow-Origin', '*');
   headers.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  headers.set('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Armory-Ingest-Secret');
+  headers.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   return new Response(null, { status: 204, headers });
 }

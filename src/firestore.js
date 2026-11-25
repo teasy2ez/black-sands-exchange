@@ -278,6 +278,53 @@ export class FirestoreClient {
   }
 
   /**
+   * Delete a single document from any collection
+   */
+  async deleteCollectionDoc(collection, docId) {
+    const headers = await this.getHeaders();
+    const safeCol = this.sanitizeDocId(collection);
+    const safeId = this.sanitizeDocId(docId);
+    const res = await fetch(`${this.baseUrl}/${safeCol}/${safeId}`, {
+      method: 'DELETE',
+      headers
+    });
+    if (res.status === 404) return true;
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Firestore delete failed (${safeCol}/${safeId}) [${res.status}]: ${text}`);
+    }
+    return true;
+  }
+
+  /**
+   * List lightweight metadata fields for documents in a collection without fetching large payload fields
+   */
+  async listCollectionDocsMetadata(collection, fieldPaths = [], pageSize = 50) {
+    try {
+      const headers = await this.getHeaders();
+      const safeCol = this.sanitizeDocId(collection);
+      const url = new URL(`${this.baseUrl}/${safeCol}`);
+      url.searchParams.set('pageSize', String(Math.min(200, Math.max(1, Number(pageSize) || 50))));
+      for (const fp of fieldPaths) {
+        if (fp) url.searchParams.append('mask.fieldPaths', String(fp));
+      }
+      const res = await fetch(url.toString(), { headers });
+      if (res.status === 404) return [];
+      if (!res.ok) {
+        const text = await res.text();
+        console.warn(`Firestore listCollectionDocsMetadata warning (${safeCol} [${res.status}]):`, text);
+        return [];
+      }
+      const data = await res.json();
+      const docs = Array.isArray(data?.documents) ? data.documents : [];
+      return docs.map(fromFirestoreDoc).filter(Boolean);
+    } catch (err) {
+      console.error(`Failed to list ${collection}:`, err);
+      return [];
+    }
+  }
+
+  /**
    * Batch read multiple documents from one collection in a single Firestore REST subrequest
    */
   async batchGetCollectionDocs(collection, docIds = []) {
@@ -579,7 +626,6 @@ export class FirestoreClient {
           edition: 'forever',
           guildSlug: 'black-sands',
           guildRulesetId: 1,
-          defaultAuctionHouseId: 110,
           autoSyncGuildRoster: true,
           staticNamespaceCache: 'static-1.60.1_70399-forever-us'
         }

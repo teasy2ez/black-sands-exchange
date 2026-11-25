@@ -938,7 +938,7 @@ export function buildArmoryCharacterEmbed(snapshot, ownerWallet = null) {
 }
 
 /**
- * Build WoW: Forever Item Detail + AH Price + Guild Crafters Embed
+ * Build WoW: Forever Item Detail + Guild Crafters Embed
  */
 export function buildArmoryItemEmbed(item, craftingRecipes = [], altMatches = []) {
   const quality = String(item?.quality || 'COMMON').toUpperCase();
@@ -976,14 +976,6 @@ export function buildArmoryItemEmbed(item, craftingRecipes = [], altMatches = []
   }
 
   const fields = [];
-  if (item.ahPrice) {
-    fields.push({
-      name: '💰 Forever Auction House',
-      value: `Min Buyout: **${formatCopperCoins(item.ahPrice.min)}**\nMedian: **${formatCopperCoins(item.ahPrice.median)}**\nQuantity Listed: **${Number(item.ahPrice.qty || 0).toLocaleString()}**`,
-      inline: true
-    });
-  }
-
   if (item.sellPrice > 0) {
     fields.push({
       name: '🪙 Vendor Sell Value',

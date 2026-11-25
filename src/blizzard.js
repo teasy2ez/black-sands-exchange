@@ -8,7 +8,7 @@
  *    professions, reputations, and character-media aggregation
  *  - Guild roster & guild-achievement sync
  *  - Item search, item metadata & media icons (with defensive 404 handling)
- *  - Ruleset & Auction House endpoint resolution
+ *  - Ruleset endpoint resolution
  */
 
 export const BLIZZARD_OAUTH_URL = 'https://oauth.battle.net/token';
@@ -1056,29 +1056,19 @@ export async function searchForeverItems(query, env, { stateConfig = null, page 
 }
 
 /**
- * Fetch available Rulesets & Auction Houses for a given ruleset (trailing slash mandatory on /auctions/)
+ * Fetch available WoW: Forever Rulesets
  */
-export async function fetchRulesetsAndHouses(rulesetId = 1, env, { fetchImpl = fetch } = {}) {
-  const [rulesetsSettled, housesSettled] = await Promise.allSettled([
-    blizzardFetch('/data/wow/ruleset/index', env, { namespace: FOREVER_DYNAMIC_NS, fetchImpl, allow404: true }),
-    blizzardFetch(`/data/wow/ruleset/${Number(rulesetId) || 1}/auctions/`, env, { namespace: FOREVER_DYNAMIC_NS, fetchImpl, allow404: true })
-  ]);
+export async function fetchForeverRulesets(env, { fetchImpl = fetch } = {}) {
+  const indexJson = await blizzardFetch('/data/wow/ruleset/index', env, {
+    namespace: FOREVER_DYNAMIC_NS,
+    fetchImpl,
+    allow404: true
+  });
 
-  const rulesets = rulesetsSettled.status === 'fulfilled' && Array.isArray(rulesetsSettled.value?.rulesets)
-    ? rulesetsSettled.value.rulesets.map(r => ({ id: r.id, name: r.name }))
+  const rulesets = Array.isArray(indexJson?.rulesets) && indexJson.rulesets.length
+    ? indexJson.rulesets.map(r => ({ id: r.id, name: r.name }))
     : FOREVER_RULESETS;
 
-  const rawHouses = housesSettled.status === 'fulfilled' && Array.isArray(housesSettled.value?.auctions)
-    ? housesSettled.value.auctions
-    : [];
-
-  const houses = rawHouses.map(h => {
-    const m = String(h.href || '').match(/\/auctions\/(\d+)/);
-    return m ? Number(m[1]) : null;
-  }).filter(Boolean);
-
-  return {
-    rulesets,
-    houses: houses.length ? houses : [110, 111, 113, 114, 116, 117, 119, 120, 121, 123, 124, 125]
-  };
+  return { rulesets };
 }
+
